@@ -1,0 +1,15 @@
+{
+  "name": "@signal-room/research",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./contracts": "./contracts.ts"
+  },
+  "dependencies": {
+    "@signal-room/workflow": "workspace:*",
+    "@signal-room/contracts": "workspace:*",
+    "zod": "^3.25.76"
+  }
+}

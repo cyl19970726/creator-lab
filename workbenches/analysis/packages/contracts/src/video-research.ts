@@ -1,0 +1,225 @@
+import { reportOverviewSchema } from "./report-overview.js";
+import { openingAnalysisSchema, packagingAnalysisSchema } from "./single-post-depth.js";
+import { z } from "zod";
+import { missingPostSourceFacts, postSourceFactsSchema } from "./post-source-facts.js";
+
+const evidenceClassSchema = z.enum(["raw_fact", "visual_observation", "author_claim", "system_inference", "unknown"]);
+const lensCoverageSchema = z.object({
+  state: z.enum(["ready", "partial", "missing"]),
+  covered: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  evidenceRefs: z.array(z.string()),
+  conflicts: z.array(z.string()),
+  uncheckedChannels: z.array(z.string()),
+  failedGateIds: z.array(z.string()),
+  note: z.string(),
+  evaluator: z.object({ id: z.string(), version: z.string(), checkedAt: z.string() }).nullable(),
+  rules: z.array(z.object({ id: z.string(), pass: z.boolean(), note: z.string(), evidenceRefs: z.array(z.string()), failedReason: z.string().nullable() }))
+});
+
+const postQualitySchema = z.object({
+  buildState: z.enum(["missing", "built", "failed", "blocked"]),
+  evaluationState: z.enum(["skipped", "failed", "findings", "verified"]),
+  promotionState: z.enum(["provisional", "wiki_eligible", "ineligible"]),
+  aggregateState: z.string(),
+  evaluationReadIssue: z.string().nullable().default(null),
+  findings: z.array(z.object({
+    id: z.string(),
+    source: z.enum(["builder", "generic_evaluator", "content_restoration", "directing_logic", "visual_editing", "projection"]),
+    message: z.string(),
+    evidenceRefs: z.array(z.string())
+  })),
+  lineage: z.object({
+    reconstructionArtifactRef: z.string().nullable(),
+    builderReportArtifactRef: z.string().nullable(),
+    builderValidationArtifactRef: z.string().nullable(),
+    evaluationArtifactRef: z.string().nullable(),
+    evaluatorReportArtifactRef: z.string().nullable(),
+    gateReportArtifactRef: z.string().nullable(),
+    threeLensEvaluationArtifactRef: z.string().nullable(),
+    threeLensGateReportArtifactRef: z.string().nullable(),
+    candidateRevisionFingerprint: z.string().nullable()
+  })
+});
+
+const defaultQuality = {
+  buildState: "missing" as const,
+  evaluationState: "skipped" as const,
+  promotionState: "ineligible" as const,
+  aggregateState: "unavailable",
+  findings: [],
+  lineage: {
+    reconstructionArtifactRef: null,
+    builderReportArtifactRef: null,
+    builderValidationArtifactRef: null,
+    evaluationArtifactRef: null,
+    evaluatorReportArtifactRef: null,
+    gateReportArtifactRef: null,
+    threeLensEvaluationArtifactRef: null,
+    threeLensGateReportArtifactRef: null,
+    candidateRevisionFingerprint: null
+  }
+};
+
+export const videoResearchSchema = z.object({
+  schemaVersion: z.literal("1.0.0"),
+  id: z.string(),
+  creatorId: z.string(),
+  creatorName: z.string(),
+  title: z.string(),
+  sourceHref: z.string(),
+  sourceLabel: z.string(),
+  sourceFacts: postSourceFactsSchema.default(missingPostSourceFacts),
+  thesis: z.string(),
+  overview: z.object({ state: z.enum(["ready", "missing", "stale", "invalid"]), overview: reportOverviewSchema.nullable() }).default({ state: "missing", overview: null }),
+  contentUnknowns: z.array(z.string()).default([]),
+  readerSummary: z.object({
+    productState: z.enum(["gold", "analysis_ready", "provisional"]),
+    statusLabel: z.string(),
+    verdict: z.string(),
+    strengths: z.array(z.string()),
+    limitations: z.array(z.string()),
+    reusableStructure: z.array(z.string()),
+    representativeFrame: z.object({ src: z.string(), label: z.string(), time: z.number().nullable() }).nullable()
+  }).default({
+    productState: "provisional", statusLabel: "资料待补", verdict: "尚未形成读者结论",
+    strengths: [], limitations: [], reusableStructure: [], representativeFrame: null
+  }),
+  reportFormat: z.literal("builder_lenses"),
+  sourceRevision: z.string().nullable().default(null),
+  contentBlocks: z.array(z.object({
+    id: z.string(),
+    type: z.enum(["text", "single_frame", "annotated_crop", "before_after", "operation_sequence", "frame_strip", "claim_boundary", "unknown", "paragraph", "key_frame", "detail_crop", "boundary"]),
+    title: z.string(),
+    body: z.string(),
+    start: z.number().nullable(),
+    end: z.number().nullable(),
+    evidenceRefs: z.array(z.string()),
+    /** Builder-declared visuals, preserved separately from refs resolved to media. */
+    explicitVisualRefs: z.array(z.string()).optional(),
+    unresolvedVisuals: z.array(z.object({
+      ref: z.string(), role: z.string(), focus: z.string(), proves: z.string(), cannotProve: z.string(),
+      crop: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).nullable().optional()
+    })).default([]),
+    media: z.array(z.object({
+      ref: z.string(), src: z.string(), label: z.string(), time: z.number().nullable(), role: z.string(),
+      focus: z.string(), proves: z.string(), cannotProve: z.string(),
+      crop: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).nullable()
+    })),
+    supplementalMedia: z.array(z.object({
+      ref: z.string(), src: z.string(), label: z.string(), time: z.number().nullable(), role: z.string(),
+      focus: z.string(), proves: z.string(), cannotProve: z.string(),
+      crop: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).nullable()
+    })).optional(),
+    steps: z.array(z.object({
+      label: z.string(), description: z.string(),
+      unresolvedFrameRefs: z.array(z.string()).default([]),
+      media: z.array(z.object({ ref: z.string(), src: z.string(), label: z.string(), time: z.number().nullable() }))
+    })),
+    boundary: z.string().nullable()
+  })).default([]),
+  quality: postQualitySchema.default(defaultQuality),
+  evidenceIndex: z.array(z.object({
+    id: z.string(),
+    kind: z.string(),
+    label: z.string(),
+    anchorId: z.string().nullable(),
+    artifactRef: z.string().nullable()
+  })).default([]),
+  engagement: z.object({ likes: z.number().nullable(), collections: z.number().nullable(), comments: z.number().nullable(), shares: z.number().nullable() }),
+  evidenceHealth: z.object({
+    state: z.enum(["ready", "partial", "missing"]),
+    transcript: z.boolean(), frames: z.boolean(), ocr: z.boolean(), audio: z.boolean(), baseline: z.boolean(),
+    note: z.string()
+  }),
+  knowledgeUnits: z.array(z.object({
+    id: z.string(), title: z.string(), statement: z.string(), importance: z.string(),
+    evidenceClass: evidenceClassSchema, confidence: z.string(), start: z.number().nullable(), end: z.number().nullable(),
+    evidenceRefs: z.array(z.string()), unknowns: z.array(z.string())
+  })),
+  directingLogic: z.object({
+    packagingAnalysis: packagingAnalysisSchema.nullable().default(null),
+    viewerBefore: z.string().nullable(),
+    viewerAfter: z.string().nullable(),
+    activatedQuestion: z.string().nullable(),
+    promise: z.string().nullable(),
+    payoff: z.string().nullable(),
+    endingResolution: z.string().nullable(),
+    stages: z.array(z.object({
+      label: z.string(), start: z.number().nullable(), end: z.number().nullable(),
+      viewerQuestion: z.string().nullable(), function: z.string(), proof: z.string().nullable(),
+      cognitiveChange: z.string().nullable(), comprehensionLoad: z.string().nullable(), payoff: z.string().nullable(), evidenceRefs: z.array(z.string())
+    })),
+    informationDesign: z.array(z.object({ kind: z.string().min(1), statement: z.string(), start: z.number().nullable(), end: z.number().nullable(), evidenceRefs: z.array(z.string()) })),
+    proofDesign: z.array(z.object({
+      proofType: z.enum(["visible_proof", "creator_claim", "system_inference"]),
+      statement: z.string(), boundary: z.string(), start: z.number().nullable(), end: z.number().nullable(), evidenceRefs: z.array(z.string())
+    })).default([]),
+    loadAndPayoff: z.object({
+      compression: z.string(), repetition: z.string(), payoffDistance: z.string(), comprehensionCosts: z.array(z.string())
+    }).default({ compression: "尚未分析", repetition: "尚未分析", payoffDistance: "尚未分析", comprehensionCosts: [] }),
+    notes: z.array(z.string())
+  }),
+  visualEditing: z.object({
+    openingAnalysis: openingAnalysisSchema.nullable().default(null),
+    orientation: z.string().nullable(), composition: z.string().nullable(),
+    shotCount: z.number().int().nonnegative().nullable(), cutsPerMinute: z.number().nonnegative().nullable(),
+    shotMetricBasis: z.string().nullable().default(null),
+    resultFirstAt: z.number().nonnegative().nullable(),
+    carriers: z.array(z.object({
+      name: z.string(), roles: z.array(z.string()), start: z.number().nullable(), end: z.number().nullable()
+    })),
+    analyzedDuration: z.number().nonnegative().nullable(),
+    claims: z.array(z.object({ statement: z.string(), function: z.string(), start: z.number().nullable(), end: z.number().nullable(), evidenceRefs: z.array(z.string()) })),
+    shotSemantics: z.array(z.object({ start: z.number().nullable(), end: z.number().nullable(), role: z.string(), carrier: z.string(), meaningChange: z.string(), evidenceRefs: z.array(z.string()) })),
+    uiProcedureStates: z.array(z.object({
+      label: z.string(), before: z.string(), during: z.string(), after: z.string(), input: z.string().nullable(),
+      parameters: z.array(z.string()), output: z.string().nullable(), continuity: z.string(), start: z.number().nullable(), end: z.number().nullable(), evidenceRefs: z.array(z.string())
+    })).default([]),
+    transitions: z.array(z.object({
+      from: z.string(), to: z.string(), mechanism: z.string(), function: z.string(), start: z.number().nullable(), end: z.number().nullable(), evidenceRefs: z.array(z.string())
+    })).default([]),
+    rhythm: z.array(z.object({
+      pace: z.string(), density: z.string(), function: z.string(), start: z.number().nullable(), end: z.number().nullable(), evidenceRefs: z.array(z.string())
+    })).default([]),
+    missingBridges: z.array(z.object({
+      statement: z.string(), impact: z.string(), start: z.number().nullable(), end: z.number().nullable(), evidenceRefs: z.array(z.string())
+    })).default([]),
+    audioRole: z.string().nullable(),
+    omissionRisks: z.array(z.string()).default([]),
+    notes: z.array(z.string())
+  }),
+  performanceContext: z.object({
+    observation: z.object({
+      observedAt: z.string().nullable(), sampleObservedAt: z.string().nullable(), scope: z.string(),
+      observedCount: z.number(), eligibleCount: z.number(), topicSampleSize: z.number(),
+      excluded: z.array(z.object({ id: z.string(), reason: z.string() })),
+      metrics: z.array(z.object({ key: z.enum(["likes", "collections", "comments"]), subject: z.number().nullable(), denominator: z.number(), median: z.number().nullable(), multiple: z.number().nullable() })),
+      collectionLikeRatio: z.number().nullable(), exposureInteractionRate: z.number().nullable(), retention: z.number().nullable(),
+      ageMatched: z.boolean(), limitations: z.array(z.string())
+    }).nullable().default(null),
+    tier: z.enum(["high", "base", "low", "unknown"]),
+    creatorMedianLikes: z.number().nullable(), medianMultiple: z.number().nullable(), percentileRank: z.number().nullable(),
+    interpretation: z.string(), confounds: z.array(z.string())
+  }),
+  relations: z.array(z.object({ from: z.string(), to: z.string(), relation: z.string(), evidenceRefs: z.array(z.string()) })),
+  transcript: z.array(z.object({
+    id: z.string(), start: z.number().nullable(), end: z.number().nullable(), text: z.string(),
+    representativeFrame: z.string().nullable(), overlappingShots: z.array(z.string())
+  })),
+  frames: z.object({
+    sparse: z.array(z.object({ id: z.string(), time: z.number().nullable(), src: z.string(), reason: z.string().nullable() })),
+    dense: z.array(z.object({ id: z.string(), time: z.number().nullable(), src: z.string(), reason: z.string().nullable() }))
+  }),
+  lensCoverage: z.object({
+    contentRestoration: lensCoverageSchema,
+    directingLogic: lensCoverageSchema,
+    visualEditingLogic: lensCoverageSchema
+  }),
+  coverage: z.object({ coreCovered: z.number().int().nonnegative(), coreTotal: z.number().int().nonnegative(), uncheckedChannels: z.array(z.string()) }),
+  conflicts: z.array(z.string()),
+  unknowns: z.array(z.string()),
+  gate: z.object({ ready: z.boolean(), failedGateIds: z.array(z.string()) })
+});
+
+export type VideoResearch = z.infer<typeof videoResearchSchema>;

@@ -1,0 +1,10 @@
+packages:
+  - workbenches/*
+  - workbenches/analysis/apps/*
+  - workbenches/analysis/packages/*
+  - vendor/agent-workflow/packages/*
+
+linkWorkspacePackages: true
+
+onlyBuiltDependencies:
+  - esbuild

@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "video-content-reconstruction/capture-protocol.schema.json",
+  "title": "Video-specific capture protocol",
+  "type": "object",
+  "required": ["schemaVersion", "probe", "protocolName", "rationale", "knowledgeUnitFields", "captureActions", "requiredRelations", "stoppingRules", "declaredUnknowns"],
+  "properties": {
+    "schemaVersion": { "enum": ["capture-protocol-1.0", "capture-protocol-2.0"] },
+    "probe": { "type": "string", "minLength": 1 },
+    "protocolName": { "type": "string", "minLength": 1 },
+    "rationale": { "type": "string", "minLength": 1 },
+    "knowledgeUnitFields": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "required", "reason", "derivedFrom"],
+        "properties": {
+          "name": { "type": "string" },
+          "required": { "type": "boolean" },
+          "reason": { "type": "string" },
+          "derivedFrom": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+        }
+      }
+    },
+    "captureActions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "range", "carrier", "mode", "reason", "derivedFrom"],
+        "properties": {
+          "id": { "type": "string" },
+          "range": { "$ref": "#/$defs/range" },
+          "carrier": { "type": "string" },
+          "mode": { "enum": ["exact_times", "interval_density", "before_during_after", "motion_sequence", "ocr_review", "ui_state_review"] },
+          "times": { "type": "array", "items": { "type": "number", "minimum": 0 } },
+          "densitySeconds": { "type": "number", "exclusiveMinimum": 0 },
+          "reason": { "type": "string" },
+          "expectedObservation": { "type": "string" },
+          "consumers": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": ["content_restoration", "directing_logic", "visual_editing"] }
+          },
+          "presentationIntent": {
+            "enum": ["text", "single_frame", "annotated_crop", "before_after", "operation_sequence", "frame_strip", "claim_boundary", "unknown", "analysis_only", "inline_key_frame", "detail_crop"]
+          },
+          "derivedFrom": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+        }
+      }
+    },
+    "requiredRelations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["relation", "derivedFrom"],
+        "properties": {
+          "relation": { "type": "string" },
+          "derivedFrom": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+        }
+      }
+    },
+    "stoppingRules": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "declaredUnknowns": { "type": "array", "items": { "type": "string" } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "schemaVersion": { "const": "capture-protocol-2.0" } } },
+      "then": {
+        "properties": {
+          "captureActions": {
+            "items": { "required": ["consumers", "presentationIntent"] }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "range": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "number", "minimum": 0 },
+        "end": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

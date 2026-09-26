@@ -1,0 +1,178 @@
+{
+  "douyin": {
+    "home": "https://creator.douyin.com/creator-micro/home",
+    "list": "https://creator.douyin.com/creator-micro/content/manage",
+    "entry": "发布高清视频",
+    "title": "input[placeholder=\"填写作品标题，为作品获得更多流量\"]",
+    "editor": "[contenteditable=true]",
+    "ai": "内容由AI生成",
+    "publish": "发布",
+    "coverSteps": [
+      {
+        "click": "竖封面3:4"
+      },
+      {
+        "upload": "上传封面",
+        "asset": "portrait"
+      },
+      {
+        "click": "完成"
+      },
+      {
+        "click": "横封面4:3"
+      },
+      {
+        "upload": "上传封面",
+        "asset": "landscape"
+      },
+      {
+        "click": "完成"
+      }
+    ],
+    "aiSteps": [
+      {
+        "click": "自主声明"
+      },
+      {
+        "click": "内容由AI生成"
+      },
+      {
+        "click": "确定"
+      }
+    ],
+    "tagMode": "inline",
+    "schedulingLimits": {
+      "minLeadMinutes": 120,
+      "maxLeadMinutes": 20160,
+      "observedAt": "2026-09-07",
+      "evidence": "发布页：支持2小时后及14天内的定时发布"
+    },
+    "editorUrl": "https://creator.douyin.com/creator-micro/content/post/video?enter_from=publish_page",
+    "videoInput": "input[type=\"file\"][accept*=\"video/mp4\"]",
+    "calibration": {
+      "status": "requires-current-editor-verification",
+      "source": "2026-09-11发布trace；入口与字段已观察，上传完成标志/最终设置/裁切弹窗需按当前页校准",
+      "required": [
+        "uploadReady",
+        "checks.upload",
+        "checks.cover",
+        "checks.ai",
+        "checks.visibility",
+        "checks.location",
+        "checks.titleAccepted",
+        "publication.immediate.selected",
+        "receiptRow"
+      ]
+    }
+  },
+  "xiaohongshu": {
+    "home": "https://creator.xiaohongshu.com",
+    "list": "https://creator.xiaohongshu.com/new/note-manager",
+    "entry": "发布视频笔记",
+    "title": "input[placeholder=\"填写标题会有更多赞哦\"]",
+    "editor": ".tiptap.ProseMirror",
+    "ai": "笔记含AI合成内容",
+    "publish": "发布",
+    "coverSteps": [
+      {
+        "click": "编辑封面"
+      },
+      {
+        "input": "input[aria-label=\"上传封面图片\"]",
+        "asset": "portrait"
+      },
+      {
+        "click": "完成"
+      }
+    ],
+    "aiSteps": [
+      {
+        "click": "添加内容类型声明"
+      },
+      {
+        "click": "笔记含AI合成内容"
+      }
+    ],
+    "tagMode": "inline",
+    "editorUrl": "https://creator.xiaohongshu.com/publish/publish?from=menu&target=video",
+    "videoInput": "input.upload-input",
+    "calibration": {
+      "status": "requires-current-editor-verification",
+      "source": "2026-09-11发布trace；入口与字段已观察，上传完成标志/最终设置/裁切弹窗需按当前页校准",
+      "required": [
+        "uploadReady",
+        "checks.upload",
+        "checks.cover",
+        "checks.ai",
+        "checks.visibility",
+        "checks.location",
+        "checks.titleAccepted",
+        "publication.immediate.selected",
+        "receiptRow"
+      ]
+    }
+  },
+  "channels": {
+    "home": "https://channels.weixin.qq.com/platform",
+    "list": "https://channels.weixin.qq.com/platform/post/list",
+    "entry": "发表视频",
+    "title": "input[placeholder=\"填写短标题有机会获得更多流量\"]",
+    "editor": ".input-editor[contenteditable]",
+    "ai": "含AI生成内容",
+    "publish": "发表",
+    "coverSteps": [
+      {
+        "click": "编辑"
+      },
+      {
+        "input": "input[type=\"file\"][accept=\"image/jpeg,image/jpg,image/png\"]",
+        "asset": "portrait"
+      },
+      {
+        "click": "确认"
+      }
+    ],
+    "aiSteps": [
+      {
+        "click": "选择视频标注"
+      },
+      {
+        "click": "含AI生成内容"
+      }
+    ],
+    "originalSteps": [
+      {
+        "checkNear": "声明原创"
+      },
+      {
+        "checkNear": "我已阅读并同意"
+      },
+      {
+        "click": "声明原创",
+        "selector": "button"
+      }
+    ],
+    "tagMode": "inline",
+    "videoInput": "input[type=\"file\"][accept*=\"video\"]",
+    "publication": {
+      "immediate": {
+        "selected": "input[type=\"radio\"][value=\"0\"]"
+      }
+    },
+    "calibration": {
+      "status": "requires-current-editor-verification",
+      "source": "2026-09-11发布trace；入口与字段已观察，上传完成标志/最终设置/裁切弹窗需按当前页校准",
+      "required": [
+        "uploadReady",
+        "checks.upload",
+        "checks.cover",
+        "checks.ai",
+        "checks.visibility",
+        "checks.location",
+        "checks.titleAccepted",
+        "publication.immediate.selected",
+        "receiptRow"
+      ]
+    }
+  }
+}

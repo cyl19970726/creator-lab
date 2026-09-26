@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>创作工作台</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/workspace.css" />
+    <link rel="stylesheet" href="/runtime.css" />
+    <link rel="stylesheet" href="/collaboration.css" />
+    <link rel="stylesheet" href="/accounts.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">跳到内容</a>
+    <div id="app"><p class="boot">正在读取真实产物…</p></div>
+    <dialog id="image-dialog" aria-label="图片查看">
+      <div class="image-toolbar">
+        <div class="image-zoom-controls" aria-label="图片缩放">
+          <button data-image-fit aria-pressed="true">适合屏幕</button>
+          <button data-image-original aria-pressed="false">原尺寸</button>
+          <button data-image-zoom="-0.25" aria-label="缩小图片">−</button>
+          <output data-image-scale aria-live="polite">加载中…</output>
+          <button data-image-zoom="0.25" aria-label="放大图片">+</button>
+        </div>
+        <form method="dialog">
+          <button aria-label="关闭图片">关闭 ×</button>
+        </form>
+      </div>
+      <div
+        class="image-viewport"
+        tabindex="0"
+        role="region"
+        aria-label="图片画布，可滑动或使用方向键查看细节"
+      >
+        <div class="image-canvas"><img alt="图片详情" draggable="false" /></div>
+      </div>
+      <div class="image-help">
+        <span>放大后滑动查看；电脑可拖动或使用方向键。</span
+        ><a data-image-source target="_blank" rel="noopener">打开原图 ↗</a>
+      </div>
+    </dialog>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

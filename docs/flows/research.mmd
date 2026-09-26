@@ -1,0 +1,13 @@
+flowchart LR
+A["A1 对齐目的<br/>任务书与核心问题"] --> B["A2 分题研究与综合<br/>证据、机制、最新变化、缺口"]
+B --> C["A3 架构、图文与审阅<br/>详细报告、解释图、复验"]
+C --> U["用户审阅<br/>接受具体版本与范围"]
+C -->|研究不足| B
+U -->|研究意见| B
+U -->|表达意见| C
+classDef blue fill:#e3efff,stroke:#5880c0,color:#163660;
+classDef purple fill:#eee7fc,stroke:#9776c4,color:#49336b;
+classDef green fill:#def3eb,stroke:#52a28a,color:#164b3e;
+classDef orange fill:#fff0d9,stroke:#d4a054,color:#624219;
+classDef pink fill:#f9e4ed,stroke:#c47b99,color:#6a344c;
+class A blue; class B purple; class C green; class U orange;

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 2,
+  "workspaces": [
+    {
+      "id": "creation",
+      "name": "创作工作台",
+      "kind": "account",
+      "aliases": [],
+      "channels": [],
+      "positioning": {
+        "purpose": {
+          "value": "",
+          "status": "unknown",
+          "sources": []
+        },
+        "readers": {
+          "value": "",
+          "status": "unknown",
+          "sources": []
+        },
+        "promise": {
+          "value": "",
+          "status": "unknown",
+          "sources": []
+        }
+      },
+      "topicIds": []
+    },
+    {
+      "id": "history-unassigned",
+      "name": "历史待归属",
+      "kind": "unassigned",
+      "aliases": [],
+      "topicIds": []
+    }
+  ],
+  "topicAssignments": {}
+}

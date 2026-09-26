@@ -1,0 +1,19 @@
+{
+  "name": "@signal-room/adapters",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "0.154.0",
+    "@signal-room/workflow": "workspace:*",
+    "@signal-room/workflow-codex": "workspace:*",
+    "@signal-room/workflow-sqlite": "workspace:*",
+    "@signal-room/research": "workspace:*",
+    "@signal-room/contracts": "workspace:*",
+    "undici": "^7.29.0",
+    "zod": "^3.25.76"
+  }
+}

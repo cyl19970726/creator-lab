@@ -1,0 +1,712 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "video-content-reconstruction/reconstruction.schema.json",
+  "title": "Evidence-backed video reconstruction",
+  "type": "object",
+  "required": ["schemaVersion", "evidencePack", "probe", "protocol", "scopeStatement", "viewerChange", "derivedSources", "transcript", "knowledgeUnits", "relations", "coverageMatrix", "metaGate"],
+  "properties": {
+    "schemaVersion": { "enum": ["video-reconstruction-1.0", "video-reconstruction-2.0"] },
+    "evidencePack": { "type": "string" },
+    "probe": { "type": "string" },
+    "protocol": { "type": "string" },
+    "scopeStatement": { "type": "string", "minLength": 1 },
+    "viewerChange": { "type": "object" },
+    "derivedSources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "path", "kind", "producedBy", "timeRange", "limitations"],
+        "properties": {
+          "id": { "type": "string" },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Exact relative filename of a real local file under the candidate root, for example media-preparation.json or post-source-input.json. Filename only: do not append a JSON Pointer or URL-style fragment such as #/sourceMedia or #facts/title. Keep the source ID in evidence.ref; put field-level location/context in evidence.supports."
+          },
+          "kind": { "type": "string" },
+          "producedBy": { "type": "string" },
+          "timeRange": { "$ref": "#/$defs/range" },
+          "limitations": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "transcript": {
+      "type": "object",
+      "required": ["origin", "cues"],
+      "properties": {
+        "origin": { "type": "string" },
+        "cues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "start", "end", "text", "representativeFrame", "overlappingShots"],
+            "properties": {
+              "id": { "type": "string" },
+              "start": { "type": "number" },
+              "end": { "type": "number" },
+              "text": { "type": "string" },
+              "representativeFrame": { "type": "string" },
+              "overlappingShots": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "knowledgeUnits": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/unit" } },
+    "builderLenses": { "$ref": "#/$defs/builderLenses" },
+    "depthContractVersion": { "const": "single-post-depth@1" },
+    "relations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "to", "relation", "evidence"],
+        "properties": {
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "relation": { "type": "string" },
+          "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }
+        }
+      }
+    },
+    "coverageMatrix": { "$ref": "#/$defs/coverage" },
+    "metaGate": {
+      "type": "object",
+      "required": ["question", "pass", "uncheckedChannels", "overlookedMeaningChanges", "overlookedRelationships", "rationale"],
+      "properties": {
+        "questionId": { "const": "uncovered_information_audit" },
+        "question": { "type": "string", "minLength": 1 },
+        "pass": { "type": "boolean" },
+        "uncheckedChannels": { "type": "array", "items": { "type": "string" } },
+        "overlookedMeaningChanges": { "type": "array", "items": { "type": "string" } },
+        "overlookedRelationships": { "type": "array", "items": { "type": "string" } },
+        "rationale": { "type": "string" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "schemaVersion": { "const": "video-reconstruction-2.0" } } },
+      "then": { "required": ["builderLenses"] }
+    },
+    {"if": {"required": ["depthContractVersion"]}, "then": {"properties": {"builderLenses": {"properties": {"directingLogic": {"required": ["packagingAnalysis"]}, "visualEditing": {"required": ["openingAnalysis"]}}}}}}
+  ],
+  "$defs": {
+    "packagingAnalysis": {
+      "type": "object",
+      "required": [
+        "title",
+        "cover",
+        "firstFrame",
+        "fulfillment",
+        "unknowns"
+      ],
+      "properties": {
+        "title": {
+          "$ref": "#/$defs/packagingSurface"
+        },
+        "cover": {
+          "$ref": "#/$defs/packagingSurface"
+        },
+        "firstFrame": {
+          "$ref": "#/$defs/packagingSurface"
+        },
+        "fulfillment": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "origin",
+              "promise",
+              "status",
+              "bodyEvidenceRefs",
+              "explanation"
+            ],
+            "properties": {
+              "origin": {
+                "enum": [
+                  "title",
+                  "cover",
+                  "first_sentence"
+                ]
+              },
+              "promise": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "enum": [
+                  "fulfilled",
+                  "partial",
+                  "not_shown",
+                  "unknown"
+                ]
+              },
+              "bodyEvidenceRefs": {
+                "type": "array",
+                "description": "IDs of actual source evidence supporting the body's fulfillment of this promise: registered cues, shots, frames, targeted frames, OCR lines, or derived sources. Do not use knowledge-unit IDs (KU-*), content-block IDs, file paths, or JSON pointers. Resolve a knowledge unit to the specific source evidence that supports the fulfillment claim.",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "explanation": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "unknowns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "packagingSurface": {
+      "type": "object",
+      "required": [
+        "state",
+        "sourceRef",
+        "audience",
+        "promise",
+        "tension",
+        "specificity",
+        "searchTerms",
+        "composition",
+        "typeHierarchy",
+        "smallSizeReadability",
+        "evidenceRefs",
+        "unknowns"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "available",
+            "partial",
+            "missing"
+          ]
+        },
+        "sourceRef": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "audience": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "promise": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tension": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "specificity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "searchTerms": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "composition": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "typeHierarchy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "smallSizeReadability": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "unknowns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "openingAnalysis": {
+      "type": "object",
+      "required": [
+        "duration",
+        "inspectionBasis",
+        "segments",
+        "unknowns"
+      ],
+      "properties": {
+        "duration": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 10
+        },
+        "inspectionBasis": {
+          "type": "string",
+          "minLength": 1
+        },
+        "segments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "timeRange",
+              "boundaryReason",
+              "spokenWords",
+              "burnedCaptions",
+              "composition",
+              "motion",
+              "audioRole",
+              "evidenceArrival",
+              "viewerQuestion",
+              "meaningChange",
+              "alignmentStatus",
+              "evidenceRefs",
+              "frameRefs",
+              "unknowns"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "timeRange": {
+                "$ref": "#/$defs/range"
+              },
+              "boundaryReason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "spokenWords": {
+                "type": "string",
+                "minLength": 1
+              },
+              "burnedCaptions": {
+                "type": "string",
+                "minLength": 1
+              },
+              "composition": {
+                "type": "string",
+                "minLength": 1
+              },
+              "motion": {
+                "type": "string",
+                "minLength": 1
+              },
+              "audioRole": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidenceArrival": {
+                "type": "string",
+                "minLength": 1
+              },
+              "viewerQuestion": {
+                "type": "string",
+                "minLength": 1
+              },
+              "meaningChange": {
+                "type": "string",
+                "minLength": 1
+              },
+              "alignmentStatus": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidenceRefs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "frameRefs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "unknowns": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "unknowns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "range": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "number", "minimum": 0 },
+        "end": { "type": "number", "minimum": 0 }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["refType", "ref", "supports"],
+      "properties": {
+        "refType": { "enum": ["cue", "shot", "frame", "targeted_frame", "ocr", "source"] },
+        "ref": { "type": "string" },
+        "supports": { "type": "string" }
+      }
+    },
+    "unit": {
+      "type": "object",
+      "required": ["id", "title", "importance", "statement", "provenance", "timeRange", "evidence", "confidence", "unknowns"],
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "importance": { "enum": ["core", "supporting", "context"] },
+        "statement": { "type": "string" },
+        "provenance": { "enum": ["raw_fact", "visual_observation", "author_claim", "system_inference", "unknown"] },
+        "timeRange": { "$ref": "#/$defs/range" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "confidence": { "enum": ["high", "medium", "low"] },
+        "reasoning": { "type": "string" },
+        "procedural": { "$ref": "#/$defs/procedural" },
+        "argument": { "$ref": "#/$defs/argument" },
+        "unknowns": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["channels", "meaningChanges", "relationships", "criticalQuestions", "cueAccountability", "coreEvidence", "unknowns", "uncheckedChannels"],
+      "properties": {
+        "channels": { "type": "array", "items": { "type": "object", "required": ["id", "available", "inspected"], "properties": { "id": { "type": "string" }, "available": { "type": "boolean" }, "inspected": { "type": "boolean" }, "inspectionStatus": { "enum": ["absent", "unchecked", "checked_readable", "checked_unreadable"] }, "inspectionRationale": { "type": "string", "minLength": 1 } } } },
+        "meaningChanges": { "type": "array", "items": { "type": "object", "required": ["id", "captured", "unitIds"], "properties": { "id": { "type": "string" }, "captured": { "type": "boolean" }, "unitIds": { "type": "array", "items": { "type": "string" } } } } },
+        "relationships": { "type": "array", "items": { "type": "object", "required": ["id", "evidenced", "evidenceRefs"], "properties": { "id": { "type": "string" }, "evidenced": { "type": "boolean" }, "evidenceRefs": { "type": "array", "items": { "type": "string" } } } } },
+        "criticalQuestions": { "type": "array", "items": { "type": "object", "required": ["id", "status", "unitIds", "evidenceRefs"], "properties": { "id": { "type": "string" }, "status": { "enum": ["answered", "unknown"] }, "unitIds": { "type": "array", "items": { "type": "string" } }, "evidenceRefs": { "type": "array", "items": { "type": "string" } } } } },
+        "cueAccountability": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["cueId", "disposition", "unitIds", "rationale"],
+            "properties": {
+              "cueId": { "type": "string" },
+              "disposition": { "enum": ["knowledge", "context", "nonsemantic", "uncertain"] },
+              "unitIds": { "type": "array", "items": { "type": "string" } },
+              "rationale": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "coreEvidence": { "type": "object", "required": ["covered", "total"], "properties": { "covered": { "type": "integer", "minimum": 0 }, "total": { "type": "integer", "minimum": 0 } } },
+        "unknowns": { "type": "array" },
+        "uncheckedChannels": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "procedural": {
+      "type": "object",
+      "required": ["input", "actions", "parameters", "output", "beforeFrames", "duringFrames", "afterFrames", "unknowns"],
+      "properties": {
+        "input": { "type": "string" },
+        "actions": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "parameters": { "type": "array", "items": { "type": "string" } },
+        "output": { "type": "string" },
+        "beforeFrames": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "duringFrames": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "afterFrames": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "unknowns": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "argument": {
+      "type": "object",
+      "required": ["claim", "evidenceUnitIds", "conditions", "counterexamples", "actions", "limits"],
+      "properties": {
+        "claim": { "type": "string" },
+        "evidenceUnitIds": { "type": "array", "items": { "type": "string" } },
+        "conditions": { "type": "array", "items": { "type": "string" } },
+        "counterexamples": { "type": "array", "items": { "type": "string" } },
+        "actions": { "type": "array", "items": { "type": "string" } },
+        "limits": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "builderLenses": {
+      "type": "object",
+      "required": ["contentRestoration", "directingLogic", "visualEditing"],
+      "properties": {
+        "contentRestoration": {
+          "type": "object",
+          "required": ["summary", "blocks", "unknowns"],
+          "properties": {
+            "summary": { "type": "string", "minLength": 1 },
+            "blocks": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/contentBlock" } },
+            "unknowns": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "directingLogic": { "$ref": "#/$defs/directingLogic" },
+        "visualEditing": { "$ref": "#/$defs/visualEditing" }
+      }
+    },
+    "contentBlock": {
+      "type": "object",
+      "required": ["id", "type", "title", "body", "timeRange", "evidenceRefs"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["text", "single_frame", "annotated_crop", "before_after", "operation_sequence", "frame_strip", "claim_boundary", "unknown", "paragraph", "key_frame", "detail_crop", "boundary"] },
+        "title": { "type": "string", "minLength": 1 },
+        "body": { "type": "string", "minLength": 1 },
+        "timeRange": { "$ref": "#/$defs/range" },
+        "evidenceRefs": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "frameRefs": { "type": "array", "items": { "type": "string" } },
+        "visuals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ref", "role", "focus", "proves", "cannotProve"],
+            "properties": {
+              "ref": { "type": "string", "minLength": 1 },
+              "role": { "enum": ["key_frame", "detail_crop", "before", "during", "after", "sequence"] },
+              "focus": { "type": "string", "minLength": 1 },
+              "proves": { "type": "string", "minLength": 1 },
+              "cannotProve": { "type": "string", "minLength": 1 },
+              "crop": {
+                "type": "object",
+                "required": ["x", "y", "width", "height"],
+                "properties": {
+                  "x": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "y": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                  "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+                }
+              }
+            }
+          }
+        },
+        "beforeFrameRef": { "type": "string" },
+        "afterFrameRef": { "type": "string" },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["label", "description", "frameRefs"],
+            "properties": {
+              "label": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 },
+              "frameRefs": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+            }
+          }
+        },
+        "boundary": { "type": "string" }
+      }
+    },
+    "directingLogic": {
+      "type": "object",
+      "required": ["viewerBefore", "viewerAfter", "activatedQuestion", "promise", "payoff", "endingResolution", "stages", "informationDesign", "proofDesign", "loadAndPayoff", "notes"],
+      "properties": {
+        "packagingAnalysis": { "$ref": "#/$defs/packagingAnalysis" },
+        "viewerBefore": { "type": "string", "minLength": 1 },
+        "viewerAfter": { "type": "string", "minLength": 1 },
+        "activatedQuestion": { "type": "string", "minLength": 1 },
+        "promise": { "type": "string", "minLength": 1 },
+        "payoff": { "type": "string", "minLength": 1 },
+        "endingResolution": { "type": "string", "minLength": 1 },
+        "stages": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/directingStage" } },
+        "informationDesign": { "type": "array", "items": { "$ref": "#/$defs/timedStatement" } },
+        "proofDesign": { "type": "array", "items": { "$ref": "#/$defs/proofStatement" } },
+        "loadAndPayoff": {
+          "type": "object",
+          "required": ["compression", "repetition", "payoffDistance", "comprehensionCosts"],
+          "properties": {
+            "compression": { "type": "string", "minLength": 1 },
+            "repetition": { "type": "string", "minLength": 1 },
+            "payoffDistance": { "type": "string", "minLength": 1 },
+            "comprehensionCosts": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "directingStage": {
+      "type": "object",
+      "required": ["label", "timeRange", "viewerQuestion", "function", "proof", "cognitiveChange", "comprehensionLoad", "payoff", "evidenceRefs"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "timeRange": { "$ref": "#/$defs/range" },
+        "viewerQuestion": { "type": "string", "minLength": 1 },
+        "function": { "type": "string", "minLength": 1 },
+        "proof": { "type": "string", "minLength": 1 },
+        "cognitiveChange": { "type": "string", "minLength": 1 },
+        "comprehensionLoad": { "type": "string", "minLength": 1 },
+        "payoff": { "type": "string", "minLength": 1 },
+        "evidenceRefs": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    },
+    "timedStatement": {
+      "type": "object",
+      "required": ["kind", "statement", "timeRange", "evidenceRefs"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "statement": { "type": "string", "minLength": 1 },
+        "timeRange": { "$ref": "#/$defs/range" },
+        "evidenceRefs": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    },
+    "proofStatement": {
+      "type": "object",
+      "required": ["proofType", "statement", "boundary", "timeRange", "evidenceRefs"],
+      "properties": {
+        "proofType": { "enum": ["visible_proof", "creator_claim", "system_inference"] },
+        "statement": { "type": "string", "minLength": 1 },
+        "boundary": { "type": "string", "minLength": 1 },
+        "timeRange": { "$ref": "#/$defs/range" },
+        "evidenceRefs": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    },
+    "visualEditing": {
+      "type": "object",
+      "required": ["orientation", "composition", "shotCount", "cutsPerMinute", "resultFirstAt", "analyzedDuration", "carriers", "claims", "shotSemantics", "uiProcedureStates", "transitions", "rhythm", "missingBridges", "audioRole", "notes"],
+      "properties": {
+        "openingAnalysis": { "$ref": "#/$defs/openingAnalysis" },
+        "orientation": { "type": ["string", "null"] },
+        "composition": { "type": "string", "minLength": 1 },
+        "shotCount": { "type": "integer", "minimum": 0 },
+        "cutsPerMinute": { "type": "number", "minimum": 0 },
+        "shotMetricBasis": { "type": "string", "minLength": 1 },
+        "resultFirstAt": { "type": ["number", "null"], "minimum": 0 },
+        "analyzedDuration": { "type": "number", "minimum": 0 },
+        "carriers": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/visualCarrier" } },
+        "claims": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/visualClaim" } },
+        "shotSemantics": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/shotSemantic" } },
+        "uiProcedureStates": { "type": "array", "items": { "$ref": "#/$defs/uiProcedureState" } },
+        "transitions": { "type": "array", "items": { "$ref": "#/$defs/visualTransition" } },
+        "rhythm": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/rhythmSegment" } },
+        "missingBridges": { "type": "array", "items": { "$ref": "#/$defs/missingBridge" } },
+        "audioRole": { "type": ["string", "null"] },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "visualCarrier": {
+      "type": "object",
+      "required": ["name", "roles", "timeRange"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "roles": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "timeRange": { "$ref": "#/$defs/range" }
+      }
+    },
+    "visualClaim": {
+      "type": "object",
+      "required": ["statement", "function", "timeRange", "evidenceRefs"],
+      "properties": {
+        "statement": { "type": "string", "minLength": 1 },
+        "function": { "type": "string", "minLength": 1 },
+        "timeRange": { "$ref": "#/$defs/range" },
+        "evidenceRefs": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    },
+    "shotSemantic": {
+      "type": "object",
+      "required": ["timeRange", "role", "carrier", "meaningChange", "evidenceRefs"],
+      "properties": {
+        "timeRange": { "$ref": "#/$defs/range" },
+        "role": { "type": "string", "minLength": 1 },
+        "carrier": { "type": "string", "minLength": 1 },
+        "meaningChange": { "type": "string", "minLength": 1 },
+        "evidenceRefs": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    },
+    "uiProcedureState": {
+      "type": "object",
+      "required": ["label", "before", "during", "after", "parameters", "continuity", "timeRange", "evidenceRefs"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "before": { "type": "string", "minLength": 1 },
+        "during": { "type": "string", "minLength": 1 },
+        "after": { "type": "string", "minLength": 1 },
+        "input": { "type": ["string", "null"] },
+        "parameters": { "type": "array", "items": { "type": "string" } },
+        "output": { "type": ["string", "null"] },
+        "continuity": { "type": "string", "minLength": 1 },
+        "timeRange": { "$ref": "#/$defs/range" },
+        "evidenceRefs": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    },
+    "visualTransition": {
+      "type": "object",
+      "required": ["timeRange", "from", "to", "mechanism", "function", "evidenceRefs"],
+      "properties": {
+        "timeRange": { "$ref": "#/$defs/range" },
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "mechanism": { "type": "string", "minLength": 1 },
+        "function": { "type": "string", "minLength": 1 },
+        "evidenceRefs": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    },
+    "rhythmSegment": {
+      "type": "object",
+      "required": ["timeRange", "pace", "density", "function", "evidenceRefs"],
+      "properties": {
+        "timeRange": { "$ref": "#/$defs/range" },
+        "pace": { "type": "string", "minLength": 1 },
+        "density": { "type": "string", "minLength": 1 },
+        "function": { "type": "string", "minLength": 1 },
+        "evidenceRefs": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    },
+    "missingBridge": {
+      "type": "object",
+      "required": ["timeRange", "statement", "impact", "evidenceRefs"],
+      "properties": {
+        "timeRange": { "$ref": "#/$defs/range" },
+        "statement": { "type": "string", "minLength": 1 },
+        "impact": { "type": "string", "minLength": 1 },
+        "evidenceRefs": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@creator-lab/creation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node apps/workbench/server.mjs",
+    "build": "node apps/workbench/build.mjs",
+    "test": "node --test apps/workbench/tests/*.test.mjs",
+    "test:expression": "node --test tooling/expression-workflow/*.test.mjs",
+    "test:publish": "node --test tooling/social-publish/*.test.mjs",
+    "expression": "node tooling/expression-workflow/cli.mjs"
+  },
+  "dependencies": {
+    "markdown-it": "14.1.0",
+    "mermaid": "11.12.0",
+    "@signal-room/workflow": "workspace:*",
+    "@signal-room/workflow-codex": "workspace:*",
+    "@signal-room/workflow-sqlite": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.9",
+    "@playwright/test": "1.55.0"
+  }
+}

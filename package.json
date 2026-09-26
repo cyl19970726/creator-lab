@@ -1,0 +1,24 @@
+{
+  "name": "creator-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.2",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "docs:build": "node scripts/build-docs.mjs",
+    "build:workflow": "pnpm --filter @signal-room/workflow build && pnpm --filter @signal-room/workflow-codex build && pnpm --filter @signal-room/workflow-sqlite build && pnpm --filter @signal-room/workflow-read-model build",
+    "research": "pnpm --dir workbenches/research api",
+    "research:worker": "pnpm --dir workbenches/research worker",
+    "analysis": "pnpm --dir workbenches/analysis dev",
+    "creation": "pnpm --dir workbenches/creation dev",
+    "build": "pnpm build:workflow && pnpm --dir workbenches/research build && pnpm --dir workbenches/analysis build && pnpm --dir workbenches/creation build"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.9",
+    "mermaid": "11.12.0",
+    "@types/node": "^24.2.1",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
