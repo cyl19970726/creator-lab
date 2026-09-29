@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { scriptMarkdown, storyboardMarkdown } from '../src/stages/b3.js';
+import { locatedErrors, scriptMarkdown, storyboardMarkdown } from '../src/stages/b3.js';
 
 const segments = [
   { time: '0–18秒', voiceover: '只判答案，AI 的答对率\n就能涨？', onScreenText: '15.6% → 77.9%｜论文报告', visual: '数字占满竖屏' },
@@ -13,6 +13,14 @@ describe('B3 assembly-line files', () => {
     expect(md).toMatch(/^### Line 02 — 18–30秒 \(F02 · ~12s\)$/m);
     expect(md).toContain('\n    只判答案，AI 的答对率就能涨？\n');
     expect(md).toContain('占位');
+  });
+
+  test('turns technical check errors into frame-located fix requests', () => {
+    const report = { ok: false, layout: { findings: [
+      { code: 'content_overlap', severity: 'error', message: 'Two text blocks overlap', selector: '#f06-archive', sourceFile: 'compositions/frames/06-glm-training.html', time: 47.2 },
+      { code: 'container_overflow', severity: 'info', message: 'ignored', sourceFile: 'compositions/frames/03-rule-loop.html' },
+    ] } };
+    expect(locatedErrors(report)).toEqual([{ line: '06', code: 'content_overlap', message: 'Two text blocks overlap', selector: '#f06-archive', time: 47.2 }]);
   });
 
   test('marks the first beat as the cover beat so render can pick a cover frame', () => {

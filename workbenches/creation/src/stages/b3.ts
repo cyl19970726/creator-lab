@@ -16,7 +16,7 @@ import {
  * → render) runs as workflow tasks, a designer agent writes the frame specs inside the episode project,
  * and an inspector agent must actually open the snapshot contact sheets before judging.
  */
-export const B3_REVISION = 'b3-v6';
+export const B3_REVISION = 'b3-v7';
 export const b3StandardsPath = fileURLToPath(new URL('./standards/b3.md', import.meta.url));
 
 const segmentSchema = z.object({ time: z.string(), voiceover: z.string().min(1), onScreenText: z.string(), visual: z.string().min(1) });
@@ -113,6 +113,25 @@ export function storyboardMarkdown(title: string, segments: B3Input['script']['s
   return [`# STORYBOARD — ${title}`, '', 'cover_beat: 1', '', ...beats].join('\n');
 }
 
+/** Technical check errors with the frame and element they point at, so the designer can fix them without searching. */
+export function locatedErrors(checkJson: unknown): Array<{ line: string; code: string; message: string; selector: string; time: number | null }> {
+  const found: Array<{ line: string; code: string; message: string; selector: string; time: number | null }> = [];
+  const walk = (node: unknown) => {
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+    if (!node || typeof node !== 'object') return;
+    const item = node as Record<string, unknown>;
+    if (item.severity === 'error' && typeof item.code === 'string') {
+      const source = String(item.sourceFile ?? '');
+      const line = source.match(/frames\/(\d\d)-/)?.[1] ?? 'all';
+      found.push({ line, code: item.code, message: String(item.message ?? ''), selector: String(item.selector ?? ''), time: typeof item.time === 'number' ? item.time : null });
+      return;
+    }
+    Object.values(item).forEach(walk);
+  };
+  walk(checkJson);
+  return found;
+}
+
 export function createB3Workflow(config: B3Input, model: { worker: StageModel; judge: StageModel }): WorkflowDefinition<B3Input, WorkflowTerminal<never>> {
   const frozen = b3InputSchema.parse(config);
   const designer = stageAgent<unknown, Design>(B3_ROLES.designer, model.judge, B3_REVISION, {
@@ -204,10 +223,12 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
           try { technical = run(dir, 'bash', ['scripts/hf-check.sh']); }
           catch (error) { technical = String((error as { stdout?: string }).stdout ?? error); }
           technical = technical.slice(-1500);
+          let errors: ReturnType<typeof locatedErrors> = [];
+          try { errors = locatedErrors(JSON.parse(readFileSync(path.join(dir, '.hf/check.json'), 'utf8'))); } catch { errors = []; }
           const snapshots = run(dir, 'bash', ['scripts/snapshot-review.sh']).slice(-1500);
           const sheets = readdirSync(path.join(dir, 'snapshots/review')).filter(f => /^contact-\d+\.jpg$/.test(f)).sort()
             .map(f => path.join(dir, 'snapshots/review', f));
-          return { index, retime, technical, green: /→\s*GREEN/.test(technical), snapshots, sheets, settle: readFileSync(path.join(dir, 'snapshots/settle.txt'), 'utf8').trim() };
+          return { index, retime, technical, errors, green: /→\s*GREEN/.test(technical), snapshots, sheets, settle: readFileSync(path.join(dir, 'snapshots/settle.txt'), 'utf8').trim() };
         }, { round });
         const ref = await phase.publish('assembly', 'b3-assembly', report, { validation: 'valid', review: 'not_applicable', dependsOn: [dependency(designed.ref)] });
         await phase.bindArtifact(ref, { role: 'assembly', title: '装配报告', primary: true });
@@ -219,7 +240,9 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
         const technicalFix: Inspection = {
           imagesOpened: [], verdict: 'revise', summary: '技术检查未通过（hf-check RED），先修技术问题再看画面',
           criteria: [{ id: 'V5', result: 'fail', reason: '技术检查报错' }],
-          issues: [{ line: 'all', standard: 'hf-check', problem: assembled.report.technical, fix: '按报错修改相关帧规格，直到 hf-check GREEN' }],
+          issues: assembled.report.errors.length
+            ? assembled.report.errors.map(e => ({ line: e.line, standard: `hf-check:${e.code}`, problem: `${e.message}（元素 ${e.selector}${e.time !== null ? `，${e.time}s` : ''}）`, fix: '只改这一帧里这个元素的位置或尺寸，消除报错，不动其他内容' }))
+            : [{ line: 'all', standard: 'hf-check', problem: assembled.report.technical, fix: '按报错修改相关帧规格，直到 hf-check GREEN' }],
         };
         return { inspection: technicalFix, inspectionRef: assembled.ref, sheets: assembled.report.sheets, technicalRed: true };
       }
