@@ -1,9 +1,15 @@
-# 创作工作台迁移范围
+# Creation implementation scope
 
-本目录移植 token-economics 的现有创作工作台、表达执行入口与发布工具。保留 vanilla JavaScript/esbuild，不重设计产品。B1内容定位 → B2表达设计 → B3制作与视听复验 → C1交付 → C2反馈。旧A资产仅作可选输入阅读，不包含研究执行实现。
+The existing app is a migrated baseline, not an architecture constraint. On 2026-09-29 the user explicitly authorized a fresh implementation without retaining old UI, API, CLI, path or database compatibility. The proposed TypeScript web/API/worker architecture, rationale and implementation status live in `docs/workflows/creation-platform-design.md`; a design document does not prove implementation.
 
-方法正本是本目录`.agents/skills`完整项目包。来源Skill中的Token经济猫定位、历史作品、账号、接受和自动化描述是来源上下文，不授权本项目生产、发布或回复评论；本期身份、渠道与具体接受始终由当前清单/真实决定指定。无全局Skill安装。
+B1 content definition, B2 composition/expression and B3 production/verification are composable responsibilities, not three mandatory workflows or approval gates. Research and analysis remain independent optional input providers. C1 delivery/publication and C2 feedback are separate lifecycle concerns.
 
-默认无作品或渠道。CREATION_CONTENT_ROOT/CREATION_MEDIA_ROOT仅显式选用历史文件；CREATION_STATE_ROOT保存本工作台私有账本。不得把历史正文目录同时作为默认私有库位置。原始资产不由工作台改写；意见、修改和决定绑定真实版本与范围。启动服务不运行模型或发布；expression run与发布提交是独立显式命令。
+Use the root Node 24 / pnpm workspace and the single `vendor/agent-workflow` submodule. The user permits necessary changes to that shared library. Put general execution semantics there and creation-specific rules here; verify affected consumers when shared contracts change. Do not create a second execution engine or copy vendor source into this workbench.
 
-不要恢复research工作流或旧知识图谱；独立研究工作台由兄弟目录负责。源仓的未提交改动保留，迁移只写本目录。
+Preserve private artifacts, historical decisions and execution evidence separately from legacy code compatibility. New state uses a new schema and explicit state root; import selected historical assets with exact provenance rather than automatically opening or rewriting old databases. Replace old entrypoints after the declared replacement scope works and required data is preserved; do not maintain permanent dual implementations.
+
+Keep complete business-method bundles in this project's `.agents/skills`. Historical identities, accounts, approvals and automation described in source skills are context, not current authorization to publish or reply. Current identity, channels and scope come from actual inputs and decisions. No global skill installation without explicit authorization.
+
+Keep content, media and private state boundaries explicit. Do not overwrite source artifacts; revisions, reviews and decisions bind exact versions and scopes. Starting or refreshing the UI must not trigger model calls or publication. Execution and publication require explicit commands within the user's authorized scope. Current legacy environment variables are implementation details, not permanent new-platform contracts.
+
+Do not restore the research execution service or old knowledge graph here. Preserve source repositories and other worktrees' uncommitted work. Changes outside creation must be directly necessary for this redesign, such as root workspace wiring or an evidenced shared-runtime change.

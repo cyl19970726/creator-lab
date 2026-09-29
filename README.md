@@ -27,7 +27,8 @@ pnpm build
 pnpm research          # 研究工作台，4327
 pnpm research:worker   # 需要执行研究时，另开终端
 pnpm analysis          # 分析 API + 网页开发预览
-pnpm creation          # 创作工作台，4337
+pnpm creation          # 新创作工作台/API，4337
+pnpm creation:worker   # 独立终端：执行显式提交的创作任务
 ```
 
 各工作台的本地资料配置见各自 README。私有报告、运行数据库和媒体不随公开仓库分发。研究执行由独立 worker 处理；分析沿用内嵌 worker 配置，查看历史数据时使用其 README 的只读模式。

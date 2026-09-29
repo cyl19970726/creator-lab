@@ -1,6 +1,6 @@
 # Creator Lab
 
-This repository contains three independent existing workbenches. Keep migration changes small; preserve their existing workflows and user-facing reports.
+This repository contains three independent workbenches. Preserve existing research and analysis workflows and user-facing reports. Creation is authorized for a fresh implementation as described below.
 
 - `workbenches/research`: question, evidence synthesis, illustrated research report.
 - `workbenches/analysis`: single-post and single-creator analysis only.
@@ -9,7 +9,7 @@ This repository contains three independent existing workbenches. Keep migration 
 
 Each workbench owns its complete project-local `.agents/skills` bundles, including scripts, schemas and references. Never install them globally without explicit authorization.
 
-Do not introduce a mandatory order between the workbenches. Keep existing UI and stacks unless a migration dependency requires a change. Preserve source repositories and private runtime data. Do not commit private reports, traces, databases, media, credentials or signed URLs.
+Do not introduce a mandatory order between the workbenches. Keep existing research and analysis UI and stacks unless a migration dependency requires a change. On 2026-09-29 the user explicitly authorized replacing creation without retaining its old UI, API, CLI, directory or database compatibility, and modifying agent-workflow when needed. Follow `workbenches/creation/docs/workflows/creation-platform-design.md` for the proposed architecture and implementation status. Shared-library changes must account for affected consumers; do not break the other workbenches or duplicate the vendor source. Preserve source repositories, historical evidence and private runtime data. Do not commit private reports, traces, databases, media, credentials or signed URLs.
 
 The single-post main report comes exclusively from `reconstruction.json.builderLenses`: complete `contentRestoration`, `directingLogic`, and `visualEditing`. API/UI must not rewrite or replace Builder conclusions. Content restoration remains continuous; evidence appears beside its conclusion. Evaluator output is a separate audit layer.
 

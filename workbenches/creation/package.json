@@ -3,22 +3,43 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node apps/workbench/server.mjs",
-    "build": "node apps/workbench/build.mjs",
-    "test": "node --test apps/workbench/tests/*.test.mjs",
-    "test:expression": "node --test tooling/expression-workflow/*.test.mjs",
+    "dev": "tsx apps/api/main.ts",
+    "dev:web": "vite --config apps/web/vite.config.ts",
+    "worker": "tsx apps/worker/main.ts",
+    "build": "pnpm typecheck && vite build --config apps/web/vite.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
     "test:publish": "node --test tooling/social-publish/*.test.mjs",
-    "expression": "node tooling/expression-workflow/cli.mjs"
+    "check": "pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
     "markdown-it": "14.1.0",
     "mermaid": "11.12.0",
     "@signal-room/workflow": "workspace:*",
     "@signal-room/workflow-codex": "workspace:*",
-    "@signal-room/workflow-sqlite": "workspace:*"
+    "@signal-room/workflow-sqlite": "workspace:*",
+    "@signal-room/workflow-read-model": "workspace:*",
+    "fastify": "^5.6.0",
+    "@fastify/static": "^8.3.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^4.1.0",
+    "fs-ext": "2.1.1"
   },
   "devDependencies": {
     "esbuild": "0.25.9",
-    "@playwright/test": "1.55.0"
+    "@playwright/test": "1.55.0",
+    "typescript": "~5.9.3",
+    "tsx": "^4.20.0",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.4",
+    "@types/node": "^24.2.1",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@types/fs-ext": "^2.0.3",
+    "@vitejs/plugin-react": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }

@@ -7,11 +7,13 @@
   "engines": { "node": ">=24 <25" },
   "scripts": {
     "docs:build": "node scripts/build-docs.mjs",
+    "docs:creation": "node scripts/build-creation-design.mjs",
     "build:workflow": "pnpm --filter @signal-room/workflow build && pnpm --filter @signal-room/workflow-codex build && pnpm --filter @signal-room/workflow-sqlite build && pnpm --filter @signal-room/workflow-read-model build",
     "research": "pnpm --dir workbenches/research api",
     "research:worker": "pnpm --dir workbenches/research worker",
     "analysis": "pnpm --dir workbenches/analysis dev",
     "creation": "pnpm --dir workbenches/creation dev",
+    "creation:worker": "pnpm --dir workbenches/creation worker",
     "build": "pnpm build:workflow && pnpm --dir workbenches/research build && pnpm --dir workbenches/analysis build && pnpm --dir workbenches/creation build"
   },
   "devDependencies": {
