@@ -56,7 +56,10 @@ export interface RoleSpec {
   webSearch?: boolean;
 }
 
-export function stageAgent<Input, Output>(role: RoleSpec, model: StageModel, revision: string) {
+/** Roles that make files (B3) get a writable sandbox plus the project directory they work in. */
+export interface AgentAccess { sandbox: 'read-only' | 'workspace-write'; additionalDirectories?: string[] }
+
+export function stageAgent<Input, Output>(role: RoleSpec, model: StageModel, revision: string, access: AgentAccess = { sandbox: 'read-only' }) {
   return defineAgent<Input, Output>({
     id: role.id,
     revision,
@@ -64,13 +67,14 @@ export function stageAgent<Input, Output>(role: RoleSpec, model: StageModel, rev
     reasoningEffort: model.reasoningEffort,
     promptRevision: revision,
     skillsRevision: 'none',
-    permissionsRevision: role.webSearch ? 'read-only-web-v1' : 'read-only-v1',
+    permissionsRevision: `${access.sandbox}${role.webSearch ? '-web' : ''}-v1`,
     config: {
       prompt: CONTENT_ROLE_PREAMBLE + role.prompt,
       outputSchema: role.outputSchema,
       threadOptions: {
-        sandboxMode: 'read-only',
+        sandboxMode: access.sandbox,
         approvalPolicy: 'never',
+        ...(access.additionalDirectories?.length ? { additionalDirectories: access.additionalDirectories } : {}),
         ...(role.webSearch ? { webSearchMode: 'live' as const } : { webSearchMode: 'disabled' as const }),
       },
       timeoutMs: 900_000,

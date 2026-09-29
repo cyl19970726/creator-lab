@@ -6,11 +6,12 @@ import { runWorkflow, type WorkflowDefinition, type WorkflowTerminal } from '@si
 import { SQLiteWorkflowRunStore } from '@signal-room/workflow-sqlite';
 import { b1InputSchema, createB1Workflow, readB1Standards } from '../src/stages/b1.js';
 import { b2InputSchema, createB2Workflow, readB2Standards } from '../src/stages/b2.js';
+import { b3InputSchema, createB3Workflow, readB3Standards } from '../src/stages/b3.js';
 import { createStageRunner, type StageModel } from '../src/stages/runtime.js';
 
 /**
  * Runs one stage workflow against a real topic and writes every published asset as a readable file.
- *   pnpm stage <b1|b2> <input.json> [--resume <runId>] [--model gpt-6-sol] [--judge-effort high]
+ *   pnpm stage <b1|b2|b3> <input.json> [--resume <runId>] [--model gpt-6-sol] [--judge-effort high]
  * State lives under .local/stages/<topicId>/ (git-ignored): ledger.sqlite, traces/, <stage>/<runId>/.
  */
 const { positionals, values } = parseArgs({
@@ -23,7 +24,7 @@ const { positionals, values } = parseArgs({
   },
 });
 const [stage, inputPath] = positionals;
-if ((stage !== 'b1' && stage !== 'b2') || !inputPath) throw new Error('Usage: run-stage.ts <b1|b2> <input.json> [--resume <runId>]');
+if (!['b1', 'b2', 'b3'].includes(stage ?? '') || !inputPath) throw new Error('Usage: run-stage.ts <b1|b2|b3> <input.json> [--resume <runId>]');
 
 const effort = (value: string | undefined): StageModel['reasoningEffort'] => {
   if (value !== 'low' && value !== 'medium' && value !== 'high') throw new Error(`Unsupported effort: ${value}`);
@@ -52,9 +53,13 @@ function execute<Input>(definition: WorkflowDefinition<Input, WorkflowTerminal<n
     ...(values.resume ? { resumeRunId: values.resume } : {}),
   });
 }
-const { run } = stage === 'b1'
-  ? await execute(createB1Workflow(models), b1InputSchema.parse(withStandards(readB1Standards)))
-  : await execute(createB2Workflow(models), b2InputSchema.parse(withStandards(readB2Standards)));
+async function start() {
+  if (stage === 'b1') return execute(createB1Workflow(models), b1InputSchema.parse(withStandards(readB1Standards)));
+  if (stage === 'b2') return execute(createB2Workflow(models), b2InputSchema.parse(withStandards(readB2Standards)));
+  const input = b3InputSchema.parse(withStandards(readB3Standards));
+  return execute(createB3Workflow(input, models), input);
+}
+const { run } = await start();
 
 const outDir = path.join(root, stage, run.id);
 mkdirSync(outDir, { recursive: true });

@@ -6,6 +6,7 @@ import type { ArtifactRef, StepRecord, WorkflowEvent } from '@signal-room/workfl
 import { SQLiteWorkflowRunStore } from '@signal-room/workflow-sqlite';
 import { B1_ROLES } from '../src/stages/b1.js';
 import { B2_ROLES } from '../src/stages/b2.js';
+import { B3_ROLES } from '../src/stages/b3.js';
 import type { RoleSpec } from '../src/stages/runtime.js';
 
 /**
@@ -24,7 +25,7 @@ const run = requestedRun ? runs.find(r => r.id === requestedRun) : runs.at(-1);
 if (!run) throw new Error(`No run found for ${topicId}${requestedRun ? ` / ${requestedRun}` : ''}`);
 const stage = String(run.metadata?.stage ?? 'b1');
 const roles: Record<string, RoleSpec> = Object.fromEntries(
-  Object.values<RoleSpec>(stage === 'b2' ? B2_ROLES : B1_ROLES).map(role => [role.id, role]),
+  Object.values<RoleSpec>(stage === 'b3' ? B3_ROLES : stage === 'b2' ? B2_ROLES : B1_ROLES).map(role => [role.id, role]),
 );
 
 const steps = await store.listSteps(run.id);
@@ -59,9 +60,9 @@ const lastEvent = events.at(-1)?.timestamp;
 const totalTokens = phases.flatMap(childAgents).map(agentInfo).reduce((sum, a) => sum + (a.usage?.inputTokens ?? 0) + (a.usage?.outputTokens ?? 0), 0);
 
 // ---- the stage's main asset
-const mainRef = stage === 'b2' ? last('b2-script') : last('b1-content-decision');
+const mainRef = stage === 'b3' ? last('b3-script-file') : stage === 'b2' ? last('b2-script') : last('b1-content-decision');
 const main = mainRef ? payloads.get(mainRef.id) : undefined;
-const verdictRef = stage === 'b2' ? last('b2-editor') : last('b1-challenge');
+const verdictRef = stage === 'b3' ? last('b3-inspection') : stage === 'b2' ? last('b2-editor') : last('b1-challenge');
 const verdict = verdictRef ? payloads.get(verdictRef.id) as { verdict?: string; summary?: string; criteria?: Array<{ id: string; result: string; reason: string }>; mustChange?: unknown[] } : undefined;
 const inputFile = path.join(root, stage, run.id, 'input.json');
 const input = existsSync(inputFile) ? JSON.parse(readFileSync(inputFile, 'utf8')) as Record<string, unknown> : undefined;
@@ -174,7 +175,7 @@ pre{white-space:pre-wrap;font:12px/1.55 var(--mono);margin:12px 0}
 a{color:var(--accent)}
 </style></head><body><main>
 <header>
-<div class="stage">${esc(stage.toUpperCase())} · ${esc(stage === 'b2' ? '成稿' : '定题')} · ${esc(topicId)}</div>
+<div class="stage">${esc(stage.toUpperCase())} · ${esc({ b1: '定题', b2: '成稿', b3: '成片' }[stage] ?? stage)} · ${esc(topicId)}</div>
 <h1>${esc(title)}</h1>
 <div class="meta"><span class="pill ${stateClass}">${esc(stateText)}</span><span>${time(firstEvent)} – ${time(lastEvent)}（${Math.round((seconds(firstEvent, lastEvent) ?? 0) / 6) / 10} 分钟）</span><span>内部审阅 ${gate?.rounds ?? '—'} 轮</span><span>约 ${Math.round(totalTokens / 1000)}k tokens</span><span class="mono">run ${esc(run.id.slice(0, 8))} · ${esc(run.workflowRevision)}</span></div>
 <ol class="strip">${strip()}</ol>
@@ -184,7 +185,7 @@ a{color:var(--accent)}
 
 <section><h2>审阅</h2><p class="sub">左边是 workflow 内部的审阅者按标准卡给的判断；右边是你的判断。两边长期一致，这道闸才可以交给 agent。</p>
 <div class="twocol">
-<div class="col"><h3>${esc(stage === 'b2' ? '主编' : '挑战者')} ${verdict?.verdict ? resultPill(verdict.verdict) : ''}</h3><p>${esc(verdict?.summary ?? '尚未审阅')}</p><div class="scroll"><table>${criteriaRows()}</table></div></div>
+<div class="col"><h3>${esc({ b1: '挑战者', b2: '主编', b3: '成品检查' }[stage] ?? '审阅者')} ${verdict?.verdict ? resultPill(verdict.verdict) : ''}</h3><p>${esc(verdict?.summary ?? '尚未审阅')}</p><div class="scroll"><table>${criteriaRows()}</table></div></div>
 <div class="col"><h3>你 ${human?.verdict ? resultPill(human.verdict) : '<span class="pill wait">待审</span>'}</h3>${human ? `<p class="sub">${esc(human.reviewer ?? '')}（针对上一版）</p><ol>${(human.notes ?? []).map(n => `<li>${esc(n)}</li>`).join('')}</ol>` : '<p class="sub">这一版还没有你的审阅。你的意见会写回标准卡，并作为下一轮最高优先级的输入。</p>'}</div>
 </div></section>
 
