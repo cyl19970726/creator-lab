@@ -13,7 +13,7 @@ import type { Published } from './b1.js';
  * Past runs failed by letting evidence review only ever add material; here the fact checker may only
  * flag errors with an equal-or-shorter fix, and the editor arbitrates against the B1 decision and a length budget.
  */
-export const B2_REVISION = 'b2-v4';
+export const B2_REVISION = 'b2-v5';
 export const b2StandardsPath = fileURLToPath(new URL('./standards/b2.md', import.meta.url));
 
 export const b2InputSchema = z.object({
@@ -76,7 +76,7 @@ export const B2_ROLES = {
   writer: {
     id: 'b2-writer', title: '作者',
     guards: '把 B1 的决定写成观众能看完的完整稿。',
-    prompt: `你是竖屏科技视频的编剧。按 B1 内容决定写完整稿：标题、封面字（≤12 字）、按时间切分的段落（每段：时间、口播、屏幕文字、画面意图）。口播约每秒 4 个汉字，总时长不超过给定上限。第一句就是钩子；一段只引入一个新概念，术语出现时立刻给白话；核心机制必须有一个具体例子或类比；结尾留一个可带走的判断并连到账号视角。事实只能来自提供的材料，sourcesUsed 写材料 id。收到 humanReview（创作者本人或其代理的审阅）时优先级最高，逐条落实，包括重排全片结构；收到主编意见时逐条执行 mustChange。任何新增必须替换掉等长的旧内容，并在 changesFromPrevious 说明；首版写"首版"。${COMMON}`,
+    prompt: `你是竖屏科技视频的编剧。按 B1 内容决定写完整稿：标题、封面字（≤12 字）、按时间切分的段落（每段：时间、口播、屏幕文字、画面意图）。口播约每秒 4 个汉字，总时长不超过给定上限。第一句就是钩子；一段只引入一个新概念，术语出现时立刻给白话；核心机制必须有一个具体例子或类比；多个案例时每个案例只占一段、只说明一件事，不要拆开穿插，贯穿全片的图只在第一次出现时完整展开；结尾留一个可带走的判断并连到账号视角。事实只能来自提供的材料，sourcesUsed 写材料 id。收到 humanReview（创作者本人或其代理的审阅）时优先级最高，逐条落实，包括重排全片结构；收到主编意见时逐条执行 mustChange。任何新增必须替换掉等长的旧内容，并在 changesFromPrevious 说明；首版写"首版"。${COMMON}`,
     outputSchema: objectSchema({
       title: str, coverText: str, estimatedSeconds: { type: 'integer' }, segments: listOf(segmentJson),
       sourcesUsed: strList, changesFromPrevious: str,

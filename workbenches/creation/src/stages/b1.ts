@@ -12,7 +12,7 @@ import {
  * Its failure mode in past runs: starting from the research material and describing it, then drowning
  * the result in disclaimers. Each role below exists to catch one specific way B1 goes wrong.
  */
-export const B1_REVISION = 'b1-v2';
+export const B1_REVISION = 'b1-v6';
 
 export const b1StandardsPath = fileURLToPath(new URL('./standards/b1.md', import.meta.url));
 
@@ -86,6 +86,7 @@ const decisionSchema = z.object({
   notSaying: z.array(z.string()).min(1),
   biggestRisk: z.string().min(1),
   openQuestions: z.array(z.string()),
+  alternativesConsidered: z.array(z.object({ answer: z.string(), whyNotChosen: z.string() })).min(1),
   changesFromPrevious: z.string(),
 });
 const challengeSchema = z.object({
@@ -117,7 +118,7 @@ export const B1_ROLES = {
   evidence: {
     id: 'b1-evidence', title: '材料对答',
     guards: '防止"材料答非所问"：逐个子问题检查材料能不能回答，发现缺口。',
-    prompt: `你是研究编辑。把观众的核心问题拆成 3–6 个必须回答的子问题，逐个检查提供的材料能否回答：direct / partial / none，并写出答案草图和引用的材料 id。先用一句话说清"这批材料真正回答的是什么问题"——它可能和观众的问题不同，要诚实指出。列出决定性缺口（不补就答不了核心问题的），并写明去哪里找（论文、官方文档、可验证的一手资料）。verdict：sufficient（够用）/ gaps-fillable（缺口可补）/ mismatch（材料与问题基本不相干）。${COMMON}`,
+    prompt: `你是研究编辑。先把观众问题的"字面说法"和它"背后的矛盾"分开：字面说法往往带着错误的直觉（例如以为"老师"一定是一个会示范答案的更强模型），真正要解释的是矛盾本身。然后在材料里找能化解这个矛盾的机制——创作者点名的材料和案例优先，哪怕它们用的不是观众的字面说法。把问题里的关键角色拆开（例如"教"可能是出题、示范答案、判对错/打分、筛选数据），逐一指出材料里谁在承担它；能化解矛盾的往往是和观众直觉不同的那个角色。把观众的核心问题拆成 3–6 个必须回答的子问题，逐个检查提供的材料能否回答：direct / partial / none，并写出答案草图和引用的材料 id。先用一句话说清"这批材料真正回答的是什么问题"——它可能和观众的问题不同，要诚实指出。列出决定性缺口（不补就答不了核心问题的），并写明去哪里找（论文、官方文档、可验证的一手资料）。verdict：sufficient（够用）/ gaps-fillable（缺口可补）/ mismatch（材料与问题基本不相干）。${COMMON}`,
     outputSchema: objectSchema({
       whatMaterialsActuallyAnswer: str,
       subQuestions: listOf(objectSchema({ id: str, question: str, answerSketch: str, support: oneOf('direct', 'partial', 'none'), materialRefs: strList, note: str })),
@@ -128,7 +129,7 @@ export const B1_ROLES = {
   research: {
     id: 'b1-research', title: '补材料', webSearch: true,
     guards: '防止为了迁就材料而偷换问题：缺口先补，补不上再缩小承诺。',
-    prompt: `你是研究员，可以联网搜索。针对给出的决定性缺口，找一手或权威来源（论文、官方技术报告、官方博客/仓库），每条来源写清标题、URL、发布方、日期、能支持的要点（逐条、克制、可核对）以及它填补了哪个缺口。只写你在来源里实际读到的内容；读不到就不要写。补不上的缺口放进 remainingGaps。每条 note 的 id 用 "web-" 开头。${COMMON}`,
+    prompt: `你是研究员，可以联网搜索。先想清楚缺口背后要化解的矛盾是什么，搜能化解它的机制，而不是只搜问题的字面关键词；创作者点名的案例（公司、模型、报告）优先在它们自己的一手资料里找相关段落，再补充其他来源。针对给出的决定性缺口，找一手或权威来源（论文、官方技术报告、官方博客/仓库），每条来源写清标题、URL、发布方、日期、能支持的要点（逐条、克制、可核对）以及它填补了哪个缺口。只写你在来源里实际读到的内容；读不到就不要写。补不上的缺口放进 remainingGaps。每条 note 的 id 用 "web-" 开头。${COMMON}`,
     outputSchema: objectSchema({
       notes: listOf(objectSchema({ id: str, title: str, url: str, publisher: str, date: str, keyPoints: strList, fillsGap: str, sourceKind: oneOf('primary', 'secondary') })),
       remainingGaps: strList,
@@ -137,17 +138,18 @@ export const B1_ROLES = {
   planner: {
     id: 'b1-planner', title: '内容决定',
     guards: '把观众问题、材料和账号视角合成一个可执行的决定，交给 B2。',
-    prompt: `你是这一篇的策划。写一页"内容决定"：工作标题、核心问题（观众的话）、一句话答案（让人"原来如此"，不是机制清单）、目标观众与看完后的变化、开头钩子（10 秒内说什么）、3–5 个节拍（每个节拍说什么、依据哪些材料 id、画面想法）、账号视角（技术之外，钱和算力花在哪、为什么）、载体与时长、明确不讲什么、最大风险、仍待确认的问题。严格遵守标准卡。严谨靠准确而不是免责：限定语只放在真正会误导的地方，最多两处。若收到 humanReview（创作者本人或其代理的审阅），它的优先级最高，逐条落实；若收到挑战意见，逐条回应 mustChange。在 changesFromPrevious 写清改了什么；首版写"首版"。${COMMON}`,
+    prompt: `你是这一篇的策划。先至少想两个不同机制的一句话答案，按两条选：创作者点名的案例能不能扛起这个答案（不是只出场），以及持原直觉的观众听完会不会说"原来是这样"；落选的写进 alternativesConsidered 并说明为什么没选。然后写一页"内容决定"：工作标题、核心问题（观众的话）、一句话答案（说出化解观众矛盾的那个机制，让持原直觉的人听完说"原来是这样"；不是机制清单，也不是"它本来就强/它提供线索"这种不解释为什么能超过的说法）、目标观众与看完后的变化、开头钩子（10 秒内说什么）、3–5 个节拍（每个节拍说什么、依据哪些材料 id、画面想法）、账号视角（技术之外，钱和算力花在哪、为什么）、载体与时长、明确不讲什么、最大风险、仍待确认的问题。严格遵守标准卡。创作者点名的案例是题目的一部分，不能放进"不讲什么"；材料不够就用补充材料把它们和问题接上。一个案例只放在一个节拍里，说明一件事，不要拆开穿插。严谨靠准确而不是免责：节拍里的限定语全篇最多两处，证据边界写进最大风险和待确认，不写进节拍。若收到 humanReview（创作者本人或其代理的审阅），它的优先级最高，逐条落实；若收到挑战意见，逐条回应 mustChange。在 changesFromPrevious 写清改了什么；首版写"首版"。${COMMON}`,
     outputSchema: objectSchema({
       workingTitle: str, coreQuestion: str, oneLineAnswer: str, audience: str, audienceChange: str, hook: str,
       beats: listOf(objectSchema({ beat: str, says: str, evidence: strList, visualIdea: str })),
-      accountAngle: str, form: str, notSaying: strList, biggestRisk: str, openQuestions: strList, changesFromPrevious: str,
+      accountAngle: str, form: str, notSaying: strList, biggestRisk: str, openQuestions: strList,
+      alternativesConsidered: listOf(objectSchema({ answer: str, whyNotChosen: str })), changesFromPrevious: str,
     }),
   },
   challenger: {
     id: 'b1-challenger', title: '挑战者',
     guards: '替用户先审一遍：按标准卡逐条判断，只提会改变结果的意见。',
-    prompt: `你是独立挑战者，代表创作者本人审这份内容决定。逐条按标准卡（S1–S8）给 ok / weak / fail 和一句具体理由；任何 fail 则 verdict=revise；材料根本撑不住核心问题且无法补救时 verdict=blocked。mustChange 只写会改变结果的修改，每条要具体到"把什么改成什么"；不要要求增加免责声明或补充无关细节——那正是过去让稿子越改越密的原因。标准卡末尾若有用户审阅记录，它们的权重高于你的个人偏好。${COMMON}`,
+    prompt: `你是独立挑战者，代表创作者本人审这份内容决定。逐条按标准卡（S1–S10）给 ok / weak / fail 和一句具体理由；S2 要实际做一次检验：想象一个持原直觉的观众，他的直觉会被答案里哪句话推翻？说不出来就是 fail；S7 要逐条数出节拍里的限定语。观众问题的字面前提可以被答案纠正（例如观众以为"老师"是一个更强或更弱的模型，答案指出真正起作用的是判对错的环节）——纠正本身就是答案，不要要求证明那个被纠正掉的前提，也不要因此判 S3/S9 fail。S3 只检查节拍里实际说出的话有没有材料支撑。只有指定案例连一个能化解矛盾的机制都给不出时，才要求暂缓或 blocked。任何 fail 则 verdict=revise；材料根本撑不住核心问题且无法补救时 verdict=blocked。mustChange 只写会改变结果的修改，每条要具体到"把什么改成什么"；不要要求增加免责声明或补充无关细节——那正是过去让稿子越改越密的原因。标准卡末尾若有用户审阅记录，它们的权重高于你的个人偏好。${COMMON}`,
     outputSchema: objectSchema({
       verdict: oneOf('pass', 'revise', 'blocked'),
       criteria: listOf(objectSchema({ id: str, result: oneOf('ok', 'weak', 'fail'), reason: str })),
@@ -179,6 +181,7 @@ export function b1Markdown(decision: ContentDecision): string {
     '**不讲什么**', ...decision.notSaying.map(item => `- ${item}`), '',
     `**最大风险**：${decision.biggestRisk}`, '',
     '**待确认**', ...(decision.openQuestions.length ? decision.openQuestions.map(item => `- ${item}`) : ['- 无']), '',
+    '**考虑过但没选的答案**', ...(decision.alternativesConsidered ?? []).map(alt => `- ${alt.answer}　——　${alt.whyNotChosen}`), '',
     `**本版改动**：${decision.changesFromPrevious}`, '',
   ].join('\n');
 }

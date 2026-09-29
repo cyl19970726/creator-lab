@@ -17,7 +17,8 @@ const evidenceMap = (verdict: EvidenceMap['verdict']): EvidenceMap => ({
 const decision = (version: string): ContentDecision => ({
   workingTitle: `标题 ${version}`, coreQuestion: 'q', oneLineAnswer: '判卷比答题容易', audience: 'a', audienceChange: 'c', hook: 'h',
   beats: [{ beat: 'b1', says: 's', evidence: ['m1'], visualIdea: 'v' }, { beat: 'b2', says: 's', evidence: ['m1'], visualIdea: 'v' }],
-  accountAngle: '钱花在多试', form: '竖屏 2 分钟', notSaying: ['榜单'], biggestRisk: 'r', openQuestions: [], changesFromPrevious: version,
+  accountAngle: '钱花在多试', form: '竖屏 2 分钟', notSaying: ['榜单'], biggestRisk: 'r', openQuestions: [],
+  alternativesConsidered: [{ answer: '学生本来就强', whyNotChosen: '不解释为什么能超过' }], changesFromPrevious: version,
 });
 const challenge = (verdict: Challenge['verdict']): Challenge => ({
   verdict, criteria: [{ id: 'S1', result: verdict === 'pass' ? 'ok' : 'fail', reason: 'r' }],

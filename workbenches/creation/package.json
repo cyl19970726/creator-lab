@@ -12,7 +12,9 @@
     "test:publish": "node --test tooling/social-publish/*.test.mjs",
     "check": "pnpm typecheck && pnpm test && pnpm build",
     "stage": "tsx scripts/run-stage.ts",
-    "stage:render": "tsx scripts/render-stage.ts"
+    "stage:render": "tsx scripts/render-stage.ts",
+    "stage:trace": "tsx scripts/stage-trace.ts",
+    "stage:eval-reviewer": "tsx scripts/eval-reviewer.ts"
   },
   "dependencies": {
     "markdown-it": "14.1.0",

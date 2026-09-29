@@ -24,8 +24,22 @@ export function resolveCodexBinary(env: NodeJS.ProcessEnv = process.env): string
 export function createStageRunner(options: { traceRoot: string; codexBinary?: string }): AgentRunner {
   if (!path.isAbsolute(options.traceRoot)) throw new Error('Stage traceRoot must be an absolute private directory');
   const codexPathOverride = options.codexBinary ?? resolveCodexBinary();
-  return new CodexSdkRunner({ create: codexOptions => new Codex({ ...codexOptions, ...(codexPathOverride ? { codexPathOverride } : {}) }) }, options.traceRoot);
+  return new CodexSdkRunner({ create: codexOptions => new Codex({
+    ...codexOptions,
+    ...(codexPathOverride ? { codexPathOverride } : {}),
+    // Run traces live inside the repo, so Codex would otherwise inject every AGENTS.md on the way up
+    // (≈5k chars of repo engineering rules) into content roles. Found in B1 traces, 2026-09-30.
+    config: { ...(codexOptions?.config ?? {}), project_doc_max_bytes: 0 },
+  }) }, options.traceRoot);
 }
+
+/**
+ * The user's global ~/.codex/AGENTS.md (≈12k chars of engineering working agreements) is still injected
+ * and cannot be switched off per call. Content roles are told explicitly that it does not apply to them,
+ * because its reporting rules ("distinguish facts from assumptions", "state limitations") leaked into
+ * scripts as disclaimers.
+ */
+export const CONTENT_ROLE_PREAMBLE = '【角色说明】你是内容创作流程中的一个角色，不是编程助手。上方 AGENTS.md 里的工程协作约定（模型路由、子 agent、提交与测试、技能治理、汇报时区分事实与推断等）只适用于软件开发，与本任务无关：不要照它的方式给内容加限定语、免责声明或流程说明。事实是否有依据由本流程里专门的角色负责。以下是你的任务。\n\n';
 
 export interface StageModel {
   model: string;
@@ -52,7 +66,7 @@ export function stageAgent<Input, Output>(role: RoleSpec, model: StageModel, rev
     skillsRevision: 'none',
     permissionsRevision: role.webSearch ? 'read-only-web-v1' : 'read-only-v1',
     config: {
-      prompt: role.prompt,
+      prompt: CONTENT_ROLE_PREAMBLE + role.prompt,
       outputSchema: role.outputSchema,
       threadOptions: {
         sandboxMode: 'read-only',
