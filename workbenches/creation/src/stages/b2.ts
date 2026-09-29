@@ -13,7 +13,7 @@ import type { Published } from './b1.js';
  * Past runs failed by letting evidence review only ever add material; here the fact checker may only
  * flag errors with an equal-or-shorter fix, and the editor arbitrates against the B1 decision and a length budget.
  */
-export const B2_REVISION = 'b2-v5';
+export const B2_REVISION = 'b2-v6';
 export const b2StandardsPath = fileURLToPath(new URL('./standards/b2.md', import.meta.url));
 
 export const b2InputSchema = z.object({
@@ -105,7 +105,7 @@ export const B2_ROLES = {
   editor: {
     id: 'b2-editor', title: '主编',
     guards: '以 B1 决定为准取舍各方意见，守住时长，替你先审。',
-    prompt: `你是主编，代表创作者本人。你收到 B1 内容决定、当前稿、无提示读者的真实体验、事实核查意见和标准卡。按标准卡 T1–T8 逐条给 ok / weak / fail；任何 fail 则 revise；稿子无法兑现 B1 决定且需要回到 B1 时 blocked。mustChange 只写会改变结果的修改，具体到段落和"改成什么"；事实错误必须改；读者跟丢或想划走的地方优先处理。对不采纳的意见写进 rejectedSuggestions 并说明理由（例如会让稿子变长、偏离 B1）。同一处问题连续两轮都没修好，说明局部修改不够：在 mustChange 里给出新的整体结构（segment 写"全片结构"），或在 B1 的节拍安排本身有问题时 verdict=blocked 并说明要退回 B1 改什么。给出本轮时长预算 secondsBudget。若有 humanReview 或标准卡末尾的用户审阅记录，它们的权重最高。${COMMON}`,
+    prompt: `你是主编，代表创作者本人。你收到 B1 内容决定、当前稿、无提示读者的真实体验、事实核查意见和标准卡。按标准卡 T1–T8 逐条给 ok / weak / fail。T1（钩子）、T3（冷读者能复述答案）、T5（事实）、T6（时长）是硬标准：任何一条 fail 就 revise。T2、T4、T7、T8 是改进项：只有冷读者在同一段连续两轮跟丢、并且影响了他复述答案时，才因此 revise；否则把改进写进 rejectedSuggestions 之外的 mustChange 为空、verdict=pass，并在 summary 里写下建议。冷读者总会在某处走神，这本身不是不通过的理由——创作者接受过冷读者仍有跟丢、但能准确复述答案的稿子。稿子无法兑现 B1 决定且需要回到 B1 时 blocked。mustChange 只写会改变结果的修改，具体到段落和"改成什么"；事实错误必须改；读者跟丢或想划走的地方优先处理。对不采纳的意见写进 rejectedSuggestions 并说明理由（例如会让稿子变长、偏离 B1）。同一处问题连续两轮都没修好，说明局部修改不够：在 mustChange 里给出新的整体结构（segment 写"全片结构"），或在 B1 的节拍安排本身有问题时 verdict=blocked 并说明要退回 B1 改什么。给出本轮时长预算 secondsBudget。若有 humanReview 或标准卡末尾的用户审阅记录，它们的权重最高。${COMMON}`,
     outputSchema: objectSchema({
       verdict: oneOf('pass', 'revise', 'blocked'),
       criteria: listOf(objectSchema({ id: str, result: oneOf('ok', 'weak', 'fail'), reason: str })),
