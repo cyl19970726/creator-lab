@@ -49,11 +49,35 @@ describe('B2 stage workflow', () => {
     expect(run.output).toMatchObject({ details: { stage: 'B2', reason: 'awaiting-human-review', rounds: 2 } });
   });
 
-  test('applies the last editor edits once when review rounds run out, then stops unreviewed', async () => {
+  test('applies the last editor edits once when review rounds run out, then fact-checks that version', async () => {
     const { runner, calls } = scripted(['revise', 'revise']);
     const { run } = await runWorkflow({ workflow: createB2Workflow(model), input: { ...input, maxRevisions: 1 }, store: new MemoryRunStore(), agentRunner: runner });
-    expect(calls.map(c => c.id).filter(id => id === 'b2-writer' || id === 'b2-editor')).toEqual(['b2-writer', 'b2-editor', 'b2-writer', 'b2-editor', 'b2-writer']);
-    expect(run.output).toMatchObject({ details: { reason: 'final-edits-unreviewed', rounds: 2 } });
+    expect(calls.map(c => c.id).filter(id => id !== 'b2-cold-reader')).toEqual([
+      'b2-writer', 'b2-fact-checker', 'b2-editor', 'b2-writer', 'b2-fact-checker', 'b2-editor', 'b2-writer', 'b2-fact-checker',
+    ]);
+    expect(run.output).toMatchObject({ details: { reason: 'final-edits-fact-checked', rounds: 2 } });
+  });
+
+  test('continuing from a prior script writes new drafts under distinct steps', async () => {
+    const store = new MemoryRunStore();
+    const { runner, calls } = scripted(['revise']);
+    const prior = { script: script('v0') as unknown as Record<string, unknown>, editor: verdict('revise') as unknown as Record<string, unknown>,
+      humanReview: { reviewer: 'proxy', notes: ['改成三段结构'] } };
+    const { run } = await runWorkflow({ workflow: createB2Workflow(model), input: { ...input, maxRevisions: 0, prior }, store, agentRunner: runner });
+    const writes = calls.filter(c => c.id === 'b2-writer');
+    expect(writes).toHaveLength(2);
+    expect(writes[0].input).toMatchObject({ humanReview: { notes: ['改成三段结构'] } });
+    expect(store.artifacts.filter(a => a.type === 'b2-script')).toHaveLength(3);
+    expect(run.output).toMatchObject({ details: { reason: 'final-edits-fact-checked' } });
+  });
+
+  test('accept-with-edits applies the human edits once and only fact-checks', async () => {
+    const { runner, calls } = scripted([]);
+    const prior = { script: script('v0') as unknown as Record<string, unknown>, editor: verdict('revise') as unknown as Record<string, unknown>,
+      humanReview: { reviewer: 'proxy', notes: ['改一句'] } };
+    const { run } = await runWorkflow({ workflow: createB2Workflow(model), input: { ...input, finalize: true, prior }, store: new MemoryRunStore(), agentRunner: runner });
+    expect(calls.map(c => c.id)).toEqual(['b2-writer', 'b2-fact-checker']);
+    expect(run.output).toMatchObject({ details: { reason: 'final-edits-fact-checked', rounds: 0 } });
   });
 
   test('the cold reader only sees what a viewer sees', async () => {

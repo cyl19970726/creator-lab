@@ -51,7 +51,7 @@ const agentInfo = (step: StepRecord) => {
 
 const gate = (run.output as { details?: { reason?: string; rounds?: number } } | undefined)?.details;
 const stateLabel: Record<string, [string, string]> = {
-  'awaiting-human-review': ['等你审', 'wait'], 'not-converged': ['内部没审过，等你决定', 'warn'], 'final-edits-unreviewed': ['已按主编最后意见改完，等你审', 'wait'], blocked: ['卡住了', 'bad'],
+  'awaiting-human-review': ['等你审', 'wait'], 'not-converged': ['内部没审过，等你决定', 'warn'], 'final-edits-fact-checked': ['已按主编最后意见改完并核过事实，等你审', 'wait'], 'final-edits-with-fact-issues': ['改完了，但事实核查还有问题', 'warn'], blocked: ['卡住了', 'bad'],
 };
 const [stateText, stateClass] = run.state === 'running' ? ['运行中', 'run'] : stateLabel[gate?.reason ?? ''] ?? [run.state, 'warn'];
 const firstEvent = events[0]?.timestamp;
@@ -63,11 +63,14 @@ const mainRef = stage === 'b2' ? last('b2-script') : last('b1-content-decision')
 const main = mainRef ? payloads.get(mainRef.id) : undefined;
 const verdictRef = stage === 'b2' ? last('b2-editor') : last('b1-challenge');
 const verdict = verdictRef ? payloads.get(verdictRef.id) as { verdict?: string; summary?: string; criteria?: Array<{ id: string; result: string; reason: string }>; mustChange?: unknown[] } : undefined;
-const humanRef = last('b1-human-review');
-const human = humanRef ? payloads.get(humanRef.id) as { reviewer?: string; verdict?: string; notes?: string[] } : undefined;
-
 const inputFile = path.join(root, stage, run.id, 'input.json');
 const input = existsSync(inputFile) ? JSON.parse(readFileSync(inputFile, 'utf8')) as Record<string, unknown> : undefined;
+
+type HumanReview = { reviewer?: string; verdict?: string; notes?: string[] };
+const humanRef = last('b1-human-review');
+const human: HumanReview | undefined = humanRef
+  ? payloads.get(humanRef.id) as HumanReview
+  : (input?.prior as { humanReview?: HumanReview } | undefined)?.humanReview && { verdict: 'revise', ...(input!.prior as { humanReview: HumanReview }).humanReview };
 
 const resultPill = (r: string) => `<span class="pill ${r === 'ok' || r === 'pass' || r === 'accept' ? 'good' : r === 'weak' ? 'warn' : 'bad'}">${esc({ ok: '通过', weak: '偏弱', fail: '不通过', pass: '通过', revise: '要改', blocked: '卡住', accept: '接受', reject: '否决' }[r] ?? r)}</span>`;
 
