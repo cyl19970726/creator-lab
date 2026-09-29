@@ -12,7 +12,7 @@ import {
  * Its failure mode in past runs: starting from the research material and describing it, then drowning
  * the result in disclaimers. Each role below exists to catch one specific way B1 goes wrong.
  */
-export const B1_REVISION = 'b1-v6';
+export const B1_REVISION = 'b1-v7';
 
 export const b1StandardsPath = fileURLToPath(new URL('./standards/b1.md', import.meta.url));
 
@@ -138,7 +138,7 @@ export const B1_ROLES = {
   planner: {
     id: 'b1-planner', title: '内容决定',
     guards: '把观众问题、材料和账号视角合成一个可执行的决定，交给 B2。',
-    prompt: `你是这一篇的策划。先至少想两个不同机制的一句话答案，按两条选：创作者点名的案例能不能扛起这个答案（不是只出场），以及持原直觉的观众听完会不会说"原来是这样"；落选的写进 alternativesConsidered 并说明为什么没选。然后写一页"内容决定"：工作标题、核心问题（观众的话）、一句话答案（说出化解观众矛盾的那个机制，让持原直觉的人听完说"原来是这样"；不是机制清单，也不是"它本来就强/它提供线索"这种不解释为什么能超过的说法）、目标观众与看完后的变化、开头钩子（10 秒内说什么）、3–5 个节拍（每个节拍说什么、依据哪些材料 id、画面想法）、账号视角（技术之外，钱和算力花在哪、为什么）、载体与时长、明确不讲什么、最大风险、仍待确认的问题。严格遵守标准卡。创作者点名的案例是题目的一部分，不能放进"不讲什么"；材料不够就用补充材料把它们和问题接上。一个案例只放在一个节拍里，说明一件事，不要拆开穿插。严谨靠准确而不是免责：节拍里的限定语全篇最多两处，证据边界写进最大风险和待确认，不写进节拍。若收到 humanReview（创作者本人或其代理的审阅），它的优先级最高，逐条落实；若收到挑战意见，逐条回应 mustChange。在 changesFromPrevious 写清改了什么；首版写"首版"。${COMMON}`,
+    prompt: `你是这一篇的策划。先至少想两个不同机制的一句话答案，按两条选：创作者点名的案例能不能扛起这个答案（不是只出场），以及持原直觉的观众听完会不会说"原来是这样"；落选的写进 alternativesConsidered 并说明为什么没选。然后写一页"内容决定"：工作标题、核心问题（观众的话）、一句话答案（说出化解观众矛盾的那个机制，让持原直觉的人听完说"原来是这样"；不是机制清单，也不是"它本来就强/它提供线索"这种不解释为什么能超过的说法）、目标观众与看完后的变化、开头钩子（10 秒内说什么）、3–5 个节拍（每个节拍只讲一个点——一个机制或一个证据，最多两句，新专有名词不超过两个；写明说什么、依据哪些材料 id、画面想法）、账号视角（技术之外，钱和算力花在哪、为什么）、载体与时长、明确不讲什么、最大风险、仍待确认的问题。严格遵守标准卡。创作者点名的案例是题目的一部分，不能放进"不讲什么"；材料不够就用补充材料把它们和问题接上。一个案例只放在一个节拍里，说明一件事，不要拆开穿插。严谨靠准确而不是免责：节拍里的限定语全篇最多两处，证据边界写进最大风险和待确认，不写进节拍。若收到 humanReview（创作者本人或其代理的审阅），它的优先级最高，逐条落实；若收到挑战意见，逐条回应 mustChange。在 changesFromPrevious 写清改了什么；首版写"首版"。${COMMON}`,
     outputSchema: objectSchema({
       workingTitle: str, coreQuestion: str, oneLineAnswer: str, audience: str, audienceChange: str, hook: str,
       beats: listOf(objectSchema({ beat: str, says: str, evidence: strList, visualIdea: str })),
