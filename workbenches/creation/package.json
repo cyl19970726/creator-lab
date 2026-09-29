@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "test:publish": "node --test tooling/social-publish/*.test.mjs",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "stage": "tsx scripts/run-stage.ts"
   },
   "dependencies": {
     "markdown-it": "14.1.0",
@@ -24,7 +25,8 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zod": "^4.1.0",
-    "fs-ext": "2.1.1"
+    "fs-ext": "2.1.1",
+    "@openai/codex-sdk": "0.154.0"
   },
   "devDependencies": {
     "esbuild": "0.25.9",

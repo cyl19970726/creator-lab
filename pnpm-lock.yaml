@@ -210,6 +210,9 @@ importers:
       '@fastify/static':
         specifier: ^8.3.0
         version: 8.3.0
+      '@openai/codex-sdk':
+        specifier: 0.154.0
+        version: 0.154.0
       '@signal-room/workflow':
         specifier: workspace:*
         version: link:../../vendor/agent-workflow/packages/core
