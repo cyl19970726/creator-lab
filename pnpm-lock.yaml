@@ -253,6 +253,9 @@ importers:
       '@types/fs-ext':
         specifier: ^2.0.3
         version: 2.0.3
+      '@types/markdown-it':
+        specifier: 14.2.0
+        version: 14.2.0
       '@types/node':
         specifier: ^24.2.1
         version: 24.19.0

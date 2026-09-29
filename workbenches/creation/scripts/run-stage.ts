@@ -58,6 +58,7 @@ const { run } = stage === 'b1'
 
 const outDir = path.join(root, stage, run.id);
 mkdirSync(outDir, { recursive: true });
+writeFileSync(path.join(outDir, 'input.json'), `${JSON.stringify(raw, null, 2)}\n`);
 const artifacts = await store.listArtifacts(run.id);
 for (const [index, ref] of artifacts.entries()) {
   const payload = await store.getArtifactPayload(ref.id) as Record<string, unknown>;

@@ -13,7 +13,7 @@ import type { Published } from './b1.js';
  * Past runs failed by letting evidence review only ever add material; here the fact checker may only
  * flag errors with an equal-or-shorter fix, and the editor arbitrates against the B1 decision and a length budget.
  */
-export const B2_REVISION = 'b2-v1';
+export const B2_REVISION = 'b2-v2';
 export const b2StandardsPath = fileURLToPath(new URL('./standards/b2.md', import.meta.url));
 
 export const b2InputSchema = z.object({
@@ -25,6 +25,8 @@ export const b2InputSchema = z.object({
   standards: z.string().min(1),
   maxSeconds: z.number().int().min(15).max(600),
   maxRevisions: z.number().int().min(0).max(3),
+  /** Continue from an earlier run's last script and editor verdict instead of writing from scratch. */
+  prior: z.object({ script: z.record(z.string(), z.unknown()), editor: z.record(z.string(), z.unknown()) }).strict().optional(),
 }).strict();
 export type B2Input = z.infer<typeof b2InputSchema>;
 
@@ -110,7 +112,7 @@ export const B2_ROLES = {
 
 export interface B2GateDetails {
   stage: 'B2';
-  reason: 'awaiting-human-review' | 'not-converged' | 'blocked';
+  reason: 'awaiting-human-review' | 'final-edits-unreviewed' | 'blocked';
   script: ArtifactRef;
   editor: ArtifactRef;
   rounds: number;
@@ -162,7 +164,21 @@ export function createB2Workflow(model: { worker: StageModel; judge: StageModel 
         return { value, ref };
       });
 
-    const first = await write(0);
+    let startFrom: { script: Published<Script>; verdict: Published<EditorVerdict> } | undefined;
+    if (input.prior) {
+      const prior = input.prior;
+      startFrom = await ctx.phase('b2-prior', {
+        title: '上一版与主编意见', purpose: '从上一轮停下的稿子和主编意见接着改，不从头重写', order: 5,
+        expectedArtifacts: [{ role: 'prior-script', title: '上一版稿子', required: true }],
+      }, async phase => {
+        const scriptRef = await phase.publish('prior-script', 'b2-script', prior.script, { validation: 'valid', review: 'findings' });
+        const editorRef = await phase.publish('prior-editor', 'b2-editor', prior.editor, { validation: 'valid', review: 'not_applicable', dependsOn: [dependency(scriptRef)] });
+        await phase.bindArtifact(scriptRef, { role: 'prior-script', title: '上一版稿子', primary: true });
+        await phase.bindArtifact(editorRef, { role: 'prior-editor', title: '主编意见' });
+        return { script: { value: prior.script as unknown as Script, ref: scriptRef }, verdict: { value: prior.editor as unknown as EditorVerdict, ref: editorRef } };
+      });
+    }
+    const first = await write(startFrom ? 1 : 0, startFrom);
     if (isTerminal(first)) return first;
     let script: Published<Script> = first;
 
@@ -210,14 +226,19 @@ export function createB2Workflow(model: { worker: StageModel; judge: StageModel 
 
       const verdict = edited.value.verdict;
       ctx.decide(`editor-route-${round}`, { verdict, round });
-      if (verdict === 'pass' || verdict === 'blocked' || round >= input.maxRevisions) {
-        const reason = verdict === 'pass' ? 'awaiting-human-review' : verdict === 'blocked' ? 'blocked' : 'not-converged';
-        const details: B2GateDetails = { stage: 'B2', reason, script: current.ref, editor: edited.ref, rounds: round + 1 };
+      if (verdict === 'pass' || verdict === 'blocked') {
+        const details: B2GateDetails = { stage: 'B2', reason: verdict === 'pass' ? 'awaiting-human-review' : 'blocked', script: current.ref, editor: edited.ref, rounds: round + 1 };
         return ctx.needsReview(details);
       }
+      // Out of review rounds: the editor's last precise edits are still applied once, then the human reads that version.
+      const lastRound = round >= input.maxRevisions;
       const revised = await write(round + 1, { script: current, verdict: edited });
       if (isTerminal(revised)) return revised;
       script = revised;
+      if (lastRound) {
+        const details: B2GateDetails = { stage: 'B2', reason: 'final-edits-unreviewed', script: revised.ref, editor: edited.ref, rounds: round + 1 };
+        return ctx.needsReview(details);
+      }
     }
   });
 }

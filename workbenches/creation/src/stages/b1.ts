@@ -168,7 +168,7 @@ export interface B1GateDetails {
 
 export function b1Markdown(decision: ContentDecision): string {
   const beats = decision.beats.map((beat, index) =>
-    `${index + 1}. **${beat.beat}** — ${beat.says}\n   - 依据：${beat.evidence.join('、') || '无'}\n   - 画面：${beat.visualIdea}`).join('\n');
+    `${index + 1}. **${beat.beat.replace(/^\d+[.、．]\s*/, "")}** — ${beat.says}\n   - 依据：${beat.evidence.join('、') || '无'}\n   - 画面：${beat.visualIdea}`).join('\n');
   return [
     `# ${decision.workingTitle}`, '',
     `**核心问题**：${decision.coreQuestion}`, '',

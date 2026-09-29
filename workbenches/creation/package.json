@@ -11,7 +11,8 @@
     "test": "vitest run --config vitest.config.ts",
     "test:publish": "node --test tooling/social-publish/*.test.mjs",
     "check": "pnpm typecheck && pnpm test && pnpm build",
-    "stage": "tsx scripts/run-stage.ts"
+    "stage": "tsx scripts/run-stage.ts",
+    "stage:render": "tsx scripts/render-stage.ts"
   },
   "dependencies": {
     "markdown-it": "14.1.0",
@@ -39,7 +40,8 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@types/fs-ext": "^2.0.3",
-    "@vitejs/plugin-react": "^5.0.0"
+    "@vitejs/plugin-react": "^5.0.0",
+    "@types/markdown-it": "14.2.0"
   },
   "engines": {
     "node": ">=24 <25"

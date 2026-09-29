@@ -49,6 +49,13 @@ describe('B2 stage workflow', () => {
     expect(run.output).toMatchObject({ details: { stage: 'B2', reason: 'awaiting-human-review', rounds: 2 } });
   });
 
+  test('applies the last editor edits once when review rounds run out, then stops unreviewed', async () => {
+    const { runner, calls } = scripted(['revise', 'revise']);
+    const { run } = await runWorkflow({ workflow: createB2Workflow(model), input: { ...input, maxRevisions: 1 }, store: new MemoryRunStore(), agentRunner: runner });
+    expect(calls.map(c => c.id).filter(id => id === 'b2-writer' || id === 'b2-editor')).toEqual(['b2-writer', 'b2-editor', 'b2-writer', 'b2-editor', 'b2-writer']);
+    expect(run.output).toMatchObject({ details: { reason: 'final-edits-unreviewed', rounds: 2 } });
+  });
+
   test('the cold reader only sees what a viewer sees', async () => {
     const { runner, calls } = scripted(['pass']);
     await runWorkflow({ workflow: createB2Workflow(model), input, store: new MemoryRunStore(), agentRunner: runner });
