@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { workflow, type WorkflowDefinition, type WorkflowTerminal } from "@signal-room/workflow";
@@ -16,7 +16,7 @@ import {
  * → render) runs as workflow tasks, a designer agent writes the frame specs inside the episode project,
  * and an inspector agent must actually open the snapshot contact sheets before judging.
  */
-export const B3_REVISION = 'b3-v4';
+export const B3_REVISION = 'b3-v6';
 export const b3StandardsPath = fileURLToPath(new URL('./standards/b3.md', import.meta.url));
 
 const segmentSchema = z.object({ time: z.string(), voiceover: z.string().min(1), onScreenText: z.string(), visual: z.string().min(1) });
@@ -35,6 +35,8 @@ export const b3InputSchema = z.object({
   maxRevisions: z.number().int().min(0).max(3),
   /** Frame specs the creator already approved in the sample; the designer keeps them unless an inspection names them. */
   keepSpecs: z.array(z.string()).optional(),
+  /** The creator's review of the previous cut; its notes are the first fix request and outrank the inspector. */
+  humanReview: z.object({ reviewer: z.string().min(1), notes: z.array(z.object({ line: z.string(), fix: z.string() })).min(1) }).strict().optional(),
 }).strict();
 export type B3Input = z.infer<typeof b3InputSchema>;
 
@@ -59,13 +61,13 @@ export const B3_ROLES = {
   designer: {
     id: 'b3-designer', title: '画面设计者',
     guards: '把每段稿子做成一帧真正能渲染的画面；B3 不能只登记别处做好的东西。',
-    prompt: `你是竖屏科技视频的画面设计者，在给定的视频工程目录（episodeDir）里工作。先读工程里的 frame.md（版式与视觉规范）和给出的参考帧规格（referenceSpecs，账号已发布作品的写法），再为每一行口播写一个帧规格文件 frames-spec/NN-slug.py（NN 与 SCRIPT.md 的 Line 编号一致），格式与参考完全相同：SPEC = dict(kind="shell", name="NN-slug", cid="NN-slug", p="fNN", dur=该行配音秒数+0.6, body=..., css=..., tl=...)。每帧一个主画面，主视觉占画面中部至少四成高度，不要只放一行标题或一个数字；把这一段的核心动作或对比画出来（静音也能看懂这一段在讲什么），屏幕文字用该段的 onScreenText，画面兑现该段的 visual 意图；遵守 frame.md 的安全区（内容 y≤1340，字幕带 y1390–1570 留空，右侧按钮区避让）。字体只用已有 @font-face 的：中文用工程 assets/fonts 里的 Noto Sans CJK SC；要用其他字体（如 Space Grotesk）必须在该帧 css 里写 @font-face，否则渲染时会回退成衬线并让技术检查报错。写完在 episodeDir 里运行 python3 scripts/build-frames.py --check，有错就改规格重跑，直到通过。收到检查意见（fixRequest，可能是成品检查的意见，也可能是技术检查 hf-check 的报错）时只改相关的行，改完用 --only NN 重建再跑 --check。不要改 scripts/ 下的文件，不要改 SCRIPT.md。keepSpecs 里列出的规格已经通过创作者的样片审阅，保持原样，只在检查意见点名时才改。files 写你创建或修改的规格文件路径；buildCheckPassed 如实填写最后一次 --check 的结果。${COMMON}`,
+    prompt: `你是竖屏科技视频的画面设计者，在给定的视频工程目录（episodeDir）里工作。先读工程里的 frame.md（版式与视觉规范）和给出的参考帧规格（referenceSpecs，账号已发布作品的写法），再为每一行口播写一个帧规格文件 frames-spec/NN-slug.py（NN 与 SCRIPT.md 的 Line 编号一致），格式与参考完全相同：SPEC = dict(kind="shell", name="NN-slug", cid="NN-slug", p="fNN", dur=该行配音秒数+0.6, body=..., css=..., tl=...)。页脚编号写 "NN/总段数"（总段数以 SCRIPT.md 的行数为准）。相邻或相同结构的段落不要用同一种版式（例如两段都是三张竖排卡片），每段的画面要和别的段一眼区分开。每帧一个主画面，主视觉占画面中部至少四成高度，不要只放一行标题或一个数字；把这一段的核心动作或对比画出来（静音也能看懂这一段在讲什么），屏幕文字用该段的 onScreenText，画面兑现该段的 visual 意图；遵守 frame.md 的安全区（内容 y≤1340，字幕带 y1390–1570 留空，右侧按钮区避让）。字体只用已有 @font-face 的：中文用工程 assets/fonts 里的 Noto Sans CJK SC；要用其他字体（如 Space Grotesk）必须在该帧 css 里写 @font-face，否则渲染时会回退成衬线并让技术检查报错。写完在 episodeDir 里运行 python3 scripts/build-frames.py --check，有错就改规格重跑，直到通过。想自己看某一帧的效果：先 node scripts/make-index.mjs --force && node scripts/retime-to-minimax.mjs，再 bash scripts/snapshot-review.sh . frame <秒> 得到降采样截图路径。改动要最小化：只动被点名的问题，避免引入文字重叠（hf-check 的 layout 检查会报 content_overlap）。收到修改请求（fixRequest：创作者的审阅意见优先级最高，其次是成品检查意见和技术检查 hf-check 的报错）时只改相关的行，改完用 --only NN 重建再跑 --check。不要改 scripts/ 下的文件，不要改 SCRIPT.md。keepSpecs 里列出的规格已经通过创作者的样片审阅，保持原样，只在检查意见点名时才改。files 写你创建或修改的规格文件路径；buildCheckPassed 如实填写最后一次 --check 的结果。${COMMON}`,
     outputSchema: objectSchema({ files: strList, buildCheckPassed: { type: 'boolean' }, notes: str }),
   },
   inspector: {
     id: 'b3-inspector', title: '成品检查',
     guards: '替你先看成品：必须实际打开快照图逐格检查，看不到图就不许判通过。',
-    prompt: `你是成品检查，代表创作者本人看画面。你会收到快照 contact sheet 图片路径（按时间顺序：前三格是 0、0.5、1 秒，之后每格对应一行口播画面稳定后的时刻）以及每行的口播、屏幕文字和画面意图。必须用查看图片的工具逐张打开这些图（imagesOpened 写你实际打开的路径）；任何一张打不开，verdict=blocked 并说明。按标准卡 V1–V7 逐条给 ok / weak / fail；V3 要做静音测试：只看这一格画面、不看口播，写下你认为这一段在讲什么，再和口播对照，对不上就是 fail；并在 issues 里写出具体是第几行（line 用 "01" 这样的编号）、违反哪条、问题是什么、怎么改（改成什么样）。只提会改变观感的问题。标准卡末尾的用户审阅记录权重最高。${COMMON}`,
+    prompt: `你是成品检查，代表创作者本人看画面。你会收到快照 contact sheet 图片路径（按时间顺序：前三格是 0、0.5、1 秒，之后每格对应一行口播画面稳定后的时刻）以及每行的口播、屏幕文字和画面意图。必须用查看图片的工具逐张打开这些图（imagesOpened 写你实际打开的路径），只看 contactSheets 列表里的图，不要打开工程目录里的其他图片（可能是旧版本的残留）；任何一张打不开，verdict=blocked 并说明。按标准卡 V1–V7 逐条给 ok / weak / fail；V5/V6 要核对每格的页脚编号与段数一致；V7 要比较各格之间是否有两段版式几乎一样；V3 要做静音测试：只看这一格画面、不看口播，写下你认为这一段在讲什么，再和口播对照，对不上就是 fail；并在 issues 里写出具体是第几行（line 用 "01" 这样的编号）、违反哪条、问题是什么、怎么改（改成什么样）。只提会改变观感的问题。标准卡末尾的用户审阅记录权重最高。${COMMON}`,
     outputSchema: objectSchema({
       imagesOpened: strList,
       verdict: oneOf('pass', 'revise', 'blocked'),
@@ -194,6 +196,8 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
         expectedArtifacts: [{ role: 'assembly', title: '装配报告', required: true }],
       }, async phase => {
         const report = await phase.task('assemble', () => {
+          // Only this round's snapshots may be inspected: stale images once made the inspector judge an old cut.
+          rmSync(path.join(dir, 'snapshots/review'), { recursive: true, force: true });
           const index = run(dir, 'node', ['scripts/make-index.mjs', '--force']).slice(-800);
           const retime = run(dir, 'node', ['scripts/retime-to-minimax.mjs']).slice(-800);
           let technical = '';
@@ -238,7 +242,11 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
       return { inspection: inspected.value, inspectionRef: inspected.ref, sheets: assembled.report.sheets, technicalRed: false };
     };
 
-    let fix: Inspection | undefined;
+    let fix: Inspection | undefined = input.humanReview ? {
+      imagesOpened: [], verdict: 'revise', summary: `创作者审阅（${input.humanReview.reviewer}）`,
+      criteria: [{ id: 'human', result: 'fail', reason: '创作者要求修改' }],
+      issues: input.humanReview.notes.map(n => ({ line: n.line, standard: 'creator', problem: '创作者审阅意见', fix: n.fix })),
+    } : undefined;
     for (let round = 0; ; round++) {
       const result = await buildAndInspect(round, fix);
       if (isTerminal(result)) return result;
