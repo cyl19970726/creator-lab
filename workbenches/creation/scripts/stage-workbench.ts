@@ -114,10 +114,25 @@ const strip = STAGES.map(spec => {
   return `<li class="${cls}"><a href="#${spec.id}"><span class="dot"></span>${spec.name}</a></li>`;
 }).join('') + '<li class="wait"><span class="dot"></span>发布</li>';
 
+interface BriefView { version: number; sources: Array<{ stage: string; runId: string; revision: string; reviewer: string }>; notesForB2: Array<{ from: string; note: string }>; notesForB3: Array<{ from: string; note: string }>; materials: Array<{ id: string; title: string }>; audienceQuestion: { questionInAudienceWords?: string; currentIntuition?: string } }
+const briefDir = path.join(root, 'brief');
+const briefs: BriefView[] = existsSync(briefDir)
+  ? readdirSync(briefDir).filter(f => /^v\d+\.json$/.test(f)).map(f => JSON.parse(readFileSync(path.join(briefDir, f), 'utf8')) as BriefView).sort((a, b) => b.version - a.version)
+  : [];
+const notesList = (notes: Array<{ from: string; note: string }>) => notes.length
+  ? `<ul class="notes">${notes.map(n => `<li><span class="sub">${esc(n.from)}：</span>${esc(n.note)}</li>`).join('')}</ul>` : '<p class="sub">（无）</p>';
+const briefSection = briefs.length ? `<section class="brief"><h2>作品档案</h2>
+<p class="sub">每次你在某个阶段判通过（<code>pnpm stage:accept</code>），程序就生成新一版档案；下一阶段只从档案里取输入。最新一版在上。</p>
+${briefs.map(b => `<details ${b === briefs[0] ? 'open' : ''}><summary>档案 v${b.version} · 来源 ${b.sources.map(s => `${s.stage.toUpperCase()} ${esc(s.revision)}（${esc(s.runId.slice(0, 8))}）`).join(' → ')} · <a href="brief/v${b.version}.json">JSON</a></summary>
+<div class="kv"><span>观众问题</span><p>${esc(b.audienceQuestion?.questionInAudienceWords)}<br><span class="sub">原来的直觉：${esc(b.audienceQuestion?.currentIntuition)}</span></p></div>
+<div class="kv"><span>材料</span><p>${b.materials.map(m => esc(m.id)).join('、')}</p></div>
+<div class="kv"><span>写给 B2 的话</span>${notesList(b.notesForB2)}</div>
+<div class="kv"><span>写给 B3 的话</span>${notesList(b.notesForB3)}</div></details>`).join('\n')}</section>` : '';
+
 const history = [...views].sort((a, b) => Date.parse(a.started ?? '') - Date.parse(b.started ?? '')).map(v => {
   const d = decisions.runs[v.run.id];
   const current = decisions.current[v.stage] === v.run.id;
-  return `<tr class="${current ? 'current' : ''}"><td class="mono">${v.stage.toUpperCase()}</td><td class="mono">${esc(v.run.workflowRevision)}</td>
+  return `<tr class="${current ? 'current' : ''}"><td class="mono">${v.stage.toUpperCase()}</td><td class="mono">${esc(v.run.workflowRevision)}${v.run.metadata?.briefVersion ? `<br><span class="sub">档案 v${esc(v.run.metadata.briefVersion)}</span>` : ''}</td>
     <td>${esc(d?.purpose ?? '')}${current ? ' <span class="tag">当前采用</span>' : ''}</td><td class="t">${time(v.started)}</td><td class="num">${v.minutes ?? '—'} 分</td>
     <td>${pill(v.internal)}</td><td>${pill(d?.review?.verdict)}</td><td class="note">${esc(d?.review?.notes?.[0] ?? '')}</td>
     <td><a href="${link(v)}">查看</a></td></tr>`;
@@ -160,6 +175,7 @@ tr.current td{background:color-mix(in srgb,var(--good) 8%,transparent)}
 .tag{font-size:11px;color:var(--good);border:1px solid var(--good);border-radius:4px;padding:0 5px;margin-left:4px;white-space:nowrap}
 .mono{font-family:var(--mono);font-size:12px}.t{font:12px var(--mono);color:var(--muted);white-space:nowrap}.num{white-space:nowrap;font-variant-numeric:tabular-nums}
 .note{color:var(--muted);min-width:220px}a{color:var(--accent)}
+section.brief{margin-top:34px}section.brief details{background:var(--surface);border:1px solid var(--line);border-radius:8px;margin:8px 0;padding:4px 16px 10px}section.brief summary{cursor:pointer;padding:8px 0;font-weight:600}code{font-family:var(--mono);font-size:12px}
 </style></head><body><main>
 <div class="eyebrow">作品工作台 · ${esc(topicId)}</div>
 <h1>${esc(decisions.title)}</h1>
@@ -167,6 +183,7 @@ tr.current td{background:color-mix(in srgb,var(--good) 8%,transparent)}
 <p><a href="flow.html">流程全图：每个角色拿到了什么、产出了什么 →</a></p>
 <ol class="strip">${strip}</ol>
 ${STAGES.map(stageRow).join('\n')}
+${briefSection}
 <section class="history"><h2>调优历史</h2><p class="sub">每一次运行，按时间顺序。"评估"是同一份输入上的对比重跑，"生产"是做这篇作品本身；绿色行是当前采用的版本。</p>
 <div class="scroll"><table><tr><th>阶段</th><th>版本</th><th>用途</th><th>开始</th><th>用时</th><th>workflow 审阅</th><th>你</th><th>你的意见（首条）</th><th></th></tr>
 ${history}</table></div></section>
