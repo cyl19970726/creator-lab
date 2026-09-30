@@ -1,5 +1,7 @@
 # New creation platform — first implementation PR
 
+> **已归档（2026-09-30）。** 文章平台首个实现 PR 的范围与验证记录。文章应用的现行接口见[文章应用合同](../03-architecture/article-app.md)。
+
 Scope: P1 + P2 article vertical slice, using real agent-workflow; new UI/API/worker and fresh state. P3 video production and P5 method efficacy remain later milestones, explicitly unsupported in this PR. No old implementation compatibility. Preserve private data and the independent research/analysis workbenches.
 
 Deliverables and ownership:

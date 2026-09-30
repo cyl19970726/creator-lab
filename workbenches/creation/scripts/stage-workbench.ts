@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import MarkdownIt from 'markdown-it';
 import { DatabaseSync } from 'node:sqlite';
 import type { RunRecord } from '@signal-room/workflow';
 import { SQLiteWorkflowRunStore } from '@signal-room/workflow-sqlite';
@@ -190,5 +192,35 @@ ${history}</table></div></section>
 </main></body></html>`;
 
 writeFileSync(path.join(root, 'index.html'), html);
-copyFileSync(path.resolve('docs/workflows/stage-flow.html'), path.join(root, 'flow.html'));
+writeFlowPage();
+
+/**
+ * flow.html: the hand-off map, rendered from its Markdown source (docs/03-architecture/brief-and-handoff.md)
+ * so the workbench and the documentation site never disagree. Links to other doc pages become plain text.
+ */
+function writeFlowPage() {
+  const mermaid = fileURLToPath(new URL('../../../node_modules/mermaid/dist/mermaid.min.js', import.meta.url));
+  if (!existsSync(mermaid)) throw new Error(`mermaid is not installed at ${mermaid}; run pnpm install at the repository root`);
+  const flowMd = new MarkdownIt({ html: true });
+  const fence = flowMd.renderer.rules.fence!;
+  flowMd.renderer.rules.fence = (tokens, i, options, env, self) => tokens[i].info.trim() === 'mermaid'
+    ? `<pre class="mermaid">${flowMd.utils.escapeHtml(tokens[i].content)}</pre>\n`
+    : fence(tokens, i, options, env, self);
+  const relative = (href: string | null) => !!href && !/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith('#');
+  flowMd.renderer.rules.link_open = (tokens, i, options, _env, self) => relative(tokens[i].attrGet('href')) ? '' : self.renderToken(tokens, i, options);
+  flowMd.renderer.rules.link_close = (tokens, i, options, _env, self) => {
+    const open = tokens.slice(0, i).reverse().find(t => t.type === 'link_open' && t.level === tokens[i].level);
+    return open && relative(open.attrGet('href')) ? '' : self.renderToken(tokens, i, options);
+  };
+  const body = flowMd.render(readFileSync(path.resolve('docs/03-architecture/brief-and-handoff.md'), 'utf8'));
+  copyFileSync(mermaid, path.join(root, 'mermaid.min.js'));
+  writeFileSync(path.join(root, 'flow.html'), `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>交接全图</title>
+<style>:root{--bg:#f7f6f2;--text:#1f2420;--line:#dcdfd8;--code:#f0f1ec;--accent:#2b6a4a}@media (prefers-color-scheme:dark){:root{--bg:#161917;--text:#e3e7e2;--line:#333a35;--code:#252a26;--accent:#7cc4a0}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.75 system-ui,-apple-system,"PingFang SC",sans-serif}main{max-width:1100px;margin:auto;padding:32px 20px 60px}a{color:var(--accent)}
+table{border-collapse:collapse;font-size:14.5px;line-height:1.6}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--code)}.scroll{overflow-x:auto}
+pre.mermaid{border:1px solid var(--line);padding:12px;text-align:center}code{background:var(--code);padding:1px 5px;border-radius:4px}</style></head>
+<body><main><p><a href="index.html">← 返回作品工作台</a></p>${body.replaceAll('<table>', '<div class="scroll"><table>').replaceAll('</table>', '</table></div>')}</main>
+<script src="mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true,securityLevel:'strict',theme:matchMedia('(prefers-color-scheme: dark)').matches?'dark':'neutral'});</script></body></html>
+`);
+}
 console.log(path.join(root, 'index.html'));

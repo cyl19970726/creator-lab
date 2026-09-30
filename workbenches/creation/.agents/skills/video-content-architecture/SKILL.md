@@ -5,7 +5,7 @@ description: 在视频制作前形成可审阅的内容架构图、主要画面�
 
 # Video Content Architecture
 
-输入是用户目标、当前 B1、证据底稿和已有钩子/偏好；钩子未定时与核心讲法同步设计，不要求先锁钩子；不从报告目录生成视频目录。按[版本合同](../research-to-video/references/contracts.md)和[产物、审核与协作记录合同](../../../docs/contracts/artifacts-and-review.md)输出。
+输入是用户目标、当前 B1、证据底稿和已有钩子/偏好；钩子未定时与核心讲法同步设计，不要求先锁钩子；不从报告目录生成视频目录。按[版本合同](../research-to-video/references/contracts.md)和[产物、审核与协作记录合同](../../../docs/03-architecture/article-app.md)输出。
 
 ## 先决定观众的判断过程
 

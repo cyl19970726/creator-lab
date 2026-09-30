@@ -7,7 +7,7 @@ import type { EditorVerdict, FactCheck, Script } from './b2.js';
  * It is written only when the creator's gate accepts a stage, gets a new version each time, and each
  * downstream role receives a declared slice of it. Before this, the hand-offs were assembled by hand in a
  * session and silently dropped the audience question, the reference-piece lessons, the one-line answer and
- * the editor's notes for production (see docs/workflows/stage-flow.html).
+ * the editor's notes for production (see docs/03-architecture/brief-and-handoff.md).
  */
 export const BRIEF_SCHEMA_VERSION = 'brief-v1';
 
@@ -88,7 +88,7 @@ export function briefAfterB2(brief: PieceBrief, args: { script: Script; editor?:
   });
 }
 
-// ---------- per-role slices (the table at the bottom of stage-flow.html) ----------
+// ---------- per-role slices (the last table in docs/03-architecture/brief-and-handoff.md) ----------
 
 export function b2WriterContext(brief: PieceBrief) {
   return {

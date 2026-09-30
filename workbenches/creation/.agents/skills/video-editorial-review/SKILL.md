@@ -7,7 +7,7 @@ description: 独立审核研究型视频的证据、内容架构、钩子开头�
 
 审核者必须独立于候选稿作者。由总路由调用可用独立Agent，给它原用户目标、证据和实际候选文件；不只给作者摘要或希望得到的答案。本skill明确需要独立Review；不可用同一作者换口吻伪装。没有独立能力则标明限制，保留可复核建议，不签独立通过。
 
-读取[交接合同](../research-to-video/references/contracts.md)和[产物、审核与协作记录合同](../../../docs/contracts/artifacts-and-review.md)。选择当前模式，不把本轮通过延伸到未检查表面：
+读取[交接合同](../research-to-video/references/contracts.md)和[产物、审核与协作记录合同](../../../docs/03-architecture/article-app.md)。选择当前模式，不把本轮通过延伸到未检查表面：
 
 | mode | 必查表面 | 决定性问题 |
 |---|---|---|

@@ -1,6 +1,8 @@
 # 视频设计与制作
 
-本页记录现有机制解释视频方法，作为历史参考，外层编号以[技能地图](skills-map.md)为准。它不是所有内容的必经路径，也不构成新实现的兼容要求。多内容平台的职责组合、原型与返工设计见[新平台设计](creation-platform-design.md)；新运行时尚待实施，下图保留旧方法的顺序与接受点，不表示新设计要求每篇逐点人工批准。
+> **已归档（2026-09-30）。** 迁入时的旧视频方法说明，作为历史参考。现行的视频阶段见 [B2 成稿](../04-workflows/b2.md) 和 [B3 成片](../04-workflows/b3.md)。
+
+本页记录现有机制解释视频方法，作为历史参考，外层编号以[技能地图](../04-workflows/skills-map.md)为准。它不是所有内容的必经路径，也不构成新实现的兼容要求。多内容平台的职责组合、原型与返工设计见[新平台设计](creation-platform-design-v0.3.md)；新运行时尚待实施，下图保留旧方法的顺序与接受点，不表示新设计要求每篇逐点人工批准。
 
 采用研究报告输入的既有路线，应核对报告的当前版本、接受范围与可用证据；创作总体不强制先有报告，也可从想法、问题或材料开始。此视频方法以帮助观众完成一次理解或判断为目标。先内容架构，再开头和包装，再有声样片，最后全片。目标平台从表达设计阶段就进入输入：标题、图解、字幕和来源的共用可读区域，以及封面所需比例，先随代表图设计；首次布局用有声样片在本次目标平台实际预览中检查后再扩整片；相同条件复用已有记录，新增布局、关键文字/动作越界或平台界面变化时定向复验，发布前仍核本次成品。已有旧版反馈进入目标和架构；不是把低完播率直接解释成“必须更短”。
 
@@ -44,6 +46,6 @@ flowchart TD
 | 全片 | 制作Agent | MP4、字幕、工程索引 | 当前导出事实/视听/版本 | 播放、字幕、版本 |
 | 发布包 | 发布负责人 | 账号、文案、声明、封面、回执 | 实际预览、未结问题和授权 | 逐平台状态 |
 
-执行正本：[research-to-video](../../.agents/skills/research-to-video/SKILL.md)。Reviewer使用[video-editorial-review](../../.agents/skills/video-editorial-review/SKILL.md)。工作台展示这些资产并记录意见、修订与范围决定，接续按[产物合同](../contracts/artifacts-and-review.md)；平台执行在工作台外进行。
+执行正本：[research-to-video](../../.agents/skills/research-to-video/SKILL.md)。Reviewer使用[video-editorial-review](../../.agents/skills/video-editorial-review/SKILL.md)。工作台展示这些资产并记录意见、修订与范围决定，接续按[产物合同](../03-architecture/article-app.md)；平台执行在工作台外进行。
 
 2026-09-11发布复盘及候选脚本化方案见[来源历史主报告第9节](https://github.com/cyl19970726/token-economics/blob/1d733f4242e0464674979bf1681968b5cdc4d9e1/research/workflows/minimax-reconstruction-20260910/workflow-report.md)。本期原r2已获用户接受并提交；以上前置要求用于后续设计，不追溯强制重做本期。五步发布工具及本地模拟已实现，执行入口见[项目发布工具](../../tooling/social-publish/SKILL.md)，本轮结果集中在主报告9.6。真实平台编辑页仍需下一条未发布内容现场校准，通用视频模板也未因此完成。
