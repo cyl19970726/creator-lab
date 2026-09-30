@@ -7,21 +7,20 @@ import {
   type RoleSpec, type StageModel,
 } from './runtime.js';
 import type { Published } from './b1.js';
+import { b2EditorContext, b2WriterContext, briefSchema } from './brief.js';
 
 /**
  * B2 · 成稿. Turns the accepted B1 decision into a complete script a viewer can follow and will finish.
  * Past runs failed by letting evidence review only ever add material; here the fact checker may only
  * flag errors with an equal-or-shorter fix, and the editor arbitrates against the B1 decision and a length budget.
  */
-export const B2_REVISION = 'b2-v6';
+export const B2_REVISION = 'b2-v7';
 export const b2StandardsPath = fileURLToPath(new URL('./standards/b2.md', import.meta.url));
 
 export const b2InputSchema = z.object({
   topicId: z.string().min(1),
-  decision: z.record(z.string(), z.unknown()),
-  account: z.object({ name: z.string(), positioning: z.string() }).passthrough(),
-  form: z.string().min(1),
-  materials: z.array(z.object({ id: z.string().min(1), title: z.string(), text: z.string().min(1) }).strict()).min(1),
+  /** The accepted piece brief; B2 roles each read their slice of it (see brief.ts). */
+  brief: briefSchema,
   standards: z.string().min(1),
   maxSeconds: z.number().int().min(15).max(600),
   maxRevisions: z.number().int().min(0).max(3),
@@ -76,7 +75,7 @@ export const B2_ROLES = {
   writer: {
     id: 'b2-writer', title: '作者',
     guards: '把 B1 的决定写成观众能看完的完整稿。',
-    prompt: `你是竖屏科技视频的编剧。按 B1 内容决定写完整稿：标题、封面字（≤12 字）、按时间切分的段落（每段：时间、口播、屏幕文字、画面意图）。口播约每秒 4 个汉字，总时长不超过给定上限。第一句就是钩子；一段只引入一个新概念，术语出现时立刻给白话；核心机制必须有一个具体例子或类比；多个案例时每个案例只占一段、只说明一件事，不要拆开穿插，贯穿全片的图只在第一次出现时完整展开；结尾留一个可带走的判断并连到账号视角。事实只能来自提供的材料，sourcesUsed 写材料 id。收到 humanReview（创作者本人或其代理的审阅）时优先级最高，逐条落实，包括重排全片结构；收到主编意见时逐条执行 mustChange。任何新增必须替换掉等长的旧内容，并在 changesFromPrevious 说明；首版写"首版"。${COMMON}`,
+    prompt: `你是竖屏科技视频的编剧。你会收到作品档案里给你的部分：B1 内容决定、观众问题（观众原来的直觉和矛盾）、账号定位与现状、参照作品的表现和教训、材料，以及上游留给你的话（notesForB2，必须逐条落实）。开头要打中观众原来的那个直觉，优先用最具体的反直觉事实；参照作品的教训（例如时长太长、多数人 30 秒内离开）要用在节奏上。按 B1 内容决定写完整稿：标题、封面字（≤12 字）、按时间切分的段落（每段：时间、口播、屏幕文字、画面意图）。口播约每秒 4 个汉字，总时长不超过给定上限。第一句就是钩子；一段只引入一个新概念，术语出现时立刻给白话；核心机制必须有一个具体例子或类比；多个案例时每个案例只占一段、只说明一件事，不要拆开穿插，贯穿全片的图只在第一次出现时完整展开；结尾留一个可带走的判断并连到账号视角。事实只能来自提供的材料，sourcesUsed 写材料 id。收到 humanReview（创作者本人或其代理的审阅）时优先级最高，逐条落实，包括重排全片结构；收到主编意见时逐条执行 mustChange。任何新增必须替换掉等长的旧内容，并在 changesFromPrevious 说明；首版写"首版"。${COMMON}`,
     outputSchema: objectSchema({
       title: str, coverText: str, estimatedSeconds: { type: 'integer' }, segments: listOf(segmentJson),
       sourcesUsed: strList, changesFromPrevious: str,
@@ -105,7 +104,7 @@ export const B2_ROLES = {
   editor: {
     id: 'b2-editor', title: '主编',
     guards: '以 B1 决定为准取舍各方意见，守住时长，替你先审。',
-    prompt: `你是主编，代表创作者本人。你收到 B1 内容决定、当前稿、无提示读者的真实体验、事实核查意见和标准卡。按标准卡 T1–T8 逐条给 ok / weak / fail。T1（钩子）、T3（冷读者能复述答案）、T5（事实）、T6（时长）是硬标准：任何一条 fail 就 revise。T2、T4、T7、T8 是改进项：只有冷读者在同一段连续两轮跟丢、并且影响了他复述答案时，才因此 revise；否则把改进写进 rejectedSuggestions 之外的 mustChange 为空、verdict=pass，并在 summary 里写下建议。冷读者总会在某处走神，这本身不是不通过的理由——创作者接受过冷读者仍有跟丢、但能准确复述答案的稿子。稿子无法兑现 B1 决定且需要回到 B1 时 blocked。mustChange 只写会改变结果的修改，具体到段落和"改成什么"；事实错误必须改；读者跟丢或想划走的地方优先处理。对不采纳的意见写进 rejectedSuggestions 并说明理由（例如会让稿子变长、偏离 B1）。同一处问题连续两轮都没修好，说明局部修改不够：在 mustChange 里给出新的整体结构（segment 写"全片结构"），或在 B1 的节拍安排本身有问题时 verdict=blocked 并说明要退回 B1 改什么。给出本轮时长预算 secondsBudget。若有 humanReview 或标准卡末尾的用户审阅记录，它们的权重最高。${COMMON}`,
+    prompt: `你是主编，代表创作者本人。你收到 B1 内容决定、观众问题、账号定位与参照作品、上游留给 B2 的话（notesForB2）、当前稿、无提示读者的真实体验、事实核查意见和标准卡。判断钩子时对照观众问题：开头是否打中观众原来的直觉；notesForB2 没落实的算 T1/T8 的问题。按标准卡 T1–T8 逐条给 ok / weak / fail。T1（钩子）、T3（冷读者能复述答案）、T5（事实）、T6（时长）是硬标准：任何一条 fail 就 revise。T2、T4、T7、T8 是改进项：只有冷读者在同一段连续两轮跟丢、并且影响了他复述答案时，才因此 revise；否则把改进写进 rejectedSuggestions 之外的 mustChange 为空、verdict=pass，并在 summary 里写下建议。冷读者总会在某处走神，这本身不是不通过的理由——创作者接受过冷读者仍有跟丢、但能准确复述答案的稿子。稿子无法兑现 B1 决定且需要回到 B1 时 blocked。mustChange 只写会改变结果的修改，具体到段落和"改成什么"；事实错误必须改；读者跟丢或想划走的地方优先处理。对不采纳的意见写进 rejectedSuggestions 并说明理由（例如会让稿子变长、偏离 B1）。同一处问题连续两轮都没修好，说明局部修改不够：在 mustChange 里给出新的整体结构（segment 写"全片结构"），或在 B1 的节拍安排本身有问题时 verdict=blocked 并说明要退回 B1 改什么。给出本轮时长预算 secondsBudget。若有 humanReview 或标准卡末尾的用户审阅记录，它们的权重最高。${COMMON}`,
     outputSchema: objectSchema({
       verdict: oneOf('pass', 'revise', 'blocked'),
       criteria: listOf(objectSchema({ id: str, result: oneOf('ok', 'weak', 'fail'), reason: str })),
@@ -149,7 +148,8 @@ export function createB2Workflow(model: { worker: StageModel; judge: StageModel 
 
   return workflow<B2Input, WorkflowTerminal<never>>('creation.b2', { revision: B2_REVISION }, async (ctx, rawInput) => {
     const input = b2InputSchema.parse(rawInput);
-    const brief = { decision: input.decision, account: input.account, form: input.form, maxSeconds: input.maxSeconds, materials: input.materials };
+    const brief = { ...b2WriterContext(input.brief), maxSeconds: input.maxSeconds, standards: input.standards };
+    const materials = input.brief.materials;
 
     type Previous = { script: Published<Script>; verdict: Published<EditorVerdict>; humanReview?: NonNullable<B2Input['prior']>['humanReview'] };
     let drafts = 0;
@@ -193,7 +193,7 @@ export function createB2Workflow(model: { worker: StageModel; judge: StageModel 
         title: '改后事实核查', purpose: '最后一次修改不再过主编，但必须重新核对事实', order: 90,
         expectedArtifacts: [{ role: 'fact-check', title: '事实核查', required: true }],
       }, async phase => {
-        const value = await phase.agent('fact-check', checker, { script: revised.value, materials: input.materials });
+        const value = await phase.agent('fact-check', checker, { script: revised.value, materials });
         const checked = await phase.validate('check-fact-check', value, v => check(factSchema, v));
         if (!checked.valid) return phase.blocked({ reason: 'invalid-fact-check', details: checked.details });
         const ref = await phase.publish('fact-check', 'b2-fact-check', value, { validation: 'valid', review: 'not_applicable', dependsOn: [dependency(revised.ref)] });
@@ -224,7 +224,7 @@ export function createB2Workflow(model: { worker: StageModel; judge: StageModel 
       }, async phase => {
         const both = await phase.parallel('reviewers', {
           reader: () => phase.agent('cold-read', reader, viewerView(current.value)),
-          checker: () => phase.agent('fact-check', checker, { script: current.value, materials: input.materials }),
+          checker: () => phase.agent('fact-check', checker, { script: current.value, materials }),
         }, { concurrency: 2 });
         const readerOut = both.reader as ColdRead;
         const checkerOut = both.checker as FactCheck;
@@ -244,7 +244,7 @@ export function createB2Workflow(model: { worker: StageModel; judge: StageModel 
         expectedArtifacts: [{ role: 'editor', title: '主编意见', required: true }],
       }, async phase => {
         const value = await phase.agent('edit', editor, {
-          decision: input.decision, standards: input.standards, maxSeconds: input.maxSeconds,
+          ...b2EditorContext(input.brief), standards: input.standards, maxSeconds: input.maxSeconds,
           script: current.value, coldRead: reviewed.reader.value, factCheck: reviewed.checker.value,
           ...(input.prior?.humanReview ? { humanReview: input.prior.humanReview } : {}),
         });

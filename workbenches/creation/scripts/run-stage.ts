@@ -32,6 +32,11 @@ const effort = (value: string | undefined): StageModel['reasoningEffort'] => {
 };
 
 const raw = JSON.parse(readFileSync(path.resolve(inputPath), 'utf8')) as Record<string, unknown>;
+// B2/B3 take their hand-off from the piece brief; the brief is copied into the run's input so the run stays reproducible.
+if (typeof raw.briefFrom === 'string') {
+  raw.brief = JSON.parse(readFileSync(path.resolve('.local/stages', raw.briefFrom, 'brief/latest.json'), 'utf8'));
+  delete raw.briefFrom;
+}
 const models = {
   worker: { model: values.model!, reasoningEffort: effort(values['worker-effort']) },
   judge: { model: values.model!, reasoningEffort: effort(values['judge-effort']) },
@@ -49,7 +54,7 @@ function execute<Input>(definition: WorkflowDefinition<Input, WorkflowTerminal<n
     input,
     store,
     agentRunner: createStageRunner({ traceRoot: path.join(root, 'traces') }),
-    metadata: { stage, topicId },
+    metadata: { stage, topicId, ...(raw.brief ? { briefVersion: String((raw.brief as { version: number }).version) } : {}) },
     ...(values.resume ? { resumeRunId: values.resume } : {}),
   });
 }

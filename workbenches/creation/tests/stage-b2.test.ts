@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { MemoryRunStore, runWorkflow, type AgentRunRequest, type AgentRunResult, type AgentRunner } from '@signal-room/workflow';
 import { createB2Workflow, type B2Input, type EditorVerdict, type Script } from '../src/stages/b2.js';
+import type { PieceBrief } from '../src/stages/brief.js';
 
 const model = { worker: { model: 'test', reasoningEffort: 'medium' as const }, judge: { model: 'test', reasoningEffort: 'high' as const } };
 const script = (version: string): Script => ({
@@ -11,10 +12,21 @@ const verdict = (value: EditorVerdict['verdict']): EditorVerdict => ({
   verdict: value, criteria: [{ id: 'T1', result: value === 'pass' ? 'ok' : 'fail', reason: 'r' }],
   mustChange: value === 'pass' ? [] : [{ segment: '1', change: '开头直接抛问题' }], rejectedSuggestions: [], secondsBudget: 100, summary: 's',
 });
-const input: B2Input = {
-  topicId: 't', decision: { coreQuestion: 'q' }, account: { name: 'Token 经济猫', positioning: 'p' }, form: '竖屏',
-  materials: [{ id: 'm1', title: 'm', text: 'x' }], standards: 'T1', maxSeconds: 120, maxRevisions: 2,
+const brief: PieceBrief = {
+  schemaVersion: 'brief-v1', topicId: 't', version: 1,
+  sources: [{ stage: 'b1', runId: 'r1', revision: 'b1-v7', acceptedAt: '2026-09-30', reviewer: 'proxy' }],
+  creator: {
+    opportunity: '大家好奇弱模型如何训出强模型',
+    account: { name: 'Token 经济猫', positioning: 'p', currentAudience: '普通读者', referencePieces: [{ title: 'EP01', result: '完播 5.32%', lesson: '2:46 偏长' }] },
+    form: '竖屏',
+  },
+  audienceQuestion: { questionInAudienceWords: '老师没学生强，怎么教？', currentIntuition: '老师必须比学生强' },
+  decision: { coreQuestion: 'q' },
+  materials: [{ id: 'm1', title: 'm', text: 'x' }],
+  notesForB2: [{ from: 'proxy', note: '开头用具体事实' }],
+  notesForB3: [],
 };
+const input: B2Input = { topicId: 't', brief, standards: 'T1', maxSeconds: 120, maxRevisions: 2 };
 
 function scripted(verdicts: EditorVerdict['verdict'][]) {
   const calls: Array<{ id: string; input: unknown }> = [];
@@ -80,11 +92,23 @@ describe('B2 stage workflow', () => {
     expect(run.output).toMatchObject({ details: { reason: 'final-edits-fact-checked', rounds: 0 } });
   });
 
+  test('the writer and editor get the audience question, reference lessons and notes from the brief', async () => {
+    const { runner, calls } = scripted(['pass']);
+    await runWorkflow({ workflow: createB2Workflow(model), input, store: new MemoryRunStore(), agentRunner: runner });
+    for (const id of ['b2-writer', 'b2-editor']) {
+      const seen = JSON.stringify(calls.find(c => c.id === id)!.input);
+      expect(seen).toContain('老师必须比学生强');
+      expect(seen).toContain('开头用具体事实');
+      expect(seen).toContain('2:46 偏长');
+    }
+  });
+
   test('the cold reader only sees what a viewer sees', async () => {
     const { runner, calls } = scripted(['pass']);
     await runWorkflow({ workflow: createB2Workflow(model), input, store: new MemoryRunStore(), agentRunner: runner });
     const readerInput = calls.find(c => c.id === 'b2-cold-reader')!.input as Record<string, unknown>;
     expect(Object.keys(readerInput).sort()).toEqual(['coverText', 'segments', 'title']);
     expect(JSON.stringify(readerInput)).not.toContain('coreQuestion');
+    expect(JSON.stringify(readerInput)).not.toContain('老师必须比学生强');
   });
 });
