@@ -1,0 +1,125 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>B1·B2·B3 输入输出全图</title>
+<style>
+:root{--bg:#F3F5F8;--surface:#fff;--ink:#17202B;--muted:#5A6573;--line:#DCE1E8;--accent:#2B59C3;--good:#1E8A6E;--good-soft:#E3F4EE;--gap:#C0412B;--gap-soft:#FBE9E5;--iso:#8A95A3;--hand:#B8760C;--hand-soft:#FBF0DC;
+--sans:"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#0F141A;--surface:#161D26;--ink:#E3E8EE;--muted:#9BA7B5;--line:#2A3441;--accent:#86A8FF;--good:#43C39C;--good-soft:#12342B;--gap:#EC735C;--gap-soft:#3D1D17;--iso:#6F7B89;--hand:#E3A83F;--hand-soft:#3A2C12;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.65 var(--sans)}
+main{max-width:1120px;margin:0 auto;padding:24px 18px 80px}
+a{color:var(--accent)}
+.eyebrow{font:600 12px var(--mono);color:var(--muted);letter-spacing:.08em}
+h1{font-size:26px;margin:6px 0 8px;text-wrap:balance}
+h2{font-size:18px;margin:0}
+.sub{color:var(--muted);font-size:13px;margin:2px 0}
+.answer{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 18px;margin:14px 0 22px}
+.answer ol{margin:6px 0;padding-left:20px}.answer li{margin:4px 0}
+.legend{display:flex;flex-wrap:wrap;gap:8px 14px;margin:0 0 18px;font-size:13px;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:1px 9px;border-radius:99px;font-size:12.5px;line-height:1.7;border:1px solid var(--line);background:var(--surface);white-space:nowrap}
+.chip.ok{border-color:var(--good);color:var(--ink);background:var(--good-soft)}
+.chip.gap{border:1px dashed var(--gap);color:var(--gap);background:var(--gap-soft)}
+.chip.gap::before{content:"✗"}
+.chip.iso{color:var(--iso);border-style:dashed;text-decoration:line-through}
+.chip.out{border-color:var(--accent);color:var(--accent)}
+.band{border-radius:8px;padding:12px 16px;margin:0}
+.band.source{background:var(--surface);border:1px solid var(--line)}
+.band.hand{background:var(--hand-soft);border:1px solid var(--hand)}
+.band.hand h3{color:var(--hand)}
+.band h3{font-size:14px;margin:0 0 6px}
+.arrow{text-align:center;color:var(--muted);font-size:20px;line-height:1;margin:6px 0}
+.stage{border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.stage > header{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line)}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:760px}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:500;font-size:12.5px}
+td.role{width:130px;font-weight:600}td.role span{display:block;font-weight:400;font-size:12px;color:var(--muted)}
+td .chips{display:flex;flex-wrap:wrap;gap:5px}
+tr:last-child td{border-bottom:0}
+.gate{display:flex;gap:10px;align-items:center;padding:10px 16px;border-top:1px solid var(--line);font-size:13px;flex-wrap:wrap}
+.gate b{white-space:nowrap}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media (max-width:760px){.cols{grid-template-columns:1fr}}
+.impact{font-size:13px;margin-top:6px}
+.fix{border-left:3px solid var(--good);padding-left:10px}
+section.proposal{margin-top:30px}
+.proposal table{min-width:680px;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+</style></head><body><main>
+<p><a href="index.html">← 返回作品工作台</a></p>
+<div class="eyebrow">流程全图 · 按代码核对（2026-09-30，b1-v7 / b2-v6 / b3-v7）</div>
+<h1>B1 · B2 · B3：每个角色拿到了什么、产出了什么</h1>
+
+<div class="answer">
+<b>先说结论：B2、B3 确实没拿到一部分核心输入，问题主要出在阶段之间的交接。</b>
+<ol>
+<li><b>交接是手工拼的。</b>B1→B2、B2→B3 的输入，是主 agent 在会话里用临时脚本拼出来的，不是 workflow 的一步。换个人跑，带过去的字段就可能不同。这和之前"主 agent 在 workflow 外干活"是同一类问题。</li>
+<li><b>B2 没拿到"观众问题"和"参照作品的教训"。</b>作者不知道观众原来的直觉是什么，也不知道 EP01 的"2 分 46 秒太长、多数人 30 秒内离开"。b2-v6 的开头因此写成了概念题，没有具体事实。</li>
+<li><b>B3 只拿到稿子。</b>B1 的一句话答案和钩子意图、B2 主编写给制作的建议（例如"把'同一基础模型'简化成画面上的同一起点"）、你的审阅意见，都在交接时丢了。</li>
+<li><b>但也不是每个角色都该拿全部材料。</b>冷读者必须隔离；B3 不需要原始研究材料；B2 不该拿到"可以重新选题"的自由。原则是：<b>上游定下的决定 + 这个阶段需要的上下文 + 上游留给它的话</b>。</li>
+</ol>
+</div>
+
+<div class="legend"><span class="chip ok">拿到了</span><span class="chip gap">应该拿到但没拿到</span><span class="chip iso">故意不给</span><span class="chip out">产出</span><span class="chip" style="border-color:var(--hand);color:var(--hand)">✋ 当前靠主 agent 手工拼接</span></div>
+
+<div class="band source"><h3>原始输入（创作者给的）</h3>
+<div class="chips" style="display:flex;flex-wrap:wrap;gap:5px">
+<span class="chip">选题判断：大家关心"弱模型训出强模型"，市面有空缺</span><span class="chip">账号定位：Token 经济猫</span><span class="chip">账号现状：新号、百人级粉丝、普通读者</span><span class="chip">参照作品与教训：EP01 完播 5.32%、2:46 偏长；DeepSeek v2 你满意</span><span class="chip">研究材料：Kimi K3 / GLM-5.3 摘记</span><span class="chip">载体：竖屏 90–120 秒</span><span class="chip">标准卡 B1/B2/B3（含你的审阅记录）</span>
+</div></div>
+<div class="arrow">↓</div>
+
+<div class="stage" id="b1"><header><div><h2>B1 定题</h2><p class="sub">选对这一篇要回答的问题，并确认答得上、答得好</p></div><span class="sub mono">src/stages/b1.ts</span></header>
+<div class="scroll"><table><tr><th>角色</th><th>拿到的输入</th><th>产出</th></tr>
+<tr><td class="role">观众问题<span>防从材料出发选题</span></td><td><div class="chips"><span class="chip ok">选题判断</span><span class="chip ok">账号定位 + 现状 + 参照作品</span><span class="chip ok">载体</span><span class="chip iso">研究材料（问题属于观众）</span></div></td><td><div class="chips"><span class="chip out">观众原话式问题</span><span class="chip out">现在的直觉</span><span class="chip out">矛盾点</span><span class="chip out">看完的变化</span></div></td></tr>
+<tr><td class="role">材料对答<span>防答非所问</span></td><td><div class="chips"><span class="chip ok">观众问题</span><span class="chip ok">研究材料</span></div></td><td><div class="chips"><span class="chip out">"谁在教"拆解</span><span class="chip out">子问题 direct/partial/none</span><span class="chip out">决定性缺口</span></div></td></tr>
+<tr><td class="role">补材料<span>防为迁就材料而换题</span></td><td><div class="chips"><span class="chip ok">缺口</span><span class="chip ok">核心问题</span><span class="chip ok">联网</span></div></td><td><div class="chips"><span class="chip out">一手来源笔记（URL/要点）</span></div></td></tr>
+<tr><td class="role">策划</td><td><div class="chips"><span class="chip ok">选题判断</span><span class="chip ok">账号（全）</span><span class="chip ok">载体</span><span class="chip ok">标准卡</span><span class="chip ok">观众问题</span><span class="chip ok">材料对答</span><span class="chip ok">补充材料</span><span class="chip ok">研究材料</span></div></td><td><div class="chips"><span class="chip out">内容决定：核心问题 · 一句话答案 · 钩子 · 3–5 节拍 · 账号视角 · 不讲什么 · 落选答案</span></div></td></tr>
+<tr><td class="role">挑战者</td><td><div class="chips"><span class="chip ok">同策划</span><span class="chip ok">内容决定</span></div></td><td><div class="chips"><span class="chip out">S1–S10 判定</span><span class="chip out">必须改的地方</span></div></td></tr>
+</table></div>
+<div class="gate"><b>你的闸</b><span class="chip ok">内容决定</span><span class="chip ok">挑战意见</span><span class="sub">→ 你的意见写回 B1 标准卡；可带"定向补材料"请求重跑</span></div></div>
+
+<div class="arrow">↓</div>
+<div class="band hand"><h3>✋ 交接 B1 → B2（当前：主 agent 手工拼接）</h3>
+<div class="cols"><div><div class="sub">带过去的</div><div class="chips" style="display:flex;flex-wrap:wrap;gap:5px"><span class="chip ok">内容决定</span><span class="chip ok">研究材料 + 补充材料</span><span class="chip ok">账号名称与定位（两句话）</span><span class="chip ok">你给 B2 的意见（塞在决定里的一个字段）</span><span class="chip ok">载体（重写成一句话）</span></div></div>
+<div><div class="sub">丢在路上的</div><div class="chips" style="display:flex;flex-wrap:wrap;gap:5px"><span class="chip gap">观众问题（原话、直觉、矛盾）</span><span class="chip gap">账号现状</span><span class="chip gap">参照作品与教训</span><span class="chip gap">选题判断（为什么现在做）</span><span class="chip gap">材料对答（哪些子问题材料答不上）</span><span class="chip gap">挑战者留下的"偏弱"项</span></div></div></div>
+<p class="impact">影响：b2-v6 开头写成概念题、缺具体事实；作者不知道观众原来"以为老师一定比学生强"，钩子打不中这个直觉。</p></div>
+<div class="arrow">↓</div>
+
+<div class="stage" id="b2"><header><div><h2>B2 成稿</h2><p class="sub">让观众跟得上，并愿意看完</p></div><span class="sub mono">src/stages/b2.ts</span></header>
+<div class="scroll"><table><tr><th>角色</th><th>拿到的输入</th><th>产出</th></tr>
+<tr><td class="role">作者</td><td><div class="chips"><span class="chip ok">内容决定</span><span class="chip ok">账号名称与定位</span><span class="chip ok">载体 · 时长上限</span><span class="chip ok">材料</span><span class="chip gap">观众问题</span><span class="chip gap">参照作品与教训</span><span class="chip gap">标准卡</span></div></td><td><div class="chips"><span class="chip out">完整稿：标题 · 封面字 · 分段口播/屏幕字/画面意图</span></div></td></tr>
+<tr><td class="role">无提示读者<span>防讲不懂、留不住</span></td><td><div class="chips"><span class="chip ok">标题 · 封面字 · 口播 · 屏幕字 · 画面描述</span><span class="chip iso">决定、材料、账号（故意隔离）</span></div></td><td><div class="chips"><span class="chip out">复述 · 跟丢/想划走的段落 · 3 秒/30 秒还看不看</span></div></td></tr>
+<tr><td class="role">事实核查<span>只指错，不许加料</span></td><td><div class="chips"><span class="chip ok">稿子</span><span class="chip ok">材料</span></div></td><td><div class="chips"><span class="chip out">错 / 过头 / 无依据 + 等长改法</span></div></td></tr>
+<tr><td class="role">主编</td><td><div class="chips"><span class="chip ok">内容决定</span><span class="chip ok">标准卡</span><span class="chip ok">时长</span><span class="chip ok">稿子</span><span class="chip ok">读者体验</span><span class="chip ok">核查</span><span class="chip gap">观众问题（判断钩子是否打中原直觉）</span></div></td><td><div class="chips"><span class="chip out">T1–T8 判定</span><span class="chip out">必须改的地方</span><span class="chip out">给制作的建议（写在总结里）</span></div></td></tr>
+</table></div>
+<div class="gate"><b>你的闸</b><span class="chip ok">完整稿</span><span class="chip ok">读者体验</span><span class="chip ok">核查</span><span class="sub">→ 可"通过但附修改"（只改点名处 + 核事实）</span></div></div>
+
+<div class="arrow">↓</div>
+<div class="band hand"><h3>✋ 交接 B2 → B3（当前：主 agent 手工拼接）</h3>
+<div class="cols"><div><div class="sub">带过去的</div><div class="chips" style="display:flex;flex-wrap:wrap;gap:5px"><span class="chip ok">稿子（标题、分段口播/屏幕字/画面意图）</span></div></div>
+<div><div class="sub">丢在路上的</div><div class="chips" style="display:flex;flex-wrap:wrap;gap:5px"><span class="chip gap">一句话答案与钩子意图（B1）</span><span class="chip gap">主编写给制作的建议："把'同一基础模型'简化成画面上的同一起点"</span><span class="chip gap">你对 B2 的审阅意见</span><span class="chip gap">账号视觉身份（只靠参照工程的帧规格）</span></div></div></div>
+<p class="impact">影响：画面设计者只能照每段的字面意图做；第一版开场是数字卡、没把"只判答案"画出来，靠审阅退回才补上。</p></div>
+<div class="arrow">↓</div>
+
+<div class="stage" id="b3"><header><div><h2>B3 成片</h2><p class="sub">成品把稿子讲出来，而且在手机上看得清</p></div><span class="sub mono">src/stages/b3.ts</span></header>
+<div class="scroll"><table><tr><th>角色</th><th>拿到的输入</th><th>产出</th></tr>
+<tr><td class="role">程序步骤<span>建工程 · 配音 · 装配 · 检查 · 快照 · 渲染</span></td><td><div class="chips"><span class="chip ok">稿子</span><span class="chip ok">视频模板</span><span class="chip ok">配音（占位；MiniMax 待配）</span></div></td><td><div class="chips"><span class="chip out">SCRIPT/STORYBOARD</span><span class="chip out">配音时长</span><span class="chip out">技术检查</span><span class="chip out">快照</span><span class="chip out">视频 · 封面</span></div></td></tr>
+<tr><td class="role">画面设计者</td><td><div class="chips"><span class="chip ok">每段口播/屏幕字/画面意图</span><span class="chip ok">配音时长</span><span class="chip ok">参照帧规格</span><span class="chip ok">标准卡</span><span class="chip ok">修改请求（你 &gt; 检查 &gt; 技术）</span><span class="chip gap">一句话答案与钩子意图</span><span class="chip gap">主编给制作的建议</span><span class="chip iso">研究材料（不需要）</span></div></td><td><div class="chips"><span class="chip out">每段一个帧规格</span></div></td></tr>
+<tr><td class="role">成品检查<span>必须看图 · 静音测试</span></td><td><div class="chips"><span class="chip ok">本轮快照图</span><span class="chip ok">每段文字</span><span class="chip ok">技术检查</span><span class="chip ok">标准卡</span><span class="chip gap">一句话答案（静音测试该对照 B1 的核心意思）</span></div></td><td><div class="chips"><span class="chip out">V1–V7 判定</span><span class="chip out">按段落的问题和改法</span></div></td></tr>
+</table></div>
+<div class="gate"><b>你的闸</b><span class="chip ok">成片</span><span class="chip ok">快照</span><span class="sub">→ 按段落的意见回到画面设计者</span></div></div>
+
+<div class="arrow">↓</div>
+<div class="band source"><h3>之后</h3><div class="chips" style="display:flex;flex-wrap:wrap;gap:5px"><span class="chip">发布</span><span class="chip gap">发布数据回流到下一篇的 B1（未实现）</span><span class="chip ok">你的审阅 → 各阶段标准卡</span><span class="chip" style="border-color:var(--hand);color:var(--hand)">✋ B2 的问题回写 B1 标准卡（目前手工）</span></div></div>
+
+<section class="proposal"><h2>建议：用一份"作品档案"替代手工交接</h2>
+<p class="sub">由 workflow 在每个人工闸通过时自动生成并追加，带版本；下一阶段只从档案里取。每个角色按下表拿自己需要的部分，而不是全部都给。</p>
+<div class="scroll"><table>
+<tr><th>档案内容</th><th>何时写入</th><th>B2 作者</th><th>B2 主编</th><th>冷读者</th><th>B3 设计者</th><th>B3 检查</th></tr>
+<tr><td>选题判断 · 账号（全，含参照作品教训）</td><td>创作者给定</td><td>✓</td><td>✓</td><td>—</td><td>视觉身份</td><td>—</td></tr>
+<tr><td>观众问题（原话、直觉、矛盾）</td><td>B1 通过时</td><td>✓</td><td>✓</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>内容决定（一句话答案、钩子、节拍、不讲什么）</td><td>B1 通过时</td><td>✓</td><td>✓</td><td>—</td><td>✓</td><td>一句话答案</td></tr>
+<tr><td>材料 + 补充材料（带来源）</td><td>B1 通过时</td><td>✓</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>给下一阶段的话（你的意见 + 审阅者未解决的建议）</td><td>每个闸通过时</td><td>给 B2 的</td><td>给 B2 的</td><td>—</td><td>给 B3 的</td><td>给 B3 的</td></tr>
+<tr><td>定稿</td><td>B2 通过时</td><td>—</td><td>—</td><td>—</td><td>✓</td><td>✓</td></tr>
+</table></div>
+<p class="fix">这样交接变成 workflow 的一步：可复现、有版本、不会漏字段；冷读者仍然隔离，B2/B3 也不会拿到可以推翻上游决定的原始自由。</p>
+</section>
+</main></body></html>

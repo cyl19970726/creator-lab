@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { RunRecord } from '@signal-room/workflow';
@@ -164,6 +164,7 @@ tr.current td{background:color-mix(in srgb,var(--good) 8%,transparent)}
 <div class="eyebrow">作品工作台 · ${esc(topicId)}</div>
 <h1>${esc(decisions.title)}</h1>
 <p class="sub">每个阶段一行：当前采用的版本、它的主资产、workflow 内部审阅和你的判断。点"打开阶段页"看这一阶段 AI 为什么这样设计、进度、输入和全部产出。</p>
+<p><a href="flow.html">流程全图：每个角色拿到了什么、产出了什么 →</a></p>
 <ol class="strip">${strip}</ol>
 ${STAGES.map(stageRow).join('\n')}
 <section class="history"><h2>调优历史</h2><p class="sub">每一次运行，按时间顺序。"评估"是同一份输入上的对比重跑，"生产"是做这篇作品本身；绿色行是当前采用的版本。</p>
@@ -172,4 +173,5 @@ ${history}</table></div></section>
 </main></body></html>`;
 
 writeFileSync(path.join(root, 'index.html'), html);
+copyFileSync(path.resolve('docs/workflows/stage-flow.html'), path.join(root, 'flow.html'));
 console.log(path.join(root, 'index.html'));
