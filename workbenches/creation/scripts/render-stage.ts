@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import MarkdownIt from 'markdown-it';
@@ -68,12 +68,20 @@ const inputFile = path.join(root, stage, run.id, 'input.json');
 const input = existsSync(inputFile) ? JSON.parse(readFileSync(inputFile, 'utf8')) as Record<string, unknown> : undefined;
 
 type HumanReview = { reviewer?: string; verdict?: string; notes?: string[] };
-const humanRef = last('b1-human-review');
-const human: HumanReview | undefined = humanRef
-  ? payloads.get(humanRef.id) as HumanReview
-  : (input?.prior as { humanReview?: HumanReview } | undefined)?.humanReview && { verdict: 'revise', ...(input!.prior as { humanReview: HumanReview }).humanReview };
+// The creator's verdict on THIS run comes from the piece's decision record; the review this run started from is shown separately.
+const decisionsFile = path.join(root, 'decisions.json');
+const decided = existsSync(decisionsFile)
+  ? (JSON.parse(readFileSync(decisionsFile, 'utf8')) as { runs?: Record<string, { purpose?: string; review?: HumanReview }> }).runs?.[run.id]
+  : undefined;
+const human: HumanReview | undefined = decided?.review;
+const incomingRef = last('b1-human-review');
+const incoming: HumanReview | undefined = incomingRef
+  ? payloads.get(incomingRef.id) as HumanReview
+  : (input?.prior as { humanReview?: HumanReview } | undefined)?.humanReview ?? (input?.humanReview as HumanReview | undefined);
+const incomingNotes = (incoming?.notes ?? []).map(n => typeof n === 'string' ? n : `${(n as { line?: string }).line ?? ''}：${(n as { fix?: string }).fix ?? ''}`);
+const videos = existsSync(path.join(root, stage, run.id)) ? readdirSync(path.join(root, stage, run.id)).filter(f => f.endsWith('.mp4')).sort().reverse() : [];
 
-const resultPill = (r: string) => `<span class="pill ${r === 'ok' || r === 'pass' || r === 'accept' ? 'good' : r === 'weak' ? 'warn' : 'bad'}">${esc({ ok: '通过', weak: '偏弱', fail: '不通过', pass: '通过', revise: '要改', blocked: '卡住', accept: '接受', reject: '否决' }[r] ?? r)}</span>`;
+const resultPill = (r: string) => `<span class="pill ${r === 'ok' || r === 'pass' || r === 'accept' ? 'good' : r === 'weak' || r === 'invalid' ? 'warn' : 'bad'}">${esc({ ok: '通过', weak: '偏弱', fail: '不通过', pass: '通过', revise: '要改', blocked: '卡住', accept: '通过', reject: '否决', invalid: '无效运行' }[r] ?? r)}</span>`;
 
 function phaseRows(): string {
   return phases.map(p => {
@@ -135,7 +143,7 @@ ${notes.length ? `<tr><th>workflow 补的材料</th><td>${notes.map(n => `<div><
 }
 
 const decisionHtml = main && typeof main.markdown === 'string' ? md.render(main.markdown) : '<p class="sub">还没有产出。</p>';
-const title = String(main?.workingTitle ?? main?.title ?? topicId);
+const title = String(main?.workingTitle ?? main?.title ?? (input?.script as { title?: string } | undefined)?.title ?? topicId);
 
 const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(stage.toUpperCase())} · ${esc(title)}</title>
@@ -172,22 +180,26 @@ details{background:var(--surface);border:1px solid var(--line);border-radius:8px
 summary{cursor:pointer;padding:10px 14px;font-weight:600}.idx{display:inline-block;min-width:20px;color:var(--muted);font:12px var(--mono)}
 details .doc{border:0;border-top:1px solid var(--line);border-radius:0}
 pre{white-space:pre-wrap;font:12px/1.55 var(--mono);margin:12px 0}
+video{height:560px;max-width:100%;aspect-ratio:9/16;background:#000;border-radius:6px}
+.incoming{margin-top:12px}
 a{color:var(--accent)}
 </style></head><body><main>
 <header>
+<p><a href="../../index.html">← 返回作品工作台</a></p>
 <div class="stage">${esc(stage.toUpperCase())} · ${esc({ b1: '定题', b2: '成稿', b3: '成片' }[stage] ?? stage)} · ${esc(topicId)}</div>
 <h1>${esc(title)}</h1>
-<div class="meta"><span class="pill ${stateClass}">${esc(stateText)}</span><span>${time(firstEvent)} – ${time(lastEvent)}（${Math.round((seconds(firstEvent, lastEvent) ?? 0) / 6) / 10} 分钟）</span><span>内部审阅 ${gate?.rounds ?? '—'} 轮</span><span>约 ${Math.round(totalTokens / 1000)}k tokens</span><span class="mono">run ${esc(run.id.slice(0, 8))} · ${esc(run.workflowRevision)}</span></div>
+<div class="meta">${human?.verdict ? `<span class="pill ${human.verdict === 'accept' ? 'good' : 'warn'}">${esc({ accept: '你已通过', revise: '你要求修改', invalid: '无效运行' }[human.verdict] ?? human.verdict)}</span><span class="sub">workflow：${esc(stateText)}</span>` : `<span class="pill ${stateClass}">${esc(stateText)}</span>`}<span>${time(firstEvent)} – ${time(lastEvent)}（${Math.round((seconds(firstEvent, lastEvent) ?? 0) / 6) / 10} 分钟）</span><span>内部审阅 ${gate?.rounds ?? '—'} 轮</span><span>约 ${Math.round(totalTokens / 1000)}k tokens</span><span class="mono">run ${esc(run.id.slice(0, 8))} · ${esc(run.workflowRevision)}</span></div>
 <ol class="strip">${strip()}</ol>
 </header>
 
-<section><h2>这一阶段的决定</h2><p class="sub">workflow 交到你手上的主资产（最后一版）。</p><div class="doc">${decisionHtml}</div></section>
+${videos.length ? `<section><h2>成片</h2><p class="sub">${esc(videos.join('、'))}</p><video controls preload="metadata" src="${esc(videos[0])}"></video></section>` : ''}
+<section><h2>这一阶段的${stage === 'b3' ? '稿件文件' : '决定'}</h2><p class="sub">workflow 交到你手上的主资产（最后一版）。</p><div class="doc">${decisionHtml}</div></section>
 
 <section><h2>审阅</h2><p class="sub">左边是 workflow 内部的审阅者按标准卡给的判断；右边是你的判断。两边长期一致，这道闸才可以交给 agent。</p>
 <div class="twocol">
 <div class="col"><h3>${esc({ b1: '挑战者', b2: '主编', b3: '成品检查' }[stage] ?? '审阅者')} ${verdict?.verdict ? resultPill(verdict.verdict) : ''}</h3><p>${esc(verdict?.summary ?? '尚未审阅')}</p><div class="scroll"><table>${criteriaRows()}</table></div></div>
-<div class="col"><h3>你 ${human?.verdict ? resultPill(human.verdict) : '<span class="pill wait">待审</span>'}</h3>${human ? `<p class="sub">${esc(human.reviewer ?? '')}（针对上一版）</p><ol>${(human.notes ?? []).map(n => `<li>${esc(n)}</li>`).join('')}</ol>` : '<p class="sub">这一版还没有你的审阅。你的意见会写回标准卡，并作为下一轮最高优先级的输入。</p>'}</div>
-</div></section>
+<div class="col"><h3>你 ${human?.verdict ? resultPill(human.verdict) : '<span class="pill wait">待审</span>'}</h3>${human ? `<p class="sub">${esc(human.reviewer ?? '')}</p><ol>${(human.notes ?? []).map(n => `<li>${esc(n)}</li>`).join('')}</ol>` : '<p class="sub">这一版还没有你的审阅。你的意见会写回标准卡，并作为下一轮最高优先级的输入。</p>'}</div>
+</div>${incomingNotes.length ? `<div class="col incoming"><h3>这一轮是按这些意见改的</h3><p class="sub">${esc(incoming?.reviewer ?? '')}</p><ol>${incomingNotes.map(n => `<li>${esc(n)}</li>`).join('')}</ol></div>` : ''}</section>
 
 <section><h2>为什么是这个 workflow</h2><p class="sub">每个角色都对应这个阶段的一种常见失败。</p><div class="scroll"><table class="rows">${roleRows()}</table></div></section>
 

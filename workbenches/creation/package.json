@@ -14,7 +14,8 @@
     "stage": "tsx scripts/run-stage.ts",
     "stage:render": "tsx scripts/render-stage.ts",
     "stage:trace": "tsx scripts/stage-trace.ts",
-    "stage:eval-reviewer": "tsx scripts/eval-reviewer.ts"
+    "stage:eval-reviewer": "tsx scripts/eval-reviewer.ts",
+    "stage:workbench": "tsx scripts/stage-workbench.ts"
   },
   "dependencies": {
     "markdown-it": "14.1.0",
