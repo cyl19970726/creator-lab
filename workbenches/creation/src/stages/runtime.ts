@@ -1,8 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { Codex } from '@openai/codex-sdk';
 import { defineAgent, type AgentRunner, type ArtifactRef, type WorkflowTerminal } from '@signal-room/workflow';
-import { CodexSdkRunner } from '@signal-room/workflow-codex';
+import { CodexSdkRunner, probeCodexModel, type CodexSdkRunnerOptions } from '@signal-room/workflow-codex';
 import type { z } from 'zod';
 
 /**
@@ -21,16 +20,28 @@ export function resolveCodexBinary(env: NodeJS.ProcessEnv = process.env): string
   return existsSync(DEFAULT_CODEX_BIN) ? DEFAULT_CODEX_BIN : undefined;
 }
 
+/**
+ * Runner settings for every stage agent: the Codex executable that accepts GPT-6 (its version is what the
+ * trace records), and no repository AGENTS.md. Run traces live inside the repo, so Codex would otherwise
+ * inject every AGENTS.md on the way up (≈5k chars of engineering rules) into content roles — found in
+ * B1 traces, 2026-09-30.
+ */
+export function stageRunnerOptions(codexBinary: string | undefined): CodexSdkRunnerOptions {
+  return { codexOptions: { ...(codexBinary ? { codexPathOverride: codexBinary } : {}), config: { project_doc_max_bytes: 0 } } };
+}
+
 export function createStageRunner(options: { traceRoot: string; codexBinary?: string }): AgentRunner {
   if (!path.isAbsolute(options.traceRoot)) throw new Error('Stage traceRoot must be an absolute private directory');
-  const codexPathOverride = options.codexBinary ?? resolveCodexBinary();
-  return new CodexSdkRunner({ create: codexOptions => new Codex({
-    ...codexOptions,
-    ...(codexPathOverride ? { codexPathOverride } : {}),
-    // Run traces live inside the repo, so Codex would otherwise inject every AGENTS.md on the way up
-    // (≈5k chars of repo engineering rules) into content roles. Found in B1 traces, 2026-09-30.
-    config: { ...(codexOptions?.config ?? {}), project_doc_max_bytes: 0 },
-  }) }, options.traceRoot);
+  return new CodexSdkRunner(undefined, options.traceRoot, stageRunnerOptions(options.codexBinary ?? resolveCodexBinary()));
+}
+
+/** Fails before a run starts when this Codex login cannot use the stage model, instead of inside the run. */
+export async function assertStageModelAvailable(model: string, codexBinary?: string): Promise<void> {
+  const probe = await probeCodexModel({ model, runnerOptions: stageRunnerOptions(codexBinary ?? resolveCodexBinary()), timeoutMs: 90_000 });
+  if (!probe.ok) {
+    throw new Error(`Model ${model} is not usable with ${probe.codexRuntimeVersion}: ${probe.error}\n`
+      + 'Set CREATION_CODEX_BIN to a Codex CLI that accepts it, or pass --model. Do not continue the stage by hand.');
+  }
 }
 
 /**

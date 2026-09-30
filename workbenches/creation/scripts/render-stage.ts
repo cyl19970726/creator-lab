@@ -21,7 +21,8 @@ const store = new SQLiteWorkflowRunStore(new DatabaseSync(path.join(root, 'ledge
 const md = new MarkdownIt({ linkify: true });
 
 const runs = await store.listRuns({ metadata: { topicId } });
-const run = requestedRun ? runs.find(r => r.id === requestedRun) : runs.at(-1);
+// listRuns returns newest first.
+const run = requestedRun ? runs.find(r => r.id === requestedRun) : runs[0];
 if (!run) throw new Error(`No run found for ${topicId}${requestedRun ? ` / ${requestedRun}` : ''}`);
 const stage = String(run.metadata?.stage ?? 'b1');
 const roles: Record<string, RoleSpec> = Object.fromEntries(

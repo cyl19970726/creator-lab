@@ -7,11 +7,12 @@ import { SQLiteWorkflowRunStore } from '@signal-room/workflow-sqlite';
 import { b1InputSchema, createB1Workflow, readB1Standards } from '../src/stages/b1.js';
 import { b2InputSchema, createB2Workflow, readB2Standards } from '../src/stages/b2.js';
 import { b3InputSchema, createB3Workflow, readB3Standards } from '../src/stages/b3.js';
-import { createStageRunner, type StageModel } from '../src/stages/runtime.js';
+import { assertStageModelAvailable, createStageRunner, type StageModel } from '../src/stages/runtime.js';
 
 /**
  * Runs one stage workflow against a real topic and writes every published asset as a readable file.
- *   pnpm stage <b1|b2|b3> <input.json> [--resume <runId>] [--model gpt-6-sol] [--judge-effort high]
+ *   pnpm stage <b1|b2|b3> <input.json> [--resume <runId>] [--model gpt-6-sol] [--judge-effort high] [--skip-probe]
+ * Before starting, one tiny call checks that this Codex login can use the model (--skip-probe to omit).
  * State lives under .local/stages/<topicId>/ (git-ignored): ledger.sqlite, traces/, <stage>/<runId>/.
  */
 const { positionals, values } = parseArgs({
@@ -21,6 +22,7 @@ const { positionals, values } = parseArgs({
     model: { type: 'string', default: 'gpt-6-sol' },
     'worker-effort': { type: 'string', default: 'medium' },
     'judge-effort': { type: 'string', default: 'high' },
+    'skip-probe': { type: 'boolean', default: false },
   },
 });
 const [stage, inputPath] = positionals;
@@ -46,6 +48,7 @@ const topicId = String(raw.topicId);
 const root = path.resolve('.local/stages', topicId);
 mkdirSync(path.join(root, 'traces'), { recursive: true });
 const store = new SQLiteWorkflowRunStore(new DatabaseSync(path.join(root, 'ledger.sqlite')));
+if (!values['skip-probe']) await assertStageModelAvailable(values.model!);
 const started = Date.now();
 
 function execute<Input>(definition: WorkflowDefinition<Input, WorkflowTerminal<never>>, input: Input) {
