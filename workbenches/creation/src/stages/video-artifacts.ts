@@ -5,6 +5,23 @@ import path from 'node:path';
 const VIDEO_FILE = 'video.mp4';
 const MANIFEST_FILE = 'video.json';
 
+/** Prefer the actual rendered frames; accept older snapshot script outputs as fallbacks. */
+export function selectB3ReviewImages(episodeDir: string): string[] {
+  const settleDir = path.join(episodeDir, 'snapshots/settle');
+  const files = existsSync(settleDir) ? readdirSync(settleDir) : [];
+  const numbered = (name: string) => Number(/^\D+?(\d+)/.exec(name)?.[1] ?? 0);
+  const sortNumbered = (a: string, b: string) => numbered(a) - numbered(b) || a.localeCompare(b);
+  const frames = files.filter(name => /^frame-\d+-at-.*\.png$/.test(name)).sort(sortNumbered);
+  if (frames.length) return frames.map(name => path.join(settleDir, name));
+  if (files.includes('contact-sheet.jpg')) return [path.join(settleDir, 'contact-sheet.jpg')];
+  const nativeSheets = files.filter(name => /^contact-sheet-\d+\.jpg$/.test(name)).sort(sortNumbered);
+  if (nativeSheets.length) return nativeSheets.map(name => path.join(settleDir, name));
+  const reviewDir = path.join(episodeDir, 'snapshots/review');
+  return existsSync(reviewDir)
+    ? readdirSync(reviewDir).filter(name => /^contact-\d+\.jpg$/.test(name)).sort(sortNumbered).map(name => path.join(reviewDir, name))
+    : [];
+}
+
 /** Preserve the images inspected in a run and round before the shared review folder is reused. */
 export function saveRunContactSheets(runDir: string, round: number, sources: string[]): string[] {
   if (!sources.length) throw new Error('B3 snapshot review produced no contact sheets');
@@ -15,9 +32,11 @@ export function saveRunContactSheets(runDir: string, round: number, sources: str
       throw new Error(`B3 contact sheet has no readable image: ${source}`);
     }
     const name = path.basename(source);
-    if (!/^contact-\d+\.jpg$/.test(name)) throw new Error(`B3 contact sheet has an unexpected name: ${source}`);
+    if (!/^(?:frame-\d+-at-.*\.png|contact-sheet(?:-\d+)?\.jpg|contact-\d+\.jpg)$/.test(name)) {
+      throw new Error(`B3 review image has an unexpected name: ${source}`);
+    }
     const hash = createHash('sha256').update(readFileSync(source)).digest('hex');
-    const target = path.join(targetDir, name.replace(/\.jpg$/, `-${hash}.jpg`));
+    const target = path.join(targetDir, name.replace(/\.(png|jpg)$/, `-${hash}.$1`));
     if (!existsSync(target)) copyFileSync(source, target, constants.COPYFILE_EXCL);
     if (createHash('sha256').update(readFileSync(target)).digest('hex') !== hash) {
       throw new Error(`B3 saved contact sheet does not match its image hash: ${target}`);

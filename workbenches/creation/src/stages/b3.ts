@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { workflow, type WorkflowDefinition, type WorkflowTerminal } from "@signal-room/workflow";
 import { z } from 'zod';
 import { b3DesignerContext, b3InspectorContext, briefSchema } from './brief.js';
-import { saveRunContactSheets, saveRunVideo } from './video-artifacts.js';
+import { saveRunContactSheets, saveRunVideo, selectB3ReviewImages } from './video-artifacts.js';
 import {
   check, dependency, isTerminal, listOf, objectSchema, oneOf, stageAgent, str, strList,
   type RoleSpec, type StageModel,
@@ -18,7 +18,7 @@ import {
  * → render) runs as workflow tasks, a designer agent writes the frame specs inside the episode project,
  * and an inspector agent must actually open the snapshot contact sheets before judging.
  */
-export const B3_REVISION = 'b3-v11';
+export const B3_REVISION = 'b3-v12';
 export const b3StandardsPath = fileURLToPath(new URL('./standards/b3.md', import.meta.url));
 
 const segmentSchema = z.object({ time: z.string(), voiceover: z.string().min(1), onScreenText: z.string(), visual: z.string().min(1) });
@@ -72,7 +72,7 @@ export const B3_ROLES = {
   inspector: {
     id: 'b3-inspector', title: '成品检查',
     guards: '替你先看成品：必须实际打开快照图逐格检查，看不到图就不许判通过。',
-    prompt: `你是成品检查，代表创作者本人看画面。你会收到快照 contact sheet 图片路径（按时间顺序：前三格是 0、0.5、1 秒，之后每格对应一行口播画面稳定后的时刻）以及每行的口播、屏幕文字和画面意图。必须用查看图片的工具逐张打开这些图（imagesOpened 写你实际打开的路径），只看 contactSheets 列表里的图，不要打开工程目录里的其他图片（可能是旧版本的残留）；任何一张打不开，verdict=blocked 并说明。按标准卡 V1–V7 逐条给 ok / weak / fail；V5/V6 要核对每格的页脚编号与段数一致；V7 要比较各格之间是否有两段版式几乎一样；V3 要做静音测试：只看这一格画面、不看口播，写下你认为这一段在讲什么，再和口播对照，对不上就是 fail；scope 为 full 时，看完所有格再对照 core.oneLineAnswer：只看画面的观众能不能得到这句话；scope 为 sample 时只检查样片这几段各自是否讲对了自己那部分，不要求样片讲完整个答案；notesForB3 里的要求没落实的要指出来；并在 issues 里写出具体是第几行（line 用 "01" 这样的编号）、违反哪条、问题是什么、怎么改（改成什么样）。只提会改变观感的问题。标准卡末尾的用户审阅记录权重最高。${COMMON}`,
+    prompt: `你是成品检查，代表创作者本人看画面。你会收到快照 contact sheet 图片路径（按时间顺序：前三格是 0、0.5、1 秒，之后每格对应一行口播画面稳定后的时刻）以及每行的口播、屏幕文字和画面意图。contactSheets 列表也可能是按同样顺序排列的逐帧原图，每张只含一帧。必须用查看图片的工具逐张打开这些图（imagesOpened 写你实际打开的路径），只看 contactSheets 列表里的图，不要打开工程目录里的其他图片（可能是旧版本的残留）；任何一张打不开，verdict=blocked 并说明。按标准卡 V1–V7 逐条给 ok / weak / fail；V5/V6 要核对每格的页脚编号与段数一致；V7 要比较各格之间是否有两段版式几乎一样；V3 要做静音测试：只看这一格画面、不看口播，写下你认为这一段在讲什么，再和口播对照，对不上就是 fail；scope 为 full 时，看完所有格再对照 core.oneLineAnswer：只看画面的观众能不能得到这句话；scope 为 sample 时只检查样片这几段各自是否讲对了自己那部分，不要求样片讲完整个答案；notesForB3 里的要求没落实的要指出来；并在 issues 里写出具体是第几行（line 用 "01" 这样的编号）、违反哪条、问题是什么、怎么改（改成什么样）。只提会改变观感的问题。标准卡末尾的用户审阅记录权重最高。${COMMON}`,
     outputSchema: objectSchema({
       imagesOpened: strList,
       verdict: oneOf('pass', 'revise', 'blocked'),
@@ -249,9 +249,9 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
           technical = technical.slice(-1500);
           let errors: ReturnType<typeof locatedErrors> = [];
           try { errors = locatedErrors(JSON.parse(readFileSync(path.join(dir, '.hf/check.json'), 'utf8'))); } catch { errors = []; }
+          rmSync(path.join(dir, 'snapshots/settle'), { recursive: true, force: true });
           const snapshots = run(dir, 'bash', ['scripts/snapshot-review.sh']).slice(-1500);
-          const sharedSheets = readdirSync(path.join(dir, 'snapshots/review')).filter(f => /^contact-\d+\.jpg$/.test(f)).sort()
-            .map(f => path.join(dir, 'snapshots/review', f));
+          const sharedSheets = selectB3ReviewImages(dir);
           const runDir = path.resolve('.local/stages', input.topicId, 'b3', execution.runId);
           const sheets = saveRunContactSheets(runDir, round, sharedSheets);
           return { index, retime, technical, errors, green: /→\s*GREEN/.test(technical), snapshots, sheets, settle: readFileSync(path.join(dir, 'snapshots/settle.txt'), 'utf8').trim() };

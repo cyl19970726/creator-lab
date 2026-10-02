@@ -9,7 +9,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { MemoryRunStore, artifactPayloadSha256, runWorkflow, type AgentRunRequest, type AgentRunResult, type AgentRunner } from '@signal-room/workflow';
 import { SQLiteWorkflowRunStore } from '@signal-room/workflow-sqlite';
 import { createB3Workflow, renderEpisodeVideo, type B3Input } from '../src/stages/b3.js';
-import { findRunVideo, saveRunVideo } from '../src/stages/video-artifacts.js';
+import { findRunVideo, saveRunVideo, selectB3ReviewImages } from '../src/stages/video-artifacts.js';
 
 const roots: string[] = [];
 const fixture = () => {
@@ -108,6 +108,54 @@ const agentRunner = {
 
 const imageHash = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
 const changingSnapshots = '#!/bin/bash\nmkdir -p snapshots/review\nn=$(cat snapshots/counter 2>/dev/null || echo 0)\nn=$((n+1))\nprintf %s "$n" > snapshots/counter\nprintf "image-%s" "$n" > snapshots/review/contact-01.jpg\nprintf 1 > snapshots/settle.txt\n';
+
+test('B3 chooses a native contact sheet before a low-resolution review fallback', () => {
+  const episode = fixture();
+  mkdirSync(path.join(episode, 'snapshots/settle'), { recursive: true });
+  mkdirSync(path.join(episode, 'snapshots/review'), { recursive: true });
+  writeFileSync(path.join(episode, 'snapshots/settle/contact-sheet.jpg'), 'native');
+  writeFileSync(path.join(episode, 'snapshots/review/contact-1.jpg'), 'fallback');
+  expect(selectB3ReviewImages(episode)).toEqual([path.join(episode, 'snapshots/settle/contact-sheet.jpg')]);
+});
+
+test('B3 inspects full-resolution frames in numeric order when native and fallback sheets coexist', async () => {
+  const original = process.cwd();
+  const { cwd, input } = workflowFixture(false);
+  writeFileSync(path.join(input.episodeDir, 'scripts/snapshot-review.sh'), '#!/bin/bash\nmkdir -p snapshots/review snapshots/settle\nn=$(cat snapshots/counter 2>/dev/null || echo 0)\nn=$((n+1))\nprintf %s "$n" > snapshots/counter\nfor i in 00 02 10; do printf "full-%s-run-%s" "$i" "$n" > "snapshots/settle/frame-${i}-at-1s.png"; done\nprintf native > snapshots/settle/contact-sheet.jpg\nprintf fallback > snapshots/review/contact-1.jpg\nprintf 1 > snapshots/settle.txt\n');
+  const inspectingAll: AgentRunner = {
+    ...agentRunner,
+    async run<Input, Output>(request: AgentRunRequest<Input>): Promise<AgentRunResult<Output>> {
+      if (request.definition.id !== 'b3-inspector') return agentRunner.run(request);
+      return { output: { imagesOpened: (request.input as { contactSheets: string[] }).contactSheets, verdict: 'pass', criteria: [{ id: 'V1', result: 'ok', reason: 'ok' }], issues: [], summary: 'ok' } as Output };
+    },
+  };
+  process.chdir(cwd);
+  try {
+    const store = new MemoryRunStore();
+    const first = await runWorkflow({ workflow: createB3Workflow(input, model), input, store, agentRunner: inspectingAll });
+    const firstSheets = (store.artifacts.find(a => a.type === 'b3-assembly' && a.producedBy.workflowRunId === first.run.id)!.payload as { sheets: string[] }).sheets;
+    expect(firstSheets.map(s => path.basename(s).split('-at-')[0])).toEqual(['frame-00', 'frame-02', 'frame-10']);
+    expect(firstSheets.every(s => s.endsWith('.png'))).toBe(true);
+    const hashes = firstSheets.map(imageHash);
+    expect(firstSheets.map(s => readFileSync(s, 'utf8'))).toEqual(['full-00-run-1', 'full-02-run-1', 'full-10-run-1']);
+    const second = await runWorkflow({ workflow: createB3Workflow(input, model), input, store, agentRunner: inspectingAll });
+    const secondSheets = (store.artifacts.find(a => a.type === 'b3-assembly' && a.producedBy.workflowRunId === second.run.id)!.payload as { sheets: string[] }).sheets;
+    expect(firstSheets.map(imageHash)).toEqual(hashes);
+    expect(secondSheets.map(s => readFileSync(s, 'utf8'))).toEqual(['full-00-run-2', 'full-02-run-2', 'full-10-run-2']);
+    expect((first.run.output as { details: { contactSheets: string[] } }).details.contactSheets).toEqual(firstSheets);
+  } finally { process.chdir(original); }
+});
+
+test('B3 rejects a snapshot step that produces no images', async () => {
+  const original = process.cwd();
+  const { cwd, input } = workflowFixture(false);
+  writeFileSync(path.join(input.episodeDir, 'scripts/snapshot-review.sh'), '#!/bin/bash\nprintf 1 > snapshots/settle.txt\n');
+  process.chdir(cwd);
+  try {
+    const store = new MemoryRunStore();
+    await expect(runWorkflow({ workflow: createB3Workflow(input, model), input, store, agentRunner })).rejects.toThrow('no contact sheets');
+  } finally { process.chdir(original); }
+});
 
 test('B3 contact sheets remain bound to each run sharing an episode', async () => {
   const original = process.cwd();
