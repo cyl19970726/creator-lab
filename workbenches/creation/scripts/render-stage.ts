@@ -52,7 +52,8 @@ const agentInfo = (step: StepRecord) => {
   return { id: String(started?.data?.agentId ?? ''), model: String(started?.data?.model ?? ''), effort: String(started?.data?.reasoningEffort ?? ''), usage: done?.data?.usage };
 };
 
-const gate = (run.output as { details?: { reason?: string; rounds?: number } } | undefined)?.details;
+const gate = (run.output as { details?: { reason?: string; rounds?: number; scope?: string } } | undefined)?.details;
+const videoScopeLabel = gate?.scope === 'sample' ? '样片' : gate?.scope === 'full' ? '全片' : '视频';
 const stateLabel: Record<string, [string, string]> = {
   'awaiting-human-review': ['等你审', 'wait'], 'not-converged': ['内部没审过，等你决定', 'warn'], 'final-edits-fact-checked': ['已按主编最后意见改完并核过事实，等你审', 'wait'], 'final-edits-with-fact-issues': ['改完了，但事实核查还有问题', 'warn'], blocked: ['卡住了', 'bad'],
 };
@@ -194,7 +195,7 @@ a{color:var(--accent)}
 <ol class="strip">${strip()}</ol>
 </header>
 
-${video ? `<section><h2>成片</h2><p class="sub">${esc(video)}</p><video controls preload="metadata" src="${esc(video)}"></video></section>` : ''}
+${video ? `<section><h2>${videoScopeLabel}</h2><p class="sub">${esc(video)}</p><video controls preload="metadata" src="${esc(video)}"></video></section>` : ''}
 <section><h2>这一阶段的${stage === 'b3' ? '稿件文件' : '决定'}</h2><p class="sub">workflow 交到你手上的主资产（最后一版）。</p><div class="doc">${decisionHtml}</div></section>
 
 <section><h2>审阅</h2><p class="sub">左边是 workflow 内部的审阅者按标准卡给的判断；右边是已记录的阶段审阅，审阅者以实际记录为准。</p>

@@ -90,7 +90,9 @@ function assetSummary(v: RunView): string {
       <div class="kv"><span>开口第一句</span><p>${esc(segments[0]?.voiceover)}</p></div></div>`;
   }
   const video = v.video ? `<video controls preload="metadata" src="${esc(`${v.stage}/${v.run.id}/${v.video}`)}"></video>` : '<p class="sub">这次运行没有保存视频。</p>';
-  return `<div class="asset asset-video">${video}<p class="sub">${esc((v.run.output as { details?: { voice?: string } })?.details?.voice === 'placeholder' ? '占位配音（macOS 语音），正式配音待定' : '')}</p></div>`;
+  const details = (v.run.output as { details?: { scope?: string; voice?: string } } | undefined)?.details;
+  const scopeLabel = details?.scope === 'sample' ? '样片' : details?.scope === 'full' ? '全片' : '视频';
+  return `<div class="asset asset-video"><p class="sub">${scopeLabel}</p>${video}<p class="sub">${esc(details?.voice === 'placeholder' ? '占位配音（macOS 语音），正式配音待定' : '')}</p></div>`;
 }
 
 function stageRow(spec: typeof STAGES[number]): string {

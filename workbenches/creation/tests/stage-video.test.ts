@@ -413,14 +413,29 @@ test('stage and workbench pages link the run video and name the recorded reviewe
   const creation = fileURLToPath(new URL('..', import.meta.url));
   const loader = path.join(creation, 'node_modules/tsx/dist/loader.mjs');
   execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/render-stage.ts'), topic, run.id], { cwd });
-  const stageHtml = readFileSync(path.join(runDir, 'index.html'), 'utf8');
+  let stageHtml = readFileSync(path.join(runDir, 'index.html'), 'utf8');
   expect(stageHtml).toContain('<video controls preload="metadata" src="video.mp4"');
+  expect(stageHtml).toContain('<section><h2>视频</h2>');
   expect(stageHtml).toContain('审阅记录 · main-agent-proxy');
   expect(stageHtml).toContain('审阅通过 · main-agent-proxy');
   mkdirSync(path.join(cwd, 'docs/03-architecture'), { recursive: true });
   writeFileSync(path.join(cwd, 'docs/03-architecture/brief-and-handoff.md'), '# Fixture flow');
   execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/stage-workbench.ts'), topic], { cwd });
-  const workbenchHtml = readFileSync(path.join(root, 'index.html'), 'utf8');
+  let workbenchHtml = readFileSync(path.join(root, 'index.html'), 'utf8');
   expect(workbenchHtml).toContain(`src="b3/${run.id}/video.mp4"`);
+  expect(workbenchHtml).toContain('<div class="asset asset-video"><p class="sub">视频</p>');
   expect(workbenchHtml).toContain('审阅记录 · main-agent-proxy');
+
+  for (const [scope, label] of [['sample', '样片'], ['full', '全片']] as const) {
+    const writableDb = new DatabaseSync(path.join(root, 'ledger.sqlite'));
+    await new SQLiteWorkflowRunStore(writableDb).updateRun(run.id, { output: { details: { scope, voice: 'placeholder' } } });
+    writableDb.close();
+    execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/render-stage.ts'), topic, run.id], { cwd });
+    execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/stage-workbench.ts'), topic], { cwd });
+    stageHtml = readFileSync(path.join(runDir, 'index.html'), 'utf8');
+    workbenchHtml = readFileSync(path.join(root, 'index.html'), 'utf8');
+    expect(stageHtml).toContain(`<section><h2>${label}</h2>`);
+    expect(workbenchHtml).toContain(`<div class="asset asset-video"><p class="sub">${label}</p>`);
+    expect(workbenchHtml).toContain('占位配音（macOS 语音），正式配音待定');
+  }
 });
