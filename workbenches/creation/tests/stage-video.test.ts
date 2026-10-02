@@ -322,7 +322,7 @@ test('the B3 workflow fails instead of publishing a pre-existing video after ren
   } finally { process.chdir(original); }
 });
 
-test('stage and workbench pages link the same run-scoped video', async () => {
+test('stage and workbench pages link the run video and name the recorded reviewer', async () => {
   const cwd = fixture();
   const topic = 'fixture';
   const root = path.join(cwd, '.local/stages', topic);
@@ -341,15 +341,19 @@ test('stage and workbench pages link the same run-scoped video', async () => {
   const runDir = path.join(root, 'b3', run.id);
   mkdirSync(runDir, { recursive: true });
   saveRunVideo(runDir, source, ref.id);
+  writeFileSync(path.join(root, 'decisions.json'), JSON.stringify({ title: 'fixture', current: { b3: run.id }, runs: { [run.id]: { purpose: 'fixture', review: { reviewer: 'main-agent-proxy', verdict: 'accept', notes: ['fixture'], at: '2026-10-03' } } } }));
   db.close();
   const creation = fileURLToPath(new URL('..', import.meta.url));
   const loader = path.join(creation, 'node_modules/tsx/dist/loader.mjs');
   execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/render-stage.ts'), topic, run.id], { cwd });
   const stageHtml = readFileSync(path.join(runDir, 'index.html'), 'utf8');
   expect(stageHtml).toContain('<video controls preload="metadata" src="video.mp4"');
+  expect(stageHtml).toContain('审阅记录 · main-agent-proxy');
+  expect(stageHtml).toContain('审阅通过 · main-agent-proxy');
   mkdirSync(path.join(cwd, 'docs/03-architecture'), { recursive: true });
   writeFileSync(path.join(cwd, 'docs/03-architecture/brief-and-handoff.md'), '# Fixture flow');
   execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/stage-workbench.ts'), topic], { cwd });
   const workbenchHtml = readFileSync(path.join(root, 'index.html'), 'utf8');
   expect(workbenchHtml).toContain(`src="b3/${run.id}/video.mp4"`);
+  expect(workbenchHtml).toContain('审阅记录 · main-agent-proxy');
 });

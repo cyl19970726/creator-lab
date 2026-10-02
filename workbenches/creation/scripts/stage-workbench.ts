@@ -105,7 +105,7 @@ function stageRow(spec: typeof STAGES[number]): string {
     <div class="body">${assetSummary(v)}
       <div class="verdicts">
         <div class="vrow"><span class="who">workflow 审阅</span>${pill(v.internal)}</div>
-        <div class="vrow"><span class="who">你</span>${pill(review?.verdict)}</div>
+        <div class="vrow"><span class="who">审阅记录${review?.reviewer ? ` · ${esc(review.reviewer)}` : ''}</span>${pill(review?.verdict)}</div>
         ${review ? `<ul class="notes">${review.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
         <p class="sub">共 ${count} 次运行，见下方调优历史</p>
       </div></div></section>`;
@@ -137,7 +137,7 @@ const history = [...views].sort((a, b) => Date.parse(a.started ?? '') - Date.par
   const current = decisions.current[v.stage] === v.run.id;
   return `<tr class="${current ? 'current' : ''}"><td class="mono">${v.stage.toUpperCase()}</td><td class="mono">${esc(v.run.workflowRevision)}${v.run.metadata?.briefVersion ? `<br><span class="sub">档案 v${esc(v.run.metadata.briefVersion)}</span>` : ''}</td>
     <td>${esc(d?.purpose ?? '')}${current ? ' <span class="tag">当前采用</span>' : ''}</td><td class="t">${time(v.started)}</td><td class="num">${v.minutes ?? '—'} 分</td>
-    <td>${pill(v.internal)}</td><td>${pill(d?.review?.verdict)}</td><td class="note">${esc(d?.review?.notes?.[0] ?? '')}</td>
+    <td>${pill(v.internal)}</td><td>${pill(d?.review?.verdict)}${d?.review?.reviewer ? `<br><span class="sub">${esc(d.review.reviewer)}</span>` : ''}</td><td class="note">${esc(d?.review?.notes?.[0] ?? '')}</td>
     <td><a href="${link(v)}">查看</a></td></tr>`;
 }).join('\n');
 
@@ -182,13 +182,13 @@ section.brief{margin-top:34px}section.brief details{background:var(--surface);bo
 </style></head><body><main>
 <div class="eyebrow">作品工作台 · ${esc(topicId)}</div>
 <h1>${esc(decisions.title)}</h1>
-<p class="sub">每个阶段一行：当前采用的版本、它的主资产、workflow 内部审阅和你的判断。点"打开阶段页"看这一阶段 AI 为什么这样设计、进度、输入和全部产出。</p>
+<p class="sub">每个阶段一行：当前采用的版本、它的主资产、workflow 内部审阅和已记录的阶段审阅。点"打开阶段页"看这一阶段 AI 为什么这样设计、进度、输入和全部产出。</p>
 <p><a href="flow.html">流程全图：每个角色拿到了什么、产出了什么 →</a></p>
 <ol class="strip">${strip}</ol>
 ${STAGES.map(stageRow).join('\n')}
 ${briefSection}
 <section class="history"><h2>调优历史</h2><p class="sub">每一次运行，按时间顺序。"评估"是同一份输入上的对比重跑，"生产"是做这篇作品本身；绿色行是当前采用的版本。</p>
-<div class="scroll"><table><tr><th>阶段</th><th>版本</th><th>用途</th><th>开始</th><th>用时</th><th>workflow 审阅</th><th>你</th><th>你的意见（首条）</th><th></th></tr>
+<div class="scroll"><table><tr><th>阶段</th><th>版本</th><th>用途</th><th>开始</th><th>用时</th><th>workflow 审阅</th><th>审阅记录</th><th>审阅意见（首条）</th><th></th></tr>
 ${history}</table></div></section>
 </main></body></html>`;
 

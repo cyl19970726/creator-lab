@@ -190,17 +190,17 @@ a{color:var(--accent)}
 <p><a href="../../index.html">← 返回作品工作台</a></p>
 <div class="stage">${esc(stage.toUpperCase())} · ${esc({ b1: '定题', b2: '成稿', b3: '成片' }[stage] ?? stage)} · ${esc(topicId)}</div>
 <h1>${esc(title)}</h1>
-<div class="meta">${human?.verdict ? `<span class="pill ${human.verdict === 'accept' ? 'good' : 'warn'}">${esc({ accept: '你已通过', revise: '你要求修改', invalid: '无效运行' }[human.verdict] ?? human.verdict)}</span><span class="sub">workflow：${esc(stateText)}</span>` : `<span class="pill ${stateClass}">${esc(stateText)}</span>`}<span>${time(firstEvent)} – ${time(lastEvent)}（${Math.round((seconds(firstEvent, lastEvent) ?? 0) / 6) / 10} 分钟）</span><span>内部审阅 ${gate?.rounds ?? '—'} 轮</span><span>约 ${Math.round(totalTokens / 1000)}k tokens</span><span class="mono">run ${esc(run.id.slice(0, 8))} · ${esc(run.workflowRevision)}</span></div>
+<div class="meta">${human?.verdict ? `<span class="pill ${human.verdict === 'accept' ? 'good' : 'warn'}">${esc({ accept: '审阅通过', revise: '审阅要求修改', invalid: '无效运行' }[human.verdict] ?? human.verdict)}${human.reviewer ? ` · ${esc(human.reviewer)}` : ''}</span><span class="sub">workflow：${esc(stateText)}</span>` : `<span class="pill ${stateClass}">${esc(stateText)}</span>`}<span>${time(firstEvent)} – ${time(lastEvent)}（${Math.round((seconds(firstEvent, lastEvent) ?? 0) / 6) / 10} 分钟）</span><span>内部审阅 ${gate?.rounds ?? '—'} 轮</span><span>约 ${Math.round(totalTokens / 1000)}k tokens</span><span class="mono">run ${esc(run.id.slice(0, 8))} · ${esc(run.workflowRevision)}</span></div>
 <ol class="strip">${strip()}</ol>
 </header>
 
 ${video ? `<section><h2>成片</h2><p class="sub">${esc(video)}</p><video controls preload="metadata" src="${esc(video)}"></video></section>` : ''}
 <section><h2>这一阶段的${stage === 'b3' ? '稿件文件' : '决定'}</h2><p class="sub">workflow 交到你手上的主资产（最后一版）。</p><div class="doc">${decisionHtml}</div></section>
 
-<section><h2>审阅</h2><p class="sub">左边是 workflow 内部的审阅者按标准卡给的判断；右边是你的判断。两边长期一致，这道闸才可以交给 agent。</p>
+<section><h2>审阅</h2><p class="sub">左边是 workflow 内部的审阅者按标准卡给的判断；右边是已记录的阶段审阅，审阅者以实际记录为准。</p>
 <div class="twocol">
 <div class="col"><h3>${esc({ b1: '挑战者', b2: '主编', b3: '成品检查' }[stage] ?? '审阅者')} ${verdict?.verdict ? resultPill(verdict.verdict) : ''}</h3><p>${esc(verdict?.summary ?? '尚未审阅')}</p><div class="scroll"><table>${criteriaRows()}</table></div></div>
-<div class="col"><h3>你 ${human?.verdict ? resultPill(human.verdict) : '<span class="pill wait">待审</span>'}</h3>${human ? `<p class="sub">${esc(human.reviewer ?? '')}</p><ol>${(human.notes ?? []).map(n => `<li>${esc(n)}</li>`).join('')}</ol>` : '<p class="sub">这一版还没有你的审阅。你的意见会写回标准卡，并作为下一轮最高优先级的输入。</p>'}</div>
+<div class="col"><h3>审阅记录${human?.reviewer ? ` · ${esc(human.reviewer)}` : ''} ${human?.verdict ? resultPill(human.verdict) : '<span class="pill wait">待审</span>'}</h3>${human ? `<ol>${(human.notes ?? []).map(n => `<li>${esc(n)}</li>`).join('')}</ol>` : '<p class="sub">这一版还没有审阅记录。</p>'}</div>
 </div>${incomingNotes.length ? `<div class="col incoming"><h3>这一轮是按这些意见改的</h3><p class="sub">${esc(incoming?.reviewer ?? '')}</p><ol>${incomingNotes.map(n => `<li>${esc(n)}</li>`).join('')}</ol></div>` : ''}</section>
 
 <section><h2>为什么是这个 workflow</h2><p class="sub">每个角色都对应这个阶段的一种常见失败。</p><div class="scroll"><table class="rows">${roleRows()}</table></div></section>
