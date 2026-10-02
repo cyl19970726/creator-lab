@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { parseArgs } from 'node:util';
@@ -12,7 +12,8 @@ import { briefAfterB1, briefAfterB2, briefSchema, type GateAcceptance, type Piec
  * from that run's own assets, so the next stage never depends on a hand-assembled input.
  *   pnpm stage:accept <topicId> <runId> --verdict accept|revise|invalid --reviewer "名字"
  *        [--note "对这一版的意见"]... [--next "留给下一阶段的话"]... [--purpose "生产"] [--keep-current]
- * Writes .local/stages/<topic>/decisions.json and, on accept of B1/B2, brief/v<n>.json + brief/latest.json.
+ * Writes .local/stages/<topic>/decisions.json and, on accept of B1/B2, an immutable brief/v<n>.json.
+ * Only an adopted acceptance updates brief/latest.json.
  */
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -33,9 +34,10 @@ const store = new SQLiteWorkflowRunStore(new DatabaseSync(path.join(root, 'ledge
 const run = await store.getRun(runId);
 if (!run) throw new Error(`No run ${runId} in ${topicId}`);
 const stage = String(run.metadata?.stage);
+if (!['b1', 'b2', 'b3'].includes(stage)) throw new Error(`Unsupported stage: ${stage}`);
 const acceptedAt = new Date().toISOString();
 
-// ---- decision record
+// Prepare the decision in memory. A B1/B2 acceptance is recorded only after its brief can be built.
 const decisionsFile = path.join(root, 'decisions.json');
 const decisions = existsSync(decisionsFile)
   ? JSON.parse(readFileSync(decisionsFile, 'utf8')) as { title?: string; current: Record<string, string>; runs: Record<string, { purpose: string; review?: unknown }> }
@@ -45,9 +47,11 @@ decisions.runs[runId] = {
   review: { reviewer: values.reviewer, verdict, notes: [...values.note!, ...values.next!.map(n => `给下一阶段：${n}`)], at: acceptedAt.slice(0, 10) },
 };
 if (verdict === 'accept' && !values['keep-current']) decisions.current[stage] = runId;
-writeFileSync(decisionsFile, `${JSON.stringify(decisions, null, 2)}\n`);
-console.log(`recorded ${verdict} for ${stage} ${runId}`);
-if (verdict !== 'accept' || stage === 'b3') process.exit(0);
+if (verdict !== 'accept' || stage === 'b3') {
+  writeFileSync(decisionsFile, `${JSON.stringify(decisions, null, 2)}\n`);
+  console.log(`recorded ${verdict} for ${stage} ${runId}`);
+  process.exit(0);
+}
 
 // ---- next brief version, built only from this run's assets and frozen input
 const artifacts = await store.listArtifacts(runId);
@@ -62,9 +66,12 @@ if (!existsSync(inputFile)) throw new Error(`The run's frozen input is missing: 
 const input = JSON.parse(readFileSync(inputFile, 'utf8')) as Record<string, unknown>;
 const gate: GateAcceptance = { runId, revision: run.workflowRevision, acceptedAt, reviewer: values.reviewer, notesForNext: values.next! };
 const briefDir = path.join(root, 'brief');
-mkdirSync(briefDir, { recursive: true });
 const latestFile = path.join(briefDir, 'latest.json');
 const previous = existsSync(latestFile) ? briefSchema.parse(JSON.parse(readFileSync(latestFile, 'utf8'))) : undefined;
+// Evaluation briefs do not advance latest, so allocate from every version ever written.
+const nextVersion = Math.max(previous?.version ?? 0, ...(
+  existsSync(briefDir) ? readdirSync(briefDir).map(name => /^v(\d+)\.json$/.exec(name)?.[1]).filter((n): n is string => !!n).map(Number) : []
+)) + 1;
 
 let brief: PieceBrief;
 if (stage === 'b1') {
@@ -83,18 +90,22 @@ if (stage === 'b1') {
   const research = [...carried, ...(await all<ResearchNotes>('b1-research-notes')).flatMap(r => r.notes)];
   brief = briefAfterB1({
     input: input as never, audienceQuestion, decision, research, challenge: await last<Challenge>('b1-challenge'),
-    previousVersion: previous?.version, gate,
+    previousVersion: nextVersion - 1, gate,
   });
 } else {
   const base = briefSchema.parse(input.brief);
   const script = await last<Script>('b2-script');
   if (!script) throw new Error('B2 run has no script to hand over');
-  brief = briefAfterB2({ ...base, version: Math.max(base.version, previous?.version ?? 0) }, {
+  brief = briefAfterB2({ ...base, version: nextVersion - 1 }, {
     script, editor: await last<EditorVerdict>('b2-editor'), factCheck: await last<FactCheck>('b2-fact-check'), gate,
   });
 }
 const versionFile = path.join(briefDir, `v${brief.version}.json`);
-writeFileSync(versionFile, `${JSON.stringify(brief, null, 2)}\n`);
-writeFileSync(latestFile, `${JSON.stringify(brief, null, 2)}\n`);
+mkdirSync(briefDir, { recursive: true });
+const serialized = `${JSON.stringify(brief, null, 2)}\n`;
+writeFileSync(versionFile, serialized, { flag: 'wx' });
+if (!values['keep-current']) writeFileSync(latestFile, serialized);
+writeFileSync(decisionsFile, `${JSON.stringify(decisions, null, 2)}\n`);
+console.log(`recorded ${verdict} for ${stage} ${runId}`);
 console.log(`brief v${brief.version} → ${versionFile}`);
 console.log(`  notes for B2: ${brief.notesForB2.length}   notes for B3: ${brief.notesForB3.length}   materials: ${brief.materials.length}`);
