@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, test } from 'vitest';
 import { MemoryRunStore, artifactPayloadSha256, runWorkflow, type AgentRunRequest, type AgentRunResult, type AgentRunner } from '@signal-room/workflow';
 import { SQLiteWorkflowRunStore } from '@signal-room/workflow-sqlite';
-import { createB3Workflow, renderEpisodeVideo, type B3Input } from '../src/stages/b3.js';
+import { B3_ROLES, createB3Workflow, renderEpisodeVideo, type B3Input } from '../src/stages/b3.js';
 import { findRunVideo, saveRunVideo, selectB3ReviewImages } from '../src/stages/video-artifacts.js';
 
 const roots: string[] = [];
@@ -184,6 +184,50 @@ const agentRunner = {
     throw new Error(`Unexpected agent ${request.definition.id}`);
   },
 } satisfies AgentRunner;
+
+test('B3 roles receive the current render scope, accepted-script boundary, and current creator review', async () => {
+  const original = process.cwd();
+  const { cwd, input } = workflowFixture(false);
+  input.brief.script = { title: 'script', coverText: 'cover', segments: [
+    { time: '0-1', voiceover: 'first', onScreenText: 'first', visual: 'first' },
+    { time: '1-2', voiceover: 'second', onScreenText: 'second', visual: 'second' },
+  ] };
+  input.brief.creator.account.name = 'Token经济猫';
+  input.brief.notesForB3 = [{ from: 'B2', note: '后续段落展开流程，本次先不展开' }];
+  input.humanReview = { reviewer: 'main-agent-proxy', notes: [{ line: '01', fix: '修正账号文字' }] };
+  input.maxRevisions = 1;
+  const seen: Record<string, Array<Record<string, unknown>>> = { design: [], inspect: [] };
+  const observingRunner: AgentRunner = {
+    ...agentRunner,
+    async run<Input, Output>(request: AgentRunRequest<Input>): Promise<AgentRunResult<Output>> {
+      if (request.definition.id === 'b3-designer') seen.design.push(request.input as Record<string, unknown>);
+      if (request.definition.id === 'b3-inspector') {
+        seen.inspect.push(request.input as Record<string, unknown>);
+        if (seen.inspect.length === 1) return { output: {
+          imagesOpened: (request.input as { contactSheets: string[] }).contactSheets,
+          verdict: 'revise', criteria: [{ id: 'V1', result: 'weak', reason: 'fixture' }],
+          issues: [{ line: '01', standard: 'V1', problem: 'fixture', fix: '调整画面' }], summary: 'fixture',
+        } as Output };
+      }
+      return agentRunner.run(request);
+    },
+  };
+  process.chdir(cwd);
+  try {
+    const store = new MemoryRunStore();
+    await runWorkflow({ workflow: createB3Workflow(input, model), input, store, agentRunner: observingRunner });
+    expect(seen.design[0]).toMatchObject({ scope: 'sample', renderSegmentCount: 1, lines: [{ line: '01' }], humanReview: input.humanReview });
+    expect(seen.design[1]).toMatchObject({ scope: 'sample', renderSegmentCount: 1, humanReview: input.humanReview, fixRequest: [{ fix: '调整画面' }] });
+    expect(seen.inspect[0]).toMatchObject({ scope: 'sample', renderSegmentCount: 1, lines: [{ line: '01' }], account: { name: 'Token经济猫' }, humanReview: input.humanReview, notesForB3: input.brief.notesForB3 });
+    const full = { ...input, scope: 'full' as const };
+    await runWorkflow({ workflow: createB3Workflow(full, model), input: full, store, agentRunner: observingRunner });
+    expect(seen.design[2]).toMatchObject({ scope: 'full', renderSegmentCount: 2, lines: [{ line: '01' }, { line: '02' }], humanReview: input.humanReview });
+    expect(seen.inspect[2]).toMatchObject({ scope: 'full', renderSegmentCount: 2, lines: [{ line: '01' }, { line: '02' }] });
+    expect(B3_ROLES.designer.prompt).toContain('样片的页脚总数按当前样片段数');
+    expect(B3_ROLES.inspector.prompt).toContain('只要求 B3 修改画面');
+    expect(B3_ROLES.inspector.prompt).toContain('真实冲突仍须指出');
+  } finally { process.chdir(original); }
+});
 
 const imageHash = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
 const changingSnapshots = '#!/bin/bash\nmkdir -p snapshots/review\nn=$(cat snapshots/counter 2>/dev/null || echo 0)\nn=$((n+1))\nprintf %s "$n" > snapshots/counter\nprintf "image-%s" "$n" > snapshots/review/contact-01.jpg\nprintf 1 > snapshots/settle.txt\n';

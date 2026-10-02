@@ -118,5 +118,5 @@ export function b3DesignerContext(brief: PieceBrief) {
 
 export function b3InspectorContext(brief: PieceBrief) {
   const { coreQuestion, oneLineAnswer, hook } = core(brief);
-  return { core: { coreQuestion, oneLineAnswer, hook }, notesForB3: brief.notesForB3 };
+  return { core: { coreQuestion, oneLineAnswer, hook }, account: { name: brief.creator.account.name }, notesForB3: brief.notesForB3 };
 }
