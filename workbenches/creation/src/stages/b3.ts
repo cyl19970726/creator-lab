@@ -18,8 +18,9 @@ import {
  * → render) runs as workflow tasks, a designer agent writes the frame specs inside the episode project,
  * and an inspector agent must actually open the snapshot contact sheets before judging.
  */
-export const B3_REVISION = 'b3-v12';
+export const B3_REVISION = 'b3-v13';
 export const b3StandardsPath = fileURLToPath(new URL('./standards/b3.md', import.meta.url));
+const renderScriptPath = fileURLToPath(new URL('../../tooling/render-episode.sh', import.meta.url));
 
 const segmentSchema = z.object({ time: z.string(), voiceover: z.string().min(1), onScreenText: z.string(), visual: z.string().min(1) });
 const scriptSchema = z.object({ title: z.string().min(1), coverText: z.string(), segments: z.array(segmentSchema).min(1) }).passthrough();
@@ -313,7 +314,7 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
           expectedArtifacts: [{ role: 'video', title: '视频', required: true }],
         }, async phase => {
           const video = await phase.task('render', (_request, execution) => {
-            const rendered = renderEpisodeVideo(dir, () => run(dir, 'bash', ['scripts/render.sh']));
+            const rendered = renderEpisodeVideo(dir, () => run(dir, 'bash', [renderScriptPath]));
             const runDir = path.resolve('.local/stages', input.topicId, 'b3', execution.runId);
             mkdirSync(runDir, { recursive: true });
             const output = saveRunVideo(runDir, rendered.output, execution.stepRunId);

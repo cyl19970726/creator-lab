@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,14 +12,51 @@ import { createB3Workflow, renderEpisodeVideo, type B3Input } from '../src/stage
 import { findRunVideo, saveRunVideo, selectB3ReviewImages } from '../src/stages/video-artifacts.js';
 
 const roots: string[] = [];
+const originalPath = process.env.PATH;
+const originalCoverYavg = process.env.MOCK_COVER_YAVG;
+const originalVideoSpec = process.env.MOCK_VIDEO_SPEC;
+const originalDuration = process.env.MOCK_DURATION;
+const originalAudio = process.env.MOCK_AUDIO;
+const renderScript = fileURLToPath(new URL('../tooling/render-episode.sh', import.meta.url));
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'creation-video-test-'));
   roots.push(root);
   return root;
 };
 afterEach(() => {
+  process.env.PATH = originalPath;
+  if (originalCoverYavg === undefined) delete process.env.MOCK_COVER_YAVG; else process.env.MOCK_COVER_YAVG = originalCoverYavg;
+  if (originalVideoSpec === undefined) delete process.env.MOCK_VIDEO_SPEC; else process.env.MOCK_VIDEO_SPEC = originalVideoSpec;
+  if (originalDuration === undefined) delete process.env.MOCK_DURATION; else process.env.MOCK_DURATION = originalDuration;
+  if (originalAudio === undefined) delete process.env.MOCK_AUDIO; else process.env.MOCK_AUDIO = originalAudio;
   for (const root of roots.splice(0)) execFileSync('rm', ['-rf', root]);
 });
+
+function mockRenderTools(root: string, failRender = false): void {
+  const bin = path.join(root, 'bin');
+  mkdirSync(bin, { recursive: true });
+  const commands: Record<string, string> = {
+    npx: `#!/bin/bash\nout="${'${@: -1}'}"\nif [[ "$*" == *" render "* ]]; then\n  ${failRender ? 'echo render-error >&2; exit 9' : 'printf current-run > "$out"'}\nelse\n  mkdir -p "$out"\n  printf first > "$out/frame-00.png"\n  printf cover > "$out/frame-01.png"\nfi\n`,
+    ffprobe: '#!/bin/bash\ncase "$*" in *format=duration*) echo "${MOCK_DURATION:-11.44}";; *stream=width*) echo "${MOCK_VIDEO_SPEC:-1080,1920,30/1}";; *stream=codec_name*) if [ "${MOCK_AUDIO:-aac}" != missing ]; then echo "${MOCK_AUDIO:-aac}"; fi;; esac\n',
+    ffmpeg: '#!/bin/bash\nif [[ "$*" == *frame-00.png* ]]; then echo YAVG=6; else echo YAVG=${MOCK_COVER_YAVG:-7}; fi\n',
+  };
+  for (const [name, source] of Object.entries(commands)) {
+    const file = path.join(bin, name);
+    writeFileSync(file, source);
+    chmodSync(file, 0o755);
+  }
+  process.env.PATH = `${bin}:${originalPath}`;
+}
+
+function expectRenderFailure(episode: string, expected: string): void {
+  try {
+    execFileSync('bash', [renderScript, episode, '--cover-at', '2'], { encoding: 'utf8' });
+    throw new Error('render unexpectedly succeeded');
+  } catch (error) {
+    const output = `${(error as { stdout?: string }).stdout ?? ''}\n${(error as { stderr?: string }).stderr ?? ''}`;
+    expect(output).toContain(expected);
+  }
+}
 
 describe('B3 video identity', () => {
   test('a failed render cannot adopt a pre-existing MP4', () => {
@@ -62,26 +99,68 @@ describe('B3 video identity', () => {
   });
 });
 
+describe('creation render contract', () => {
+  test('a visible first frame does not invalidate a nonblack settled cover', () => {
+    const { input } = workflowFixture(false);
+    writeFileSync(path.join(input.episodeDir, 'assets/voice-minimax/manifest.json'), '{"placeholder":true}');
+    const output = execFileSync('bash', [renderScript, input.episodeDir, '--cover-at', '2'], { encoding: 'utf8' });
+    expect(output).toContain('cover bright-pixel fraction');
+    expect(output).toContain('PLACEHOLDER VOICE');
+    expect(existsSync(path.join(input.episodeDir, 'exports/episode.mp4'))).toBe(true);
+    expect(existsSync(path.join(input.episodeDir, 'exports/episode.done'))).toBe(false);
+  });
+
+  test('a black settled cover, invalid video specs, and a failed renderer all fail verification', () => {
+    const { input } = workflowFixture(false);
+    process.env.MOCK_COVER_YAVG = '0';
+    expectRenderFailure(input.episodeDir, 'FAIL cover bright-pixel fraction');
+    expect(existsSync(path.join(input.episodeDir, 'exports/episode.done'))).toBe(false);
+    process.env.MOCK_COVER_YAVG = '7';
+    process.env.MOCK_VIDEO_SPEC = '720,1280,24/1';
+    expectRenderFailure(input.episodeDir, 'FAIL 1080x1920@30');
+    process.env.MOCK_VIDEO_SPEC = '1080,1920,30/1';
+    mockRenderTools(path.dirname(input.episodeDir), true);
+    expectRenderFailure(input.episodeDir, 'render-error');
+    expect(existsSync(path.join(input.episodeDir, 'exports/episode.done'))).toBe(false);
+  });
+
+  test('duration, audio, and stale frame gates remain active', () => {
+    const { input } = workflowFixture(false);
+    process.env.MOCK_DURATION = '20';
+    expectRenderFailure(input.episodeDir, 'FAIL duration');
+    process.env.MOCK_DURATION = '11.44';
+    process.env.MOCK_AUDIO = 'missing';
+    expectRenderFailure(input.episodeDir, 'FAIL audio stream');
+    process.env.MOCK_AUDIO = 'aac';
+    const frame = path.join(input.episodeDir, 'compositions/frames/01-hook.html');
+    writeFileSync(frame, '<div></div>');
+    const future = new Date(Date.now() + 60_000);
+    utimesSync(frame, future, future);
+    expectRenderFailure(input.episodeDir, 'refuse: 1 frame(s) rebuilt');
+    expect(existsSync(path.join(input.episodeDir, 'exports/episode.done'))).toBe(false);
+  });
+});
+
 function workflowFixture(failRender: boolean): { cwd: string; input: B3Input; oldVideo: string } {
   const cwd = fixture();
+  mockRenderTools(cwd, failRender);
   const episode = path.join(cwd, 'episode');
   const reference = path.join(cwd, 'reference');
   for (const dir of [episode, reference]) mkdirSync(path.join(dir, 'frames-spec'), { recursive: true });
-  for (const dir of ['scripts', 'exports', 'assets/voice-minimax', 'snapshots/review']) mkdirSync(path.join(episode, dir), { recursive: true });
+  for (const dir of ['scripts', 'exports', 'assets/voice-minimax', 'snapshots/review', 'compositions/frames']) mkdirSync(path.join(episode, dir), { recursive: true });
   writeFileSync(path.join(episode, 'package.json'), '{"name":"episode"}');
+  writeFileSync(path.join(episode, 'retime-report.json'), '{"total":11.44,"names":["01-hook"],"settle":[2]}');
+  writeFileSync(path.join(episode, 'assets/voice-minimax/manifest.json'), '{"placeholder":true}');
   writeFileSync(path.join(reference, 'frames-spec/01.py'), 'SPEC = {}');
   writeFileSync(path.join(episode, 'frames-spec/01.py'), 'SPEC = {}');
   const oldVideo = path.join(episode, 'exports/episode.mp4');
   writeFileSync(oldVideo, 'previous run');
-  writeFileSync(path.join(episode, 'scripts/tts-placeholder.sh'), '#!/bin/bash\nprintf \'{"lines":[{"index":1,"durationMs":1000,"text":"hello"}]}\' > assets/voice-minimax/manifest.json\n');
+  writeFileSync(path.join(episode, 'scripts/tts-placeholder.sh'), '#!/bin/bash\nprintf \'{"placeholder":true,"lines":[{"index":1,"durationMs":1000,"text":"hello"}]}\' > assets/voice-minimax/manifest.json\n');
   writeFileSync(path.join(episode, 'scripts/build-frames.py'), 'print("ok")\n');
   writeFileSync(path.join(episode, 'scripts/make-index.mjs'), 'console.log("index")\n');
   writeFileSync(path.join(episode, 'scripts/retime-to-minimax.mjs'), 'console.log("retime")\n');
   writeFileSync(path.join(episode, 'scripts/hf-check.sh'), '#!/bin/bash\necho "→ GREEN"\n');
   writeFileSync(path.join(episode, 'scripts/snapshot-review.sh'), '#!/bin/bash\nmkdir -p snapshots/review\nprintf image > snapshots/review/contact-01.jpg\nprintf 1 > snapshots/settle.txt\n');
-  writeFileSync(path.join(episode, 'scripts/render.sh'), failRender
-    ? '#!/bin/bash\necho render-error >&2\nexit 9\n'
-    : '#!/bin/bash\nprintf current-run > exports/episode.mp4\necho verified-placeholder\n');
   const input: B3Input = {
     topicId: 'fixture', episodeDir: episode, templateDir: cwd, referenceDir: reference,
     scope: 'sample', sampleSegments: 1, voice: 'placeholder', standards: 'V1', maxRevisions: 0,
