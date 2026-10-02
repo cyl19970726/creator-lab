@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -185,6 +185,28 @@ const agentRunner = {
   },
 } satisfies AgentRunner;
 
+test('B3 accepts no frame-spec edits only when existing specs cover every rendered line', async () => {
+  const original = process.cwd();
+  const { cwd, input } = workflowFixture(false);
+  const noFrameEdits: AgentRunner = {
+    ...agentRunner,
+    async run<Input, Output>(request: AgentRunRequest<Input>): Promise<AgentRunResult<Output>> {
+      if (request.definition.id === 'b3-designer') return { output: { files: [], buildCheckPassed: true, notes: 'Only the shared composition changed' } as Output };
+      return agentRunner.run(request);
+    },
+  };
+  process.chdir(cwd);
+  try {
+    const store = new MemoryRunStore();
+    const valid = await runWorkflow({ workflow: createB3Workflow(input, model), input, store, agentRunner: noFrameEdits });
+    expect((await store.listArtifacts(valid.run.id)).some(a => a.type === 'b3-video')).toBe(true);
+    rmSync(path.join(input.episodeDir, 'frames-spec/01.py'));
+    const missing = await runWorkflow({ workflow: createB3Workflow(input, model), input, store, agentRunner: noFrameEdits });
+    expect((await store.listArtifacts(missing.run.id)).some(a => a.type === 'b3-video')).toBe(false);
+    expect(JSON.stringify(missing.run.output)).toContain('missing-frame-specs');
+  } finally { process.chdir(original); }
+});
+
 test('B3 roles receive the current render scope, accepted-script boundary, and current creator review', async () => {
   const original = process.cwd();
   const { cwd, input } = workflowFixture(false);
@@ -219,6 +241,7 @@ test('B3 roles receive the current render scope, accepted-script boundary, and c
     expect(seen.design[0]).toMatchObject({ scope: 'sample', renderSegmentCount: 1, lines: [{ line: '01' }], humanReview: input.humanReview });
     expect(seen.design[1]).toMatchObject({ scope: 'sample', renderSegmentCount: 1, humanReview: input.humanReview, fixRequest: [{ fix: '调整画面' }] });
     expect(seen.inspect[0]).toMatchObject({ scope: 'sample', renderSegmentCount: 1, lines: [{ line: '01' }], account: { name: 'Token经济猫' }, humanReview: input.humanReview, notesForB3: input.brief.notesForB3 });
+    writeFileSync(path.join(input.episodeDir, 'frames-spec/02.py'), 'SPEC = {}');
     const full = { ...input, scope: 'full' as const };
     await runWorkflow({ workflow: createB3Workflow(full, model), input: full, store, agentRunner: observingRunner });
     expect(seen.design[2]).toMatchObject({ scope: 'full', renderSegmentCount: 2, lines: [{ line: '01' }, { line: '02' }], humanReview: input.humanReview });

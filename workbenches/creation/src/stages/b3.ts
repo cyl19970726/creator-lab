@@ -18,7 +18,7 @@ import {
  * → render) runs as workflow tasks, a designer agent writes the frame specs inside the episode project,
  * and an inspector agent must actually open the snapshot contact sheets before judging.
  */
-export const B3_REVISION = 'b3-v14';
+export const B3_REVISION = 'b3-v15';
 export const b3StandardsPath = fileURLToPath(new URL('./standards/b3.md', import.meta.url));
 const renderScriptPath = fileURLToPath(new URL('../../tooling/render-episode.sh', import.meta.url));
 
@@ -47,7 +47,7 @@ export const b3InputSchema = z.object({
 export type B3Input = z.infer<typeof b3InputSchema>;
 
 const designSchema = z.object({
-  files: z.array(z.string()).min(1),
+  files: z.array(z.string()),
   buildCheckPassed: z.boolean(),
   notes: z.string(),
 });
@@ -70,7 +70,7 @@ export const B3_ROLES = {
   designer: {
     id: 'b3-designer', title: '画面设计者',
     guards: '把每段稿子做成一帧真正能渲染的画面；B3 不能只登记别处做好的东西。',
-    prompt: `你是竖屏科技视频的画面设计者，在给定的视频工程目录（episodeDir）里工作。先读工程里的 frame.md（版式与视觉规范）和给出的参考帧规格（referenceSpecs，账号已发布作品的写法）。你还会收到作品档案里给你的部分：core（这一篇的核心问题、一句话答案、钩子和各节拍的画面想法）和 notesForB3（上游——B2 主编、事实核查、创作者——留给制作的话，必须逐条落实）；第一段画面要把钩子表达出来，全片画面合起来要让观众得到那句一句话答案。然后再为每一行口播写一个帧规格文件 frames-spec/NN-slug.py（NN 与 SCRIPT.md 的 Line 编号一致），格式与参考完全相同：SPEC = dict(kind="shell", name="NN-slug", cid="NN-slug", p="fNN", dur=该行配音秒数+0.6, body=..., css=..., tl=...)。页脚编号写 "NN/总段数"（总段数以 SCRIPT.md 的行数为准）。相邻或相同结构的段落不要用同一种版式（例如两段都是三张竖排卡片），每段的画面要和别的段一眼区分开。每帧从 0 秒起就要看得到这一段的主视觉：入场动画从可见状态开始（例如从 0.6 透明度或略小尺寸起步），不要从全透明或空背景开始。每帧一个主画面，主视觉占画面中部至少四成高度，不要只放一行标题或一个数字；把这一段的核心动作或对比画出来（静音也能看懂这一段在讲什么），屏幕文字用该段的 onScreenText，画面兑现该段的 visual 意图；遵守 frame.md 的安全区（内容 y≤1340，字幕带 y1390–1570 留空，右侧按钮区避让）。字体只用已有 @font-face 的：中文用工程 assets/fonts 里的 Noto Sans CJK SC；要用其他字体（如 Space Grotesk）必须在该帧 css 里写 @font-face，否则渲染时会回退成衬线并让技术检查报错。写完在 episodeDir 里运行 python3 scripts/build-frames.py --check，有错就改规格重跑，直到通过。不要自己截图、打开浏览器或调用其他应用（你的沙箱不能联网，截图工具会卡住）；只用 build-frames.py --check 自检，截图和看图由流程和成品检查者负责。改动要最小化：只动被点名的问题，避免引入文字重叠（hf-check 的 layout 检查会报 content_overlap）。收到修改请求（fixRequest：创作者的审阅意见优先级最高，其次是成品检查意见和技术检查 hf-check 的报错）时只改相关的行，改完用 --only NN 重建再跑 --check。不要改 scripts/ 下的文件，不要改 SCRIPT.md。keepSpecs 里列出的规格已经通过创作者的样片审阅，保持原样，只在检查意见点名时才改。files 写你创建或修改的规格文件路径；buildCheckPassed 如实填写最后一次 --check 的结果。${RENDER_SCOPE_CONTRACT}${DESIGN_AUTHORITY}${COMMON}`,
+    prompt: `你是竖屏科技视频的画面设计者，在给定的视频工程目录（episodeDir）里工作。先读工程里的 frame.md（版式与视觉规范）和给出的参考帧规格（referenceSpecs，账号已发布作品的写法）。你还会收到作品档案里给你的部分：core（这一篇的核心问题、一句话答案、钩子和各节拍的画面想法）和 notesForB3（上游——B2 主编、事实核查、创作者——留给制作的话，必须逐条落实）；第一段画面要把钩子表达出来，全片画面合起来要让观众得到那句一句话答案。然后再为每一行口播写一个帧规格文件 frames-spec/NN-slug.py（NN 与 SCRIPT.md 的 Line 编号一致），格式与参考完全相同：SPEC = dict(kind="shell", name="NN-slug", cid="NN-slug", p="fNN", dur=该行配音秒数+0.6, body=..., css=..., tl=...)。页脚编号写 "NN/总段数"（总段数以 SCRIPT.md 的行数为准）。相邻或相同结构的段落不要用同一种版式（例如两段都是三张竖排卡片），每段的画面要和别的段一眼区分开。每帧从 0 秒起就要看得到这一段的主视觉：入场动画从可见状态开始（例如从 0.6 透明度或略小尺寸起步），不要从全透明或空背景开始。每帧一个主画面，主视觉占画面中部至少四成高度，不要只放一行标题或一个数字；把这一段的核心动作或对比画出来（静音也能看懂这一段在讲什么），屏幕文字用该段的 onScreenText，画面兑现该段的 visual 意图；遵守 frame.md 的安全区（内容 y≤1340，字幕带 y1390–1570 留空，右侧按钮区避让）。字体只用已有 @font-face 的：中文用工程 assets/fonts 里的 Noto Sans CJK SC；要用其他字体（如 Space Grotesk）必须在该帧 css 里写 @font-face，否则渲染时会回退成衬线并让技术检查报错。写完在 episodeDir 里运行 python3 scripts/build-frames.py --check，有错就改规格重跑，直到通过。不要自己截图、打开浏览器或调用其他应用（你的沙箱不能联网，截图工具会卡住）；只用 build-frames.py --check 自检，截图和看图由流程和成品检查者负责。改动要最小化：只动被点名的问题，避免引入文字重叠（hf-check 的 layout 检查会报 content_overlap）。收到修改请求（fixRequest：创作者的审阅意见优先级最高，其次是成品检查意见和技术检查 hf-check 的报错）时只改相关的行，改完用 --only NN 重建再跑 --check。不要改 scripts/ 下的文件，不要改 SCRIPT.md。keepSpecs 里列出的规格已经通过创作者的样片审阅，保持原样，只在检查意见点名时才改。files 只写你创建或修改的帧规格路径；如果现有帧规格已经正确、这轮只改共享组件或无需改帧，files 可以是空数组，它不表示工程没有变化。buildCheckPassed 如实填写最后一次 --check 的结果。${RENDER_SCOPE_CONTRACT}${DESIGN_AUTHORITY}${COMMON}`,
     outputSchema: objectSchema({ files: strList, buildCheckPassed: { type: 'boolean' }, notes: str }),
   },
   inspector: {
@@ -224,13 +224,16 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
         });
         const checked = await phase.validate('check-design', value, v => check(designSchema, v));
         if (!checked.valid) return phase.blocked({ reason: 'invalid-design-report', details: checked.details });
+        const specDir = path.join(dir, 'frames-spec');
+        const specFiles = existsSync(specDir) ? readdirSync(specDir).filter(f => f.endsWith('.py')).sort() : [];
+        const missing = lines.filter(l => !specFiles.some(f => f === `${l.line}.py` || f.startsWith(`${l.line}-`))).map(l => l.line);
+        if (missing.length) return phase.blocked({ reason: 'missing-frame-specs', lines: missing });
         // Do not trust the agent's own report: rebuild and check the frames here.
         const built = await phase.task('verify-frames', () => {
           try { return { ok: true, output: run(dir, 'python3', ['scripts/build-frames.py', '--check']).slice(-2000) }; }
           catch (error) { return { ok: false, output: String((error as { stdout?: string }).stdout ?? error).slice(-2000) }; }
         }, { round, files: value.files });
-        const specs = readdirSync(path.join(dir, 'frames-spec')).filter(f => f.endsWith('.py')).sort()
-          .map(f => ({ file: f, content: readFileSync(path.join(dir, 'frames-spec', f), 'utf8') }));
+        const specs = specFiles.map(f => ({ file: f, content: readFileSync(path.join(specDir, f), 'utf8') }));
         const ref = await phase.publish('frame-specs', 'b3-frame-specs', { report: value, build: built, specs }, {
           validation: built.ok ? 'valid' : 'invalid', review: 'pending', dependsOn: [dependency(voiced.ref)],
         });
