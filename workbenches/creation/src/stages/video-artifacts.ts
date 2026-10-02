@@ -1,8 +1,30 @@
-import { copyFileSync, existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const VIDEO_FILE = 'video.mp4';
 const MANIFEST_FILE = 'video.json';
+
+/** Preserve the images inspected in a run and round before the shared review folder is reused. */
+export function saveRunContactSheets(runDir: string, round: number, sources: string[]): string[] {
+  if (!sources.length) throw new Error('B3 snapshot review produced no contact sheets');
+  const targetDir = path.join(runDir, 'snapshots', `round-${round + 1}`);
+  mkdirSync(targetDir, { recursive: true });
+  return sources.map(source => {
+    if (!path.isAbsolute(source) || !existsSync(source) || statSync(source).size === 0) {
+      throw new Error(`B3 contact sheet has no readable image: ${source}`);
+    }
+    const name = path.basename(source);
+    if (!/^contact-\d+\.jpg$/.test(name)) throw new Error(`B3 contact sheet has an unexpected name: ${source}`);
+    const hash = createHash('sha256').update(readFileSync(source)).digest('hex');
+    const target = path.join(targetDir, name.replace(/\.jpg$/, `-${hash}.jpg`));
+    if (!existsSync(target)) copyFileSync(source, target, constants.COPYFILE_EXCL);
+    if (createHash('sha256').update(readFileSync(target)).digest('hex') !== hash) {
+      throw new Error(`B3 saved contact sheet does not match its image hash: ${target}`);
+    }
+    return target;
+  });
+}
 
 /** Keep the exact video named by this run's b3-video artifact beside its frozen input. */
 export function saveRunVideo(runDir: string, source: string, producerStepRunId: string): string {

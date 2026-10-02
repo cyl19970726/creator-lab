@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -104,6 +105,64 @@ const agentRunner = {
     throw new Error(`Unexpected agent ${request.definition.id}`);
   },
 } satisfies AgentRunner;
+
+const imageHash = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
+const changingSnapshots = '#!/bin/bash\nmkdir -p snapshots/review\nn=$(cat snapshots/counter 2>/dev/null || echo 0)\nn=$((n+1))\nprintf %s "$n" > snapshots/counter\nprintf "image-%s" "$n" > snapshots/review/contact-01.jpg\nprintf 1 > snapshots/settle.txt\n';
+
+test('B3 contact sheets remain bound to each run sharing an episode', async () => {
+  const original = process.cwd();
+  const { cwd, input } = workflowFixture(false);
+  writeFileSync(path.join(input.episodeDir, 'scripts/snapshot-review.sh'), changingSnapshots);
+  process.chdir(cwd);
+  try {
+    const store = new MemoryRunStore();
+    const first = await runWorkflow({ workflow: createB3Workflow(input, model), input, store, agentRunner });
+    const firstAssembly = store.artifacts.find(a => a.type === 'b3-assembly')!.payload as { sheets: string[] };
+    const firstSheet = firstAssembly.sheets[0];
+    const firstHash = imageHash(firstSheet);
+    const firstInspection = store.artifacts.find(a => a.type === 'b3-inspection' && a.producedBy.workflowRunId === first.run.id)!.payload as { imagesOpened: string[] };
+    expect(firstInspection.imagesOpened).toEqual(firstAssembly.sheets);
+    expect((first.run.output as { details: { contactSheets: string[] } }).details.contactSheets).toEqual(firstAssembly.sheets);
+    const second = await runWorkflow({ workflow: createB3Workflow({ ...input, scope: 'full' }, model), input: { ...input, scope: 'full' }, store, agentRunner });
+    const secondAssembly = store.artifacts.find(a => a.type === 'b3-assembly' && a.producedBy.workflowRunId === second.run.id)!.payload as { sheets: string[] };
+    expect(first.run.id).not.toBe(second.run.id);
+    expect(firstSheet).not.toBe(secondAssembly.sheets[0]);
+    expect(imageHash(firstSheet)).toBe(firstHash);
+    expect(imageHash(secondAssembly.sheets[0])).not.toBe(firstHash);
+    expect((second.run.output as { details: { contactSheets: string[] } }).details.contactSheets).toEqual(secondAssembly.sheets);
+  } finally { process.chdir(original); }
+});
+
+test('B3 contact sheets remain bound to each revision round', async () => {
+  const original = process.cwd();
+  const { cwd, input } = workflowFixture(false);
+  writeFileSync(path.join(input.episodeDir, 'scripts/snapshot-review.sh'), changingSnapshots);
+  process.chdir(cwd);
+  try {
+    let inspections = 0;
+    const revisingRunner: AgentRunner = {
+      ...agentRunner,
+      async run<Input, Output>(request: AgentRunRequest<Input>): Promise<AgentRunResult<Output>> {
+        if (request.definition.id !== 'b3-inspector') return agentRunner.run(request);
+        inspections++;
+        return { output: {
+          imagesOpened: (request.input as { contactSheets: string[] }).contactSheets,
+          verdict: inspections === 1 ? 'revise' : 'pass',
+          criteria: [{ id: 'V1', result: inspections === 1 ? 'weak' : 'ok', reason: 'fixture' }],
+          issues: inspections === 1 ? [{ line: '01', standard: 'V1', problem: 'fixture', fix: 'fixture' }] : [],
+          summary: 'fixture',
+        } as Output };
+      },
+    };
+    const store = new MemoryRunStore();
+    const { run } = await runWorkflow({ workflow: createB3Workflow({ ...input, maxRevisions: 1 }, model), input: { ...input, maxRevisions: 1 }, store, agentRunner: revisingRunner });
+    const assemblies = store.artifacts.filter(a => a.type === 'b3-assembly' && a.producedBy.workflowRunId === run.id).map(a => a.payload as { sheets: string[] });
+    expect(assemblies).toHaveLength(2);
+    expect(assemblies[0].sheets[0]).not.toBe(assemblies[1].sheets[0]);
+    expect(imageHash(assemblies[0].sheets[0])).toBe(createHash('sha256').update('image-1').digest('hex'));
+    expect(imageHash(assemblies[1].sheets[0])).toBe(createHash('sha256').update('image-2').digest('hex'));
+  } finally { process.chdir(original); }
+});
 
 test('the B3 workflow publishes the run copy only after a successful render', async () => {
   const original = process.cwd();

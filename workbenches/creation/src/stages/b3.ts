@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { workflow, type WorkflowDefinition, type WorkflowTerminal } from "@signal-room/workflow";
 import { z } from 'zod';
 import { b3DesignerContext, b3InspectorContext, briefSchema } from './brief.js';
-import { saveRunVideo } from './video-artifacts.js';
+import { saveRunContactSheets, saveRunVideo } from './video-artifacts.js';
 import {
   check, dependency, isTerminal, listOf, objectSchema, oneOf, stageAgent, str, strList,
   type RoleSpec, type StageModel,
@@ -18,7 +18,7 @@ import {
  * → render) runs as workflow tasks, a designer agent writes the frame specs inside the episode project,
  * and an inspector agent must actually open the snapshot contact sheets before judging.
  */
-export const B3_REVISION = 'b3-v10';
+export const B3_REVISION = 'b3-v11';
 export const b3StandardsPath = fileURLToPath(new URL('./standards/b3.md', import.meta.url));
 
 const segmentSchema = z.object({ time: z.string(), voiceover: z.string().min(1), onScreenText: z.string(), visual: z.string().min(1) });
@@ -238,7 +238,7 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
         title: `装配与快照 v${round + 1}`, purpose: '挂载、按配音对时、跑技术检查、在每段稳定点截图', order: 33 + round * 10,
         expectedArtifacts: [{ role: 'assembly', title: '装配报告', required: true }],
       }, async phase => {
-        const report = await phase.task('assemble', () => {
+        const report = await phase.task('assemble', (_request, execution) => {
           // Only this round's snapshots may be inspected: stale images once made the inspector judge an old cut.
           rmSync(path.join(dir, 'snapshots/review'), { recursive: true, force: true });
           const index = run(dir, 'node', ['scripts/make-index.mjs', '--force']).slice(-800);
@@ -250,8 +250,10 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
           let errors: ReturnType<typeof locatedErrors> = [];
           try { errors = locatedErrors(JSON.parse(readFileSync(path.join(dir, '.hf/check.json'), 'utf8'))); } catch { errors = []; }
           const snapshots = run(dir, 'bash', ['scripts/snapshot-review.sh']).slice(-1500);
-          const sheets = readdirSync(path.join(dir, 'snapshots/review')).filter(f => /^contact-\d+\.jpg$/.test(f)).sort()
+          const sharedSheets = readdirSync(path.join(dir, 'snapshots/review')).filter(f => /^contact-\d+\.jpg$/.test(f)).sort()
             .map(f => path.join(dir, 'snapshots/review', f));
+          const runDir = path.resolve('.local/stages', input.topicId, 'b3', execution.runId);
+          const sheets = saveRunContactSheets(runDir, round, sharedSheets);
           return { index, retime, technical, errors, green: /→\s*GREEN/.test(technical), snapshots, sheets, settle: readFileSync(path.join(dir, 'snapshots/settle.txt'), 'utf8').trim() };
         }, { round });
         const ref = await phase.publish('assembly', 'b3-assembly', report, { validation: 'valid', review: 'not_applicable', dependsOn: [dependency(designed.ref)] });
