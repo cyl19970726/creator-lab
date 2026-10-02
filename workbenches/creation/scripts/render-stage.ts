@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import MarkdownIt from 'markdown-it';
@@ -8,6 +8,7 @@ import { B1_ROLES } from '../src/stages/b1.js';
 import { B2_ROLES } from '../src/stages/b2.js';
 import { B3_ROLES } from '../src/stages/b3.js';
 import type { RoleSpec } from '../src/stages/runtime.js';
+import { findRunVideo } from '../src/stages/video-artifacts.js';
 
 /**
  * Renders one stage run as a single reading page, in the order a creator reviews it:
@@ -80,7 +81,7 @@ const incoming: HumanReview | undefined = incomingRef
   ? payloads.get(incomingRef.id) as HumanReview
   : (input?.prior as { humanReview?: HumanReview } | undefined)?.humanReview ?? (input?.humanReview as HumanReview | undefined);
 const incomingNotes = (incoming?.notes ?? []).map(n => typeof n === 'string' ? n : `${(n as { line?: string }).line ?? ''}：${(n as { fix?: string }).fix ?? ''}`);
-const videos = existsSync(path.join(root, stage, run.id)) ? readdirSync(path.join(root, stage, run.id)).filter(f => f.endsWith('.mp4')).sort().reverse() : [];
+const video = stage === 'b3' ? findRunVideo(path.join(root, stage, run.id), Boolean(last('b3-video'))) : undefined;
 
 const resultPill = (r: string) => `<span class="pill ${r === 'ok' || r === 'pass' || r === 'accept' ? 'good' : r === 'weak' || r === 'invalid' ? 'warn' : 'bad'}">${esc({ ok: '通过', weak: '偏弱', fail: '不通过', pass: '通过', revise: '要改', blocked: '卡住', accept: '通过', reject: '否决', invalid: '无效运行' }[r] ?? r)}</span>`;
 
@@ -193,7 +194,7 @@ a{color:var(--accent)}
 <ol class="strip">${strip()}</ol>
 </header>
 
-${videos.length ? `<section><h2>成片</h2><p class="sub">${esc(videos.join('、'))}</p><video controls preload="metadata" src="${esc(videos[0])}"></video></section>` : ''}
+${video ? `<section><h2>成片</h2><p class="sub">${esc(video)}</p><video controls preload="metadata" src="${esc(video)}"></video></section>` : ''}
 <section><h2>这一阶段的${stage === 'b3' ? '稿件文件' : '决定'}</h2><p class="sub">workflow 交到你手上的主资产（最后一版）。</p><div class="doc">${decisionHtml}</div></section>
 
 <section><h2>审阅</h2><p class="sub">左边是 workflow 内部的审阅者按标准卡给的判断；右边是你的判断。两边长期一致，这道闸才可以交给 agent。</p>

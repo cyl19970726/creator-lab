@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { workflow, type WorkflowDefinition, type WorkflowTerminal } from "@signal-room/workflow";
 import { z } from 'zod';
 import { b3DesignerContext, b3InspectorContext, briefSchema } from './brief.js';
+import { saveRunVideo } from './video-artifacts.js';
 import {
   check, dependency, isTerminal, listOf, objectSchema, oneOf, stageAgent, str, strList,
   type RoleSpec, type StageModel,
@@ -17,7 +18,7 @@ import {
  * → render) runs as workflow tasks, a designer agent writes the frame specs inside the episode project,
  * and an inspector agent must actually open the snapshot contact sheets before judging.
  */
-export const B3_REVISION = 'b3-v9';
+export const B3_REVISION = 'b3-v10';
 export const b3StandardsPath = fileURLToPath(new URL('./standards/b3.md', import.meta.url));
 
 const segmentSchema = z.object({ time: z.string(), voiceover: z.string().min(1), onScreenText: z.string(), visual: z.string().min(1) });
@@ -96,6 +97,24 @@ export interface B3GateDetails {
 
 function run(cwd: string, cmd: string, args: string[]): string {
   return execFileSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+/** The template writes exactly exports/<package name>.mp4; never infer success from other exports. */
+export function renderEpisodeVideo(dir: string, render: () => string): { log: string; output: string } {
+  const name = (JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8')) as { name?: unknown }).name;
+  if (typeof name !== 'string' || !name || name === '.' || name === '..' || /[/\\]/.test(name)) {
+    throw new Error('Episode package.json has no safe output name');
+  }
+  const output = path.join(dir, 'exports', `${name}.mp4`);
+  const before = existsSync(output) ? statSync(output, { bigint: true }) : undefined;
+  // render.sh exits 0 for a verified placeholder render; all render/verification failures are nonzero.
+  const log = render();
+  if (!existsSync(output)) throw new Error(`Render succeeded without its expected video: ${output}`);
+  const after = statSync(output, { bigint: true });
+  if (after.size === 0n || (before && after.mtimeNs === before.mtimeNs && after.ctimeNs === before.ctimeNs)) {
+    throw new Error(`Render did not produce a new video: ${output}`);
+  }
+  return { log: log.slice(-2000), output };
 }
 
 function seconds(time: string, fallback = 8): number {
@@ -291,21 +310,21 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
           title: input.scope === 'sample' ? '渲染样片' : '渲染成片', purpose: '导出视频与封面，核对时长与画面', order: 90,
           expectedArtifacts: [{ role: 'video', title: '视频', required: true }],
         }, async phase => {
-          const video = await phase.task('render', () => {
-            let log = '';
-            try { log = run(dir, 'bash', ['scripts/render.sh']); }
-            catch (error) { log = String((error as { stdout?: string }).stdout ?? error); }
-            const exports = readdirSync(path.join(dir, 'exports')).filter(f => f.endsWith('.mp4')).map(f => path.join(dir, 'exports', f));
-            return { log: log.slice(-2000), exports };
+          const video = await phase.task('render', (_request, execution) => {
+            const rendered = renderEpisodeVideo(dir, () => run(dir, 'bash', ['scripts/render.sh']));
+            const runDir = path.resolve('.local/stages', input.topicId, 'b3', execution.runId);
+            mkdirSync(runDir, { recursive: true });
+            const output = saveRunVideo(runDir, rendered.output, execution.stepRunId);
+            return { ...rendered, output, exports: [output] };
           }, { round });
-          const ref = await phase.publish('video', 'b3-video', video, { validation: video.exports.length ? 'valid' : 'invalid', review: 'pending', dependsOn: [dependency(result.inspectionRef)] });
+          const ref = await phase.publish('video', 'b3-video', video, { validation: 'valid', review: 'pending', dependsOn: [dependency(result.inspectionRef)] });
           await phase.bindArtifact(ref, { role: 'video', title: '视频', primary: true });
           return { ref, video };
         });
         if (isTerminal(rendered)) return rendered;
         const details: B3GateDetails = {
           stage: 'B3', scope: input.scope, reason: verdict === 'pass' ? 'awaiting-human-review' : 'not-converged',
-          video: rendered.video.exports[0], contactSheets: result.sheets, voice: input.voice, rounds: round + 1,
+          video: rendered.video.output, contactSheets: result.sheets, voice: input.voice, rounds: round + 1,
         };
         return ctx.needsReview(details);
       }

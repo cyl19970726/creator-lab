@@ -6,6 +6,7 @@ import MarkdownIt from 'markdown-it';
 import { DatabaseSync } from 'node:sqlite';
 import type { RunRecord } from '@signal-room/workflow';
 import { SQLiteWorkflowRunStore } from '@signal-room/workflow-sqlite';
+import { findRunVideo } from '../src/stages/video-artifacts.js';
 
 /**
  * The piece's workbench: one page with the three stages as rows (current version, main asset, the creator's
@@ -53,7 +54,7 @@ async function view(run: RunRecord): Promise<RunView> {
   const assetRef = artifacts.filter(a => a.type === spec.asset).at(-1);
   const payload = assetRef ? await store.getArtifactPayload(assetRef.id) as Record<string, unknown> : undefined;
   const runDir = path.join(root, stage, run.id);
-  const video = existsSync(runDir) ? readdirSync(runDir).filter(f => f.endsWith('.mp4')).sort().reverse()[0] : undefined;
+  const video = stage === 'b3' ? findRunVideo(runDir, artifacts.some(a => a.type === 'b3-video')) : undefined;
   return { run, stage, started, minutes: started && ended ? Math.round((Date.parse(ended) - Date.parse(started)) / 6000) / 10 : undefined, internal, payload, video };
 }
 const views = await Promise.all(runs.map(view));
@@ -61,7 +62,7 @@ const views = await Promise.all(runs.map(view));
 // Every run gets its stage page, so every history row can be opened.
 for (const v of views) {
   const page = path.join(root, v.stage, v.run.id, 'index.html');
-  if (!existsSync(page)) execFileSync('npx', ['tsx', 'scripts/render-stage.ts', topicId, v.run.id], { stdio: 'ignore' });
+  execFileSync(process.execPath, ['--import', fileURLToPath(import.meta.resolve('tsx')), fileURLToPath(new URL('./render-stage.ts', import.meta.url)), topicId, v.run.id], { stdio: 'ignore', cwd: process.cwd() });
 }
 
 const pill = (verdict?: string) => {
