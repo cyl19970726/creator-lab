@@ -1,54 +1,35 @@
 # 创作工作台
 
-移植现有 token-economics 创作工作台：看实际设计与媒体、版本、意见—修订—复验—范围决定。保留原 `.mjs`/esbuild 与表达CLI，不重写框架。默认清单为空，不附带旧作品、账号、私有数据库或媒体。
+两条产品线，共用根目录的 agent-workflow：
 
-## 原流程核心阶段
+- **阶段 workflow（主线）：** 内容形成 → B3 制作。选题、研究和完整稿在同一次内容运行中反复修改，完整内容验收后通过作品档案交接给制作。旧 B1/B2 保留历史可读。实现与内容质量分别验证；从[创作文档导览](docs/README.md)开始读。
+- **文章应用：** 建立账号工作区和作品，定义内容、写完整文章、对精确稿件独立复核，必要时在设定上限内自动修订；用户再选择、接受、退回或提出新一轮修订意见。网页 + API + 独立 worker，下文是它的启动方式。接口见[文章应用合同](docs/03-architecture/article-app.md)。真实 SDK 首稿已跑通；单题运行和模型自审不代表内容方法已验证。
 
-```mermaid
-flowchart LR
- B1[内容定位] --> B2[表达设计] --> B3[制作与视听复验]
- B3 --> C1[平台包装与交付] --> C2[反馈与改进]
- C2 -. 有依据的修改 .-> B1
- I[已有稿件与来源资料 · 可选] -. 按需引用 .-> B2
-```
+## 文章应用：本地启动
 
-B1保存本期问题、读者与收益；B2交付证据底稿、完整声画设计、开头与标题封面；B3内部先有声样片、再整片，两者各自绑定实际复验。C1保留渠道包、授权与真实回执，C2保留观察窗口与复盘。研究不在此执行；历史报告可作为输入阅读，不能要求先研究再创作。
-
-## 运行
-
-在仓库根目录由统一pnpm workspace安装依赖、构建共享agent-workflow。随后：
+使用 Node 24，在仓库根目录运行：
 
 ```sh
+pnpm install
+pnpm build:workflow
 pnpm --filter @creator-lab/creation build
 pnpm --filter @creator-lab/creation dev
-# 默认 http://127.0.0.1:4337；已有服务占用时使用 PORT=4339
-pnpm --filter @creator-lab/creation test
-pnpm --filter @creator-lab/creation test:expression
 ```
 
-工作台服务仅绑定loopback；启动不运行Agent或平台发布。默认工作区`creation`为空，可登记候选与定位。已有能力没有通用“一键创建本期”入口；新资产仍由显式清单登记。服务有正式意见/回应/修订/决定写接口，且不改原正文。
-
-## 显式读取历史资料
+构建后的页面由 API 在 `http://127.0.0.1:4337` 提供。另开终端启动执行器，排队任务才会真正运行：
 
 ```sh
-CREATION_CONTENT_ROOT=/absolute/path/to/token-economics \
-CREATION_MEDIA_ROOT=/absolute/path/to/videos \
-CREATION_STATE_ROOT=/absolute/path/to/new-preview-state \
-PORT=4339 pnpm --filter @creator-lab/creation dev
+pnpm --filter @creator-lab/creation worker
 ```
 
-CONTENT_ROOT读取原清单、research/episodes/docs/反馈与发布登记；MEDIA_ROOT只读引用媒体，不能默认猜旧目录。STATE_ROOT独立保存workspaces.sqlite、collaboration.sqlite和可重建index.sqlite；默认在本目录data/local/workbench。选择旧content目录不会自动读取或写入旧私有账本。若需历史定位/摘要/意见，用SQLite backup拷贝到新STATE_ROOT后启动，保留原库；不要复制正在写入的单个SQLite主文件。
+改前端时，可另开终端运行 `pnpm --filter @creator-lab/creation dev:web`，访问 `http://127.0.0.1:4338`；Vite 将 `/api` 转发到 4337。`CREATION_PORT` 可更改 API 端口，默认 4337；前端开发代理目前固定指向 4337。API 和 worker 必须使用同一个 `CREATION_STATE_ROOT`，默认是 `workbenches/creation/data/local/platform-v1`。worker 用 `fs-ext` 的 OS 文件锁保证同一状态目录只由一个进程执行；目前要求 POSIX 本地文件系统，安装 `fs-ext` 需要可用的原生编译环境。
 
-数据仍按来源workspace/asset ID过滤，历史深链接保留：`/?workspace=<id>&case=<topicId>#artifact=<assetId>&context=<revisionId>&step=B2`。正文、媒体、意见与用户接受分开记录；局部通过不外推全片或发布授权。
+启动前需让运行环境具备所选模型的 Codex SDK 凭据。创建工作区或作品不会调用模型；在页面明确输入模型、推理强度及最多 0–2 次自动修订并点击开始后，worker 才会运行。缺少 worker 时任务保持排队。API 只绑定本机回环地址，不应作为公网服务部署。
 
-## 表达执行与能力边界
+## 文章应用：工作方式与数据
 
-`pnpm --filter @creator-lab/creation expression -- prepare /absolute/input.json --model <explicit-model> --effort medium`仅冻结输入；run才调用真实模型。完整使用见[表达入口](tooling/expression-workflow/README.md)。共用仓库根vendor/agent-workflow，不复制引擎。
+页面可创建工作区和文章作品，填写核心问题、读者、目的、账号定位、约束与材料正文；材料链接只记录出处，不自动抓取网页。运行会冻结当次输入，并产生内容定义、文章草稿和绑定该稿的复核产物。复核未通过且修订预算耗尽时，任务进入 `needs_review`；它不是接受决定。用户意见会基于指定稿件及其哈希创建关联的新任务，不覆盖旧稿。执行失败可恢复同一个任务；取消与恢复状态见[合同](docs/03-architecture/article-app.md)。
 
-B2入口仍要求其具体模板所需的实际研究/资料输入；无提示读者隔离、候选hash、修订上限与恢复沿用。它尚未自动登记到工作台，也不生成配音/视频。制作方法调用已有媒体工具，渲染/配音运行时不是本迁移包的新实现。当前素材、审核及平台回执只证明其各自范围。
+私有状态目录包含 `creation-v1.sqlite`、`artifacts/`、`traces/` 和 `worker.lock`。SQLite 保存业务对象及 vendor 原生运行账本；`artifacts/` 保存按哈希核验的内容，`traces/` 保存模型调用轨迹。备份或搬迁时应保留整套私有状态，并在进程停止后使用一致的 SQLite 备份方式；不要只复制单个正在写入的数据库文件。该目录被 Git 忽略。旧作品、旧数据库、旧 UI/API/CLI/schema 不会自动导入或兼容。
 
-原五步发布工具保留在tooling/social-publish，仅由显式命令驱动。浏览器提供方/登录态及ffmpeg等按实际环境配置，未搬账号授权或历史任务。原模拟与工具测试不能替代新内容现场校准；本次迁移不运行模型、上传、发布或评论回复。
-
-## 来源
-
-来源仓库[ token-economics ](https://github.com/cyl19970726/token-economics)，基线HEAD `1d733f4242e0464674979bf1681968b5cdc4d9e1`；读取的是当前工作树，含未提交研究接入，迁移已剥离其研究服务/UI。原仓未修改。只搬工作台/相关服务、表达流程、9个完整创作Skill和现有发布助手；不附带episodes、research资料、媒体、旧私有库、vendor、全局工具或无关研究实现。
+现有 `tooling/social-publish` 是独立的历史发布工具，未接入新 UI、文章执行或阶段 workflow；项目内九个视频 skill 作为历史方法资料保留，B3 成片由阶段 workflow 实现（`src/stages/b3.ts`）。根目录的 `vendor/agent-workflow` 是唯一共享执行库，本工作台没有复制其引擎。可用 `pnpm --filter @creator-lab/creation check` 运行本工作台的类型检查、测试与构建；这些检查不替代真实模型或人工内容验收。

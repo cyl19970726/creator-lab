@@ -1,9 +1,15 @@
-# 创作工作台迁移范围
+# Creation implementation scope
 
-本目录移植 token-economics 的现有创作工作台、表达执行入口与发布工具。保留 vanilla JavaScript/esbuild，不重设计产品。B1内容定位 → B2表达设计 → B3制作与视听复验 → C1交付 → C2反馈。旧A资产仅作可选输入阅读，不包含研究执行实现。
+The existing app is a migrated baseline, not an architecture constraint. On 2026-09-29 the user explicitly authorized a fresh implementation without retaining old UI, API, CLI, path or database compatibility. Current principles, architecture, stage workflows (B1/B2/B3), tuning handbook and decisions live under `docs/` (start at `docs/README.md`); the earlier web/API/worker platform design is archived in `docs/archive/`. A design document does not prove implementation. Content must be produced by the workflow's agents: when a stage fails, change the workflow and rerun on the same frozen input instead of producing the content by hand, and record each change in that stage's tuning log.
 
-方法正本是本目录`.agents/skills`完整项目包。来源Skill中的Token经济猫定位、历史作品、账号、接受和自动化描述是来源上下文，不授权本项目生产、发布或回复评论；本期身份、渠道与具体接受始终由当前清单/真实决定指定。无全局Skill安装。
+On 2026-10-03 the user explicitly authorized combining B1 and B2 into one content workflow in `src/stages/content.ts`. Research, framing and the complete draft iterate within one run; the editor can send the draft back to research or reframe its explanation. There is one creator gate for the complete content, followed by B3 production and its creator gate. This replaces the earlier requirement for separate B1/B2 gates; it is a workflow redesign, not evidence that the reviewer has been calibrated. Keep historical B1/B2 artifacts and decisions readable. Use the versioned piece brief to hand accepted content to B3. Further removal of creator review requires calibration against both good and bad creator-judged cases. Research and analysis remain independent optional input providers. C1 delivery/publication and C2 feedback are separate lifecycle concerns.
 
-默认无作品或渠道。CREATION_CONTENT_ROOT/CREATION_MEDIA_ROOT仅显式选用历史文件；CREATION_STATE_ROOT保存本工作台私有账本。不得把历史正文目录同时作为默认私有库位置。原始资产不由工作台改写；意见、修改和决定绑定真实版本与范围。启动服务不运行模型或发布；expression run与发布提交是独立显式命令。
+Use the root Node 24 / pnpm workspace and the single `vendor/agent-workflow` submodule. The user permits necessary changes to that shared library. Put general execution semantics there and creation-specific rules here; verify affected consumers when shared contracts change. Do not create a second execution engine or copy vendor source into this workbench.
 
-不要恢复research工作流或旧知识图谱；独立研究工作台由兄弟目录负责。源仓的未提交改动保留，迁移只写本目录。
+Preserve private artifacts, historical decisions and execution evidence separately from legacy code compatibility. New state uses a new schema and explicit state root; import selected historical assets with exact provenance rather than automatically opening or rewriting old databases. Replace old entrypoints after the declared replacement scope works and required data is preserved; do not maintain permanent dual implementations.
+
+Keep complete business-method bundles in this project's `.agents/skills`. Historical identities, accounts, approvals and automation described in source skills are context, not current authorization to publish or reply. Current identity, channels and scope come from actual inputs and decisions. No global skill installation without explicit authorization.
+
+Keep content, media and private state boundaries explicit. Do not overwrite source artifacts; revisions, reviews and decisions bind exact versions and scopes. Starting or refreshing the UI must not trigger model calls or publication. Execution and publication require explicit commands within the user's authorized scope. Current legacy environment variables are implementation details, not permanent new-platform contracts.
+
+Do not restore the research execution service or old knowledge graph here. Preserve source repositories and other worktrees' uncommitted work. Changes outside creation must be directly necessary for this redesign, such as root workspace wiring or an evidenced shared-runtime change.

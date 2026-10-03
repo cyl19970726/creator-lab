@@ -5,7 +5,7 @@ description: 将已审内容架构和开头转成有声样片及完整视频的�
 
 # Video Production Handoff
 
-先确认架构、hook与package的Review匹配当前版本，并核对用户或本轮授权代理对当前完整设计的有效接受范围。按[版本合同](../research-to-video/references/contracts.md)和[产物、审核与协作记录合同](../../../docs/contracts/artifacts-and-review.md)建立production；缺输入则回到相应阶段，不能从旧SCRIPT猜。
+先确认架构、hook与package的Review匹配当前版本，并核对用户或本轮授权代理对当前完整设计的有效接受范围。按[版本合同](../research-to-video/references/contracts.md)和[产物、审核与协作记录合同](../../../docs/03-architecture/article-app.md)建立production；缺输入则回到相应阶段，不能从旧SCRIPT猜。
 
 本 skill 位于当前三阶段八步骤的 B3「制作与视听复验」，承接 B1 定位与 B2 表达设计。下面 S 样片、F 全片是本步内部两个节点，各自绑定实际版本复验；不是新增阶段，也不把样片通过扩大成全片通过。
 

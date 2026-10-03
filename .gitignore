@@ -20,3 +20,6 @@ coverage/
 *.wav
 __pycache__/
 .venv/
+
+# Generated documentation site (pnpm docs:build)
+docs/site/

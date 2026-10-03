@@ -28,4 +28,4 @@ description: 根据已发布视频的实际反馈和用户Review调整下一版�
 
 ## 发布后效果闭环
 
-按docs/POST-PUBLISH.md增加48h_review模式：真实48小时后数据快照与独立learning Review，默认72/96小时补测，保留实际采集时刻、缺失字段与统计口径。比较发布前expectation.md与实际成片、数据、评论，输出支持/相反/不足与替代解释。评论回复是单独的0–48h互动操作，previous_version分析模式仍保持只读。
+按docs/04-workflows/after-publish.md增加48h_review模式：真实48小时后数据快照与独立learning Review，默认72/96小时补测，保留实际采集时刻、缺失字段与统计口径。比较发布前expectation.md与实际成片、数据、评论，输出支持/相反/不足与替代解释。评论回复是单独的0–48h互动操作，previous_version分析模式仍保持只读。

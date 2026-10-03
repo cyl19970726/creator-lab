@@ -26,4 +26,4 @@ description: 设计和审核视频钩子、开头10秒及后续至30秒的价值
 
 ## 发布后效果闭环
 
-发布前将hook的对象、承诺、首次兑现时间、希望观众理解什么、可观测信号与基线写入expectation.md，绑定实际成片版本。供发布48小时后learning Review核对；没有数据依据不编目标完播率。完整协议见仓库docs/POST-PUBLISH.md。
+发布前将hook的对象、承诺、首次兑现时间、希望观众理解什么、可观测信号与基线写入expectation.md，绑定实际成片版本。供发布48小时后learning Review核对；没有数据依据不编目标完播率。完整协议见仓库docs/04-workflows/after-publish.md。

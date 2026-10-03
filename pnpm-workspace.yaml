@@ -8,3 +8,4 @@ linkWorkspacePackages: true
 
 onlyBuiltDependencies:
   - esbuild
+  - fs-ext
