@@ -9,7 +9,7 @@ import { SQLiteWorkflowRunStore } from '@signal-room/workflow-sqlite';
 import { findRunVideo } from '../src/stages/video-artifacts.js';
 
 /**
- * The piece's workbench: one page with the three stages as rows (current version, main asset, the creator's
+ * The piece's workbench: one page with content and production as rows (current version, main asset, the creator's
  * verdict) and the full tuning history below. Each run links to its stage page (`stage:render`).
  *   pnpm stage:workbench <topicId>      → .local/stages/<topicId>/index.html
  * Human-gate records come from .local/stages/<topicId>/decisions.json.
@@ -20,32 +20,37 @@ const root = path.resolve('.local/stages', topicId);
 const store = new SQLiteWorkflowRunStore(new DatabaseSync(path.join(root, 'ledger.sqlite'), { readOnly: true }));
 
 interface Review { reviewer: string; verdict: 'accept' | 'revise' | 'invalid'; notes: string[]; at: string }
-interface Decisions { title: string; current: Record<string, string>; runs: Record<string, { purpose: string; review?: Review }> }
+interface Decisions { title?: string; current: Record<string, string>; runs: Record<string, { purpose: string; review?: Review }> }
 const decisionsFile = path.join(root, 'decisions.json');
 const decisions: Decisions = existsSync(decisionsFile)
   ? JSON.parse(readFileSync(decisionsFile, 'utf8'))
   : { title: topicId, current: {}, runs: {} };
 
 const STAGES = [
-  { id: 'b1', name: 'B1 定题', question: '选对这一篇要回答的问题，并确认我们答得上、答得好', asset: 'b1-content-decision' },
-  { id: 'b2', name: 'B2 成稿', question: '让观众跟得上，并愿意看完', asset: 'b2-script' },
+  { id: 'content', name: '内容', question: '让完整稿兑现读者收获，发现缺口就回头改', asset: 'content-draft' },
   { id: 'b3', name: 'B3 成片', question: '成品把稿子讲出来，而且在手机上看得清', asset: 'b3-script-file' },
 ] as const;
+const LEGACY_STAGES = [
+  { id: 'b1', name: 'B1 定题', asset: 'b1-content-decision' },
+  { id: 'b2', name: 'B2 成稿', asset: 'b2-script' },
+] as const;
+const ALL_STAGES = [...STAGES, ...LEGACY_STAGES];
 
 const esc = (value: unknown) => String(value ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
-const runs = (await store.listRuns({ metadata: { topicId } })).filter(r => STAGES.some(s => s.id === r.metadata?.stage));
+const runs = (await store.listRuns({ metadata: { topicId } })).filter(r => ALL_STAGES.some(s => s.id === r.metadata?.stage));
 
-interface RunView { run: RunRecord; stage: string; started?: string; minutes?: number; internal?: string; payload?: Record<string, unknown>; video?: string }
+interface RunView { run: RunRecord; stage: string; started?: string; minutes?: number; internal?: string; reason?: string; guardFailures?: string[]; payload?: Record<string, unknown>; contentReview?: Record<string, unknown>; video?: string }
 async function view(run: RunRecord): Promise<RunView> {
   const stage = String(run.metadata?.stage);
-  const spec = STAGES.find(s => s.id === stage)!;
+  const spec = ALL_STAGES.find(s => s.id === stage)!;
   const events = await store.listEvents(run.id);
   const started = events[0]?.timestamp;
   const ended = events.at(-1)?.timestamp;
   const artifacts = await store.listArtifacts(run.id);
   // The workflow's own verdict is how the run ended, not the last reviewer artifact (a finalize run imports an
   // earlier editor verdict but is judged only by its closing fact check).
-  const reason = (run.output as { details?: { reason?: string } } | undefined)?.details?.reason;
+  const details = (run.output as { details?: { reason?: string; guardFailures?: string[] } } | undefined)?.details;
+  const reason = details?.reason;
   const byReason: Record<string, string> = {
     'awaiting-human-review': 'pass', 'final-edits-fact-checked': 'pass', 'final-edits-with-fact-issues': 'revise',
     'not-converged': 'revise', 'final-edits-unreviewed': 'invalid', blocked: 'blocked',
@@ -53,11 +58,16 @@ async function view(run: RunRecord): Promise<RunView> {
   const internal = run.state === 'failed' ? 'blocked' : byReason[reason ?? ''];
   const assetRef = artifacts.filter(a => a.type === spec.asset).at(-1);
   const payload = assetRef ? await store.getArtifactPayload(assetRef.id) as Record<string, unknown> : undefined;
+  const reviewRef = stage === 'content' ? artifacts.filter(a => a.type === 'content-review').at(-1) : undefined;
+  const contentReview = reviewRef ? await store.getArtifactPayload(reviewRef.id) as Record<string, unknown> : undefined;
   const runDir = path.join(root, stage, run.id);
   const video = stage === 'b3' ? findRunVideo(runDir, artifacts.some(a => a.type === 'b3-video')) : undefined;
-  return { run, stage, started, minutes: started && ended ? Math.round((Date.parse(ended) - Date.parse(started)) / 6000) / 10 : undefined, internal, payload, video };
+  return { run, stage, started, minutes: started && ended ? Math.round((Date.parse(ended) - Date.parse(started)) / 6000) / 10 : undefined, internal, reason, guardFailures: details?.guardFailures, payload, contentReview, video };
 }
 const views = await Promise.all(runs.map(view));
+const shownContent = views.find(v => v.stage === 'content' && v.run.id === decisions.current.content)
+  ?? views.find(v => v.stage === 'content');
+const pieceTitle = decisions.title?.trim() || (shownContent?.payload?.script as { title?: string } | undefined)?.title || topicId;
 
 // Every run gets its stage page, so every history row can be opened.
 for (const v of views) {
@@ -67,7 +77,7 @@ for (const v of views) {
 
 const pill = (verdict?: string) => {
   const map: Record<string, [string, string]> = {
-    accept: ['通过', 'good'], pass: ['通过', 'good'], revise: ['要改', 'warn'], blocked: ['卡住', 'bad'], invalid: ['无效运行', 'mute'],
+    accept: ['通过', 'good'], pass: ['通过', 'good'], ok: ['通过', 'good'], weak: ['偏弱', 'warn'], fail: ['不通过', 'bad'], revise: ['要改', 'warn'], blocked: ['卡住', 'bad'], invalid: ['无效运行', 'mute'],
   };
   const [text, cls] = map[verdict ?? ''] ?? ['待审', 'wait'];
   return `<span class="pill ${cls}">${text}</span>`;
@@ -77,6 +87,18 @@ const link = (v: RunView) => `${v.stage}/${v.run.id}/index.html`;
 
 function assetSummary(v: RunView): string {
   const p = v.payload ?? {};
+  if (v.stage === 'content') {
+    const decision = (p.decision as Record<string, unknown> | undefined) ?? {};
+    const script = (p.script as Record<string, unknown> | undefined) ?? {};
+    const segments = (script.segments as Array<{ time?: string; voiceover?: string; onScreenText?: string; visual?: string }> | undefined) ?? [];
+    const coverage = (v.contentReview?.questionCoverage as Array<{ question?: string; answerInDraft?: string; missing?: string; result?: string }> | undefined) ?? [];
+    return `<div class="asset"><div class="asset-title">${esc(script.title ?? decision.workingTitle)}</div>
+      <div class="kv"><span>一句话答案</span><p>${esc(decision.oneLineAnswer)}</p></div>
+      <div class="kv"><span>开头钩子</span><p>${esc(decision.hook)}</p></div>
+      <div class="kv"><span>完整稿</span><div><p>${esc(script.title)} · ${esc(script.estimatedSeconds)} 秒 · ${segments.length} 段</p><ol>${segments.map(s => `<li><b>${esc(s.time)}</b> ${esc(s.voiceover)}<br><span class="sub">屏幕：${esc(s.onScreenText)} · 画面：${esc(s.visual)}</span></li>`).join('')}</ol></div></div>
+      <div class="kv"><span>必答问题</span><ol>${coverage.map(q => `<li>${esc(q.question)}：${esc(q.answerInDraft)} ${pill(q.result)}${q.missing ? `<br><span class="sub">缺口：${esc(q.missing)}</span>` : ''}</li>`).join('')}</ol></div>
+      <div class="kv"><span>内容检查</span><p>${pill(v.contentReview?.verdict as string | undefined)} ${esc(v.contentReview?.summary)}</p></div></div>`;
+  }
   if (v.stage === 'b1') {
     return `<div class="asset"><div class="asset-title">${esc(p.workingTitle)}</div>
       <div class="kv"><span>一句话答案</span><p>${esc(p.oneLineAnswer)}</p></div>
@@ -97,8 +119,8 @@ function assetSummary(v: RunView): string {
 
 function stageRow(spec: typeof STAGES[number]): string {
   const currentId = decisions.current[spec.id];
-  const v = views.find(x => x.run.id === currentId) ?? views.filter(x => x.stage === spec.id).at(-1);
-  if (!v) return `<section class="stage"><header><h2>${spec.name}</h2><p class="sub">${spec.question}</p></header><p class="sub">还没有运行。</p></section>`;
+  const v = views.find(x => x.run.id === currentId) ?? views.find(x => x.stage === spec.id);
+  if (!v) return `<section class="stage" id="${spec.id}"><header><h2>${spec.name}</h2><p class="sub">${spec.question}</p></header><p class="sub">还没有运行。</p></section>`;
   const review = decisions.runs[v.run.id]?.review;
   const count = views.filter(x => x.stage === spec.id).length;
   return `<section class="stage" id="${spec.id}">
@@ -107,6 +129,7 @@ function stageRow(spec: typeof STAGES[number]): string {
     <div class="body">${assetSummary(v)}
       <div class="verdicts">
         <div class="vrow"><span class="who">workflow 审阅</span>${pill(v.internal)}</div>
+        ${v.stage === 'content' ? `<p class="sub">程序终态：${esc(v.reason ?? v.run.state)}</p>${v.guardFailures?.length ? `<ul class="notes">${v.guardFailures.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}` : ''}
         <div class="vrow"><span class="who">审阅记录${review?.reviewer ? ` · ${esc(review.reviewer)}` : ''}</span>${pill(review?.verdict)}</div>
         ${review ? `<ul class="notes">${review.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
         <p class="sub">共 ${count} 次运行，见下方调优历史</p>
@@ -119,7 +142,7 @@ const strip = STAGES.map(spec => {
   return `<li class="${cls}"><a href="#${spec.id}"><span class="dot"></span>${spec.name}</a></li>`;
 }).join('') + '<li class="wait"><span class="dot"></span>发布</li>';
 
-interface BriefView { version: number; sources: Array<{ stage: string; runId: string; revision: string; reviewer: string }>; notesForB2: Array<{ from: string; note: string }>; notesForB3: Array<{ from: string; note: string }>; materials: Array<{ id: string; title: string }>; audienceQuestion: { questionInAudienceWords?: string; currentIntuition?: string } }
+interface BriefView { version: number; sources: Array<{ stage: string; runId: string; revision: string; reviewer: string }>; notesForB2: Array<{ from: string; note: string }>; notesForB3: Array<{ from: string; note: string }>; materials: Array<{ id: string; title: string }>; audienceQuestion: { questionInAudienceWords?: string; currentIntuition?: string; readerGoal?: string; requiredQuestions?: string[] } }
 const briefDir = path.join(root, 'brief');
 const briefs: BriefView[] = existsSync(briefDir)
   ? readdirSync(briefDir).filter(f => /^v\d+\.json$/.test(f)).map(f => JSON.parse(readFileSync(path.join(briefDir, f), 'utf8')) as BriefView).sort((a, b) => b.version - a.version)
@@ -129,14 +152,15 @@ const notesList = (notes: Array<{ from: string; note: string }>) => notes.length
 const briefSection = briefs.length ? `<section class="brief"><h2>作品档案</h2>
 <p class="sub">每次你在某个阶段判通过（<code>pnpm stage:accept</code>），程序就生成新一版档案；下一阶段只从档案里取输入。最新一版在上。</p>
 ${briefs.map(b => `<details ${b === briefs[0] ? 'open' : ''}><summary>档案 v${b.version} · 来源 ${b.sources.map(s => `${s.stage.toUpperCase()} ${esc(s.revision)}（${esc(s.runId.slice(0, 8))}）`).join(' → ')} · <a href="brief/v${b.version}.json">JSON</a></summary>
-<div class="kv"><span>观众问题</span><p>${esc(b.audienceQuestion?.questionInAudienceWords)}<br><span class="sub">原来的直觉：${esc(b.audienceQuestion?.currentIntuition)}</span></p></div>
+<div class="kv"><span>观众问题</span><p>${esc(b.audienceQuestion?.questionInAudienceWords)}${b.audienceQuestion?.currentIntuition ? `<br><span class="sub">原来的直觉：${esc(b.audienceQuestion.currentIntuition)}</span>` : ''}${b.audienceQuestion?.readerGoal ? `<br><span class="sub">读者目标：${esc(b.audienceQuestion.readerGoal)}</span>` : ''}</p></div>
+${b.audienceQuestion?.requiredQuestions?.length ? `<div class="kv"><span>必答问题</span><ol>${b.audienceQuestion.requiredQuestions.map(q => `<li>${esc(q)}</li>`).join('')}</ol></div>` : ''}
 <div class="kv"><span>材料</span><p>${b.materials.map(m => esc(m.id)).join('、')}</p></div>
 <div class="kv"><span>写给 B2 的话</span>${notesList(b.notesForB2)}</div>
 <div class="kv"><span>写给 B3 的话</span>${notesList(b.notesForB3)}</div></details>`).join('\n')}</section>` : '';
 
 const history = [...views].sort((a, b) => Date.parse(a.started ?? '') - Date.parse(b.started ?? '')).map(v => {
   const d = decisions.runs[v.run.id];
-  const current = decisions.current[v.stage] === v.run.id;
+  const current = decisions.current[v.stage] === v.run.id && !(decisions.current.content && (v.stage === 'b1' || v.stage === 'b2'));
   return `<tr class="${current ? 'current' : ''}"><td class="mono">${v.stage.toUpperCase()}</td><td class="mono">${esc(v.run.workflowRevision)}${v.run.metadata?.briefVersion ? `<br><span class="sub">档案 v${esc(v.run.metadata.briefVersion)}</span>` : ''}</td>
     <td>${esc(d?.purpose ?? '')}${current ? ' <span class="tag">当前采用</span>' : ''}</td><td class="t">${time(v.started)}</td><td class="num">${v.minutes ?? '—'} 分</td>
     <td>${pill(v.internal)}</td><td>${pill(d?.review?.verdict)}${d?.review?.reviewer ? `<br><span class="sub">${esc(d.review.reviewer)}</span>` : ''}</td><td class="note">${esc(d?.review?.notes?.[0] ?? '')}</td>
@@ -144,7 +168,7 @@ const history = [...views].sort((a, b) => Date.parse(a.started ?? '') - Date.par
 }).join('\n');
 
 const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>作品工作台 · ${esc(decisions.title)}</title>
+<title>作品工作台 · ${esc(pieceTitle)}</title>
 <style>
 :root{--bg:#F3F5F8;--surface:#fff;--ink:#17202B;--muted:#5A6573;--line:#DCE1E8;--accent:#2B59C3;--good:#1E8A6E;--warn:#B8760C;--bad:#C0412B;--mute:#8A95A3;
 --sans:"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
@@ -183,8 +207,8 @@ tr.current td{background:color-mix(in srgb,var(--good) 8%,transparent)}
 section.brief{margin-top:34px}section.brief details{background:var(--surface);border:1px solid var(--line);border-radius:8px;margin:8px 0;padding:4px 16px 10px}section.brief summary{cursor:pointer;padding:8px 0;font-weight:600}code{font-family:var(--mono);font-size:12px}
 </style></head><body><main>
 <div class="eyebrow">作品工作台 · ${esc(topicId)}</div>
-<h1>${esc(decisions.title)}</h1>
-<p class="sub">每个阶段一行：当前采用的版本、它的主资产、workflow 内部审阅和已记录的阶段审阅。点"打开阶段页"看这一阶段 AI 为什么这样设计、进度、输入和全部产出。</p>
+<h1>${esc(pieceTitle)}</h1>
+<p class="sub">内容与制作各一行：当前采用的版本、主资产、workflow 内部审阅和已记录的阶段审阅。旧 B1/B2 运行保留在下方历史中。点“打开阶段页”看进度、输入和全部产出。</p>
 <p><a href="flow.html">流程全图：每个角色拿到了什么、产出了什么 →</a></p>
 <ol class="strip">${strip}</ol>
 ${STAGES.map(stageRow).join('\n')}

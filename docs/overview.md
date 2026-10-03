@@ -4,16 +4,15 @@
 
 ## 创作工作台
 
-B1 定题 → B2 成稿 → B3 成片。每个阶段由 workflow 里的 Agent 完成，停在创作者关口；阶段之间用作品档案交接。详见[创作文档](../workbenches/creation/docs/README.md)。
+内容形成 → 制作。选题、研究和完整稿在同一个 workflow 里反复调整，内容经一次创作者验收后通过作品档案交给 B3。详见[创作文档](../workbenches/creation/docs/README.md)。
 
 ```mermaid
 flowchart LR
-  IN[选题机会 · 账号 · 参照作品 · 材料] --> B1[B1 定题<br/>内容决定]
-  B1 --> H1((创作者)) --> B2[B2 成稿<br/>完整稿]
-  B2 --> H2((创作者)) --> B3[B3 成片<br/>视频 · 快照]
-  B3 --> H3((创作者)) --> PUB[发布 → 数据<br/>未接入]
-  H1 & H2 & H3 -. 意见写回 .-> S[(标准卡)]
-  PUB -. 数据回流 未实现 .-> B1
+  IN[机会 · 读者收获 · 必答问题 · 材料] --> C[内容迭代<br/>研究与完整稿往返]
+  C --> H1((内容验收)) --> B3[B3 制作<br/>视频 · 快照]
+  B3 --> H2((成品验收)) --> PUB[发布 → 数据<br/>未接入]
+  H1 & H2 -. 意见写回 .-> S[(标准卡)]
+  PUB -. 数据回流 未实现 .-> C
 ```
 
 技术栈：TypeScript，阶段 workflow 以命令行 + 生成的静态页面运行；文章应用为 React / Vite、Fastify API 与独立 worker。

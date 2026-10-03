@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import type { AudienceQuestion, ContentDecision } from '../src/stages/b1.js';
 import type { EditorVerdict, Script } from '../src/stages/b2.js';
-import { b2WriterContext, b3DesignerContext, b3InspectorContext, briefAfterB1, briefAfterB2 } from '../src/stages/brief.js';
+import { b2WriterContext, b3DesignerContext, b3InspectorContext, briefAfterB1, briefAfterB2, briefAfterContent } from '../src/stages/brief.js';
 
 const gate = (runId: string, notesForNext: string[] = []) => ({ runId, revision: 'v', acceptedAt: '2026-09-30T00:00:00Z', reviewer: 'proxy', notesForNext });
 const input = {
@@ -50,5 +50,32 @@ describe('piece brief', () => {
     expect(designer.core).toMatchObject({ oneLineAnswer: '老师只要会判卷', hook: '15.6% → 77.9%', beats: [{ beat: 'Kimi', visualIdea: '检查器看最终状态' }] });
     expect(JSON.stringify(designer)).not.toContain('rollouts');
     expect(b3InspectorContext(brief).core).toEqual({ coreQuestion: 'q', oneLineAnswer: '老师只要会判卷', hook: '15.6% → 77.9%' });
+  });
+
+  test('one accepted content run hands its decision, complete script, research, and required questions to B3', () => {
+    const script = { title: '完整稿', coverText: '封面', estimatedSeconds: 70, segments: [{ time: '0–10', voiceover: '解释过程', onScreenText: '过程', visual: '流程图' }], sourcesUsed: ['kimi'], changesFromPrevious: '首版', markdown: '# 私有渲染' } as unknown as Script;
+    const brief = briefAfterContent({
+      input: { ...input, readerGoal: '看懂如何训练', requiredQuestions: ['训练如何进行？'] },
+      draft: { decision, script },
+      research: [{ id: 'web-r1', title: '一手资料', url: 'https://x', publisher: '研究者', date: '2026', keyPoints: ['过程'], fillsGap: '机制', sourceKind: 'primary' }],
+      review: { summary: '可制作', criteria: [{ id: 'C1', result: 'weak', reason: '反馈可更突出' }], questionCoverage: [{ question: '训练如何进行？', answerInDraft: '用反馈训练', missing: '', result: 'ok' }] },
+      gate: gate('content-run', ['强调反馈']),
+    });
+    expect(brief.sources.map(s => s.stage)).toEqual(['content']);
+    expect(brief.script).toMatchObject({ title: '完整稿', segments: [{ voiceover: '解释过程' }] });
+    expect(brief.script).not.toHaveProperty('markdown');
+    expect(brief.materials.map(m => m.id)).toEqual(['kimi', 'web-r1']);
+    expect(b3DesignerContext(brief).core).toMatchObject({ readerGoal: '看懂如何训练', requiredQuestions: ['训练如何进行？'] });
+    expect(b3InspectorContext(brief).core).toMatchObject({ requiredQuestions: ['训练如何进行？'] });
+    expect(brief.notesForB3.map(n => n.note)).toEqual(['强调反馈', '可制作', 'C1 偏弱：反馈可更突出']);
+  });
+
+  test('content handoff rejects a research source id that would overwrite an input material', () => {
+    expect(() => briefAfterContent({
+      input: { ...input, readerGoal: '看懂机制', requiredQuestions: ['怎么训练？'] },
+      draft: { decision, script: { title: '稿', coverText: '封面', estimatedSeconds: 30, segments: [], sourcesUsed: [], changesFromPrevious: '首版' } as Script },
+      research: [{ id: 'kimi', title: '另一份资料', url: 'https://example.com', publisher: '其他', date: '2026', keyPoints: ['不同内容'], fillsGap: '机制', sourceKind: 'primary' }],
+      review: { summary: '通过', criteria: [], questionCoverage: [] }, gate: gate('content-conflict'),
+    })).toThrow('Conflicting material id');
   });
 });

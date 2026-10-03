@@ -4,14 +4,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { parseArgs } from 'node:util';
 import { runWorkflow, type WorkflowDefinition, type WorkflowTerminal } from '@signal-room/workflow';
 import { SQLiteWorkflowRunStore } from '@signal-room/workflow-sqlite';
-import { b1InputSchema, createB1Workflow, readB1Standards } from '../src/stages/b1.js';
-import { b2InputSchema, createB2Workflow, readB2Standards } from '../src/stages/b2.js';
+import { contentInputSchema, createContentWorkflow, readContentStandards } from '../src/stages/content.js';
 import { b3InputSchema, createB3Workflow, readB3Standards } from '../src/stages/b3.js';
 import { assertStageModelAvailable, createStageRunner, type StageModel } from '../src/stages/runtime.js';
 
 /**
  * Runs one stage workflow against a real topic and writes every published asset as a readable file.
- *   pnpm stage <b1|b2|b3> <input.json> [--resume <runId>] [--model gpt-6-sol] [--judge-effort high] [--skip-probe]
+ *   pnpm stage <content|b3> <input.json> [--resume <runId>] [--model gpt-6-sol] [--judge-effort high] [--skip-probe]
  * Before starting, one tiny call checks that this Codex login can use the model (--skip-probe to omit).
  * State lives under .local/stages/<topicId>/ (git-ignored): ledger.sqlite, traces/, <stage>/<runId>/.
  */
@@ -26,7 +25,8 @@ const { positionals, values } = parseArgs({
   },
 });
 const [stage, inputPath] = positionals;
-if (!['b1', 'b2', 'b3'].includes(stage ?? '') || !inputPath) throw new Error('Usage: run-stage.ts <b1|b2|b3> <input.json> [--resume <runId>]');
+if (stage === 'b1' || stage === 'b2') throw new Error('B1/B2 are historical workflows. Use "pnpm stage content <input.json>" for the combined content loop.');
+if (!['content', 'b3'].includes(stage ?? '') || !inputPath) throw new Error('Usage: run-stage.ts <content|b3> <input.json> [--resume <runId>]');
 
 const effort = (value: string | undefined): StageModel['reasoningEffort'] => {
   if (value !== 'low' && value !== 'medium' && value !== 'high') throw new Error(`Unsupported effort: ${value}`);
@@ -34,7 +34,7 @@ const effort = (value: string | undefined): StageModel['reasoningEffort'] => {
 };
 
 const raw = JSON.parse(readFileSync(path.resolve(inputPath), 'utf8')) as Record<string, unknown>;
-// B2/B3 take their hand-off from the piece brief; the brief is copied into the run's input so the run stays reproducible.
+// B3 takes its hand-off from the accepted piece brief; the brief is copied into the run's input so the run stays reproducible.
 if (typeof raw.briefFrom === 'string') {
   raw.brief = JSON.parse(readFileSync(path.resolve('.local/stages', raw.briefFrom, 'brief/latest.json'), 'utf8'));
   delete raw.briefFrom;
@@ -45,6 +45,7 @@ const models = {
 };
 const withStandards = (read: () => string) => ({ ...raw, standards: raw.standards ?? read() });
 const topicId = String(raw.topicId);
+if (!topicId || topicId === 'undefined') throw new Error('Input must include topicId');
 const root = path.resolve('.local/stages', topicId);
 mkdirSync(path.join(root, 'traces'), { recursive: true });
 const store = new SQLiteWorkflowRunStore(new DatabaseSync(path.join(root, 'ledger.sqlite')));
@@ -61,17 +62,22 @@ function execute<Input>(definition: WorkflowDefinition<Input, WorkflowTerminal<n
     ...(values.resume ? { resumeRunId: values.resume } : {}),
   });
 }
+let frozenInput: unknown;
 async function start() {
-  if (stage === 'b1') return execute(createB1Workflow(models), b1InputSchema.parse(withStandards(readB1Standards)));
-  if (stage === 'b2') return execute(createB2Workflow(models), b2InputSchema.parse(withStandards(readB2Standards)));
+  if (stage === 'content') {
+    const input = contentInputSchema.parse(withStandards(readContentStandards));
+    frozenInput = input;
+    return execute(createContentWorkflow(models), input);
+  }
   const input = b3InputSchema.parse(withStandards(readB3Standards));
+  frozenInput = input;
   return execute(createB3Workflow(input, models), input);
 }
 const { run } = await start();
 
 const outDir = path.join(root, stage, run.id);
 mkdirSync(outDir, { recursive: true });
-writeFileSync(path.join(outDir, 'input.json'), `${JSON.stringify(raw, null, 2)}\n`);
+writeFileSync(path.join(outDir, 'input.json'), `${JSON.stringify(frozenInput, null, 2)}\n`);
 const artifacts = await store.listArtifacts(run.id);
 for (const [index, ref] of artifacts.entries()) {
   const payload = await store.getArtifactPayload(ref.id) as Record<string, unknown>;

@@ -439,3 +439,62 @@ test('stage and workbench pages link the run video and name the recorded reviewe
     expect(workbenchHtml).toContain('占位配音（macOS 语音），正式配音待定');
   }
 });
+
+test('content pages show the complete draft and question coverage while keeping legacy B1 in history', async () => {
+  const cwd = fixture();
+  const topic = 'fixture';
+  const root = path.join(cwd, '.local/stages', topic);
+  mkdirSync(root, { recursive: true });
+  const db = new DatabaseSync(path.join(root, 'ledger.sqlite'));
+  const store = new SQLiteWorkflowRunStore(db);
+  const old = await store.createRun({ workflowId: 'creation.b1', workflowRevision: 'b1-v7', inputFingerprint: 'old', state: 'needs_review', metadata: { topicId: topic, stage: 'b1' } });
+  const legacy = await store.createRun({ workflowId: 'creation.b1', workflowRevision: 'b1-v7', inputFingerprint: 'legacy', state: 'needs_review', metadata: { topicId: topic } });
+  const run = await store.createRun({ workflowId: 'creation.content', workflowRevision: 'content-v1', inputFingerprint: 'new', state: 'needs_review', metadata: { topicId: topic, stage: 'content' } });
+  await store.updateRun(run.id, { output: { details: { stage: 'CONTENT', reason: 'awaiting-human-review', rounds: 1 } } });
+  const step = await store.createStep({ runId: run.id, key: 'publish', kind: 'publish', workflowId: run.workflowId, workflowRevision: run.workflowRevision, inputFingerprint: 'new', configFingerprint: 'new', state: 'succeeded', validation: 'valid' });
+  const attempt = await store.createAttempt({ runId: run.id, stepRunId: step.id, state: 'succeeded' });
+  const publish = async (type: string, payload: object) => store.publishArtifact({ type, schemaVersion: '1', revision: '1', sha256: await artifactPayloadSha256(payload), uri: `artifact://${type}`, payload,
+    producedBy: { workflowRunId: run.id, stepRunId: step.id, attemptId: attempt.id }, dependsOn: [], validation: 'valid', review: 'pending' });
+  await publish('content-draft', { decision: { workingTitle: '怎样训练', coreQuestion: '机制是什么？', oneLineAnswer: '通过反馈迭代', hook: '训练现场', beats: [] },
+    script: { title: '训练全过程', coverText: '训练', estimatedSeconds: 40, segments: [
+      { time: '0–5', voiceover: '第一段完整口播', onScreenText: '第一段', visual: '画面一' },
+      { time: '5–10', voiceover: '第二段完整口播', onScreenText: '第二段', visual: '画面二' },
+    ] }, markdown: '# 完整稿' });
+  await publish('content-review', { verdict: 'pass', route: 'pass', summary: '内容可交制作', criteria: [{ id: 'C1', result: 'ok', reason: '完整' }],
+    questionCoverage: [{ question: '机制是什么？', answerInDraft: '反馈迭代', missing: '', result: 'ok' }] });
+  const contentDir = path.join(root, 'content', run.id);
+  mkdirSync(contentDir, { recursive: true });
+  writeFileSync(path.join(contentDir, 'input.json'), JSON.stringify({ opportunity: '公开训练', account: { name: '测试账号', positioning: '科技' }, form: '视频', readerGoal: '看懂机制', requiredQuestions: ['机制是什么？'], materials: [] }));
+  writeFileSync(path.join(root, 'decisions.json'), JSON.stringify({ current: { b1: old.id, content: run.id }, runs: { [old.id]: { purpose: '历史', review: { reviewer: 'proxy', verdict: 'accept', notes: [], at: '2026-10-03' } }, [run.id]: { purpose: '生产', review: { reviewer: 'proxy', verdict: 'accept', notes: [], at: '2026-10-03' } } } }));
+  db.close();
+  const creation = fileURLToPath(new URL('..', import.meta.url));
+  const loader = path.join(creation, 'node_modules/tsx/dist/loader.mjs');
+  execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/render-stage.ts'), topic, run.id], { cwd });
+  const stageHtml = readFileSync(path.join(contentDir, 'index.html'), 'utf8');
+  for (const expected of ['<title>CONTENT · 训练全过程</title>', '内容决定与完整稿', '第一段完整口播', '第二段完整口播', '必答问题覆盖', '机制是什么？', '反馈迭代', '内容可交制作', '程序终态']) expect(stageHtml).toContain(expected);
+  mkdirSync(path.join(cwd, 'docs/03-architecture'), { recursive: true });
+  writeFileSync(path.join(cwd, 'docs/03-architecture/brief-and-handoff.md'), '# Fixture flow');
+  execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/stage-workbench.ts'), topic], { cwd });
+  const workbenchHtml = readFileSync(path.join(root, 'index.html'), 'utf8');
+  for (const expected of ['<title>作品工作台 · 训练全过程</title>', 'id="content"', 'id="b3"', '训练全过程', '第一段完整口播', '第二段完整口播', '机制是什么？：反馈迭代 <span class="pill good">通过</span>', '内容可交制作']) expect(workbenchHtml).toContain(expected);
+  expect(workbenchHtml).not.toContain('id="b1"');
+  expect(workbenchHtml).toContain(`href="b1/${old.id}/index.html"`);
+  expect(workbenchHtml.match(/<span class="tag">当前采用<\/span>/g)).toHaveLength(1); // Historical B1 is not adopted as the new flow.
+
+  const writableDb = new DatabaseSync(path.join(root, 'ledger.sqlite'));
+  await new SQLiteWorkflowRunStore(writableDb).updateRun(run.id, { output: { details: { stage: 'CONTENT', reason: 'not-converged', rounds: 1, guardFailures: ['必答问题未覆盖'] } } });
+  writableDb.close();
+  execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/render-stage.ts'), topic, legacy.id], { cwd });
+  const legacyHtml = readFileSync(path.join(root, 'b1', legacy.id, 'index.html'), 'utf8');
+  expect(legacyHtml).toContain('<title>B1 · fixture</title>');
+  expect(legacyHtml).not.toContain('内容决定与完整稿');
+  execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/render-stage.ts'), topic, run.id], { cwd });
+  const guardedHtml = readFileSync(path.join(contentDir, 'index.html'), 'utf8');
+  expect(guardedHtml).toContain('内部没审过，等你决定');
+  expect(guardedHtml).toContain('必答问题未覆盖');
+  expect(guardedHtml).toContain('内容可交制作'); // The model's opinion remains visible alongside the program refusal.
+  execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/stage-workbench.ts'), topic], { cwd });
+  const guardedWorkbench = readFileSync(path.join(root, 'index.html'), 'utf8');
+  expect(guardedWorkbench).toContain('程序终态：not-converged');
+  expect(guardedWorkbench).toContain('必答问题未覆盖');
+});

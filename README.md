@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 研究 | 对齐问题、研究与证据综合、图文报告、审阅修订 | [research](workbenches/research/README.md) |
 | 分析 | 单帖内容还原、编导与画面分析；单博主作品研究 | [analysis](workbenches/analysis/README.md) |
-| 创作 | B1 定题 → B2 成稿 → B3 成片的阶段 workflow；文章应用 | [creation](workbenches/creation/README.md) |
+| 创作 | 内容迭代 → B3 制作的 workflow；文章应用 | [creation](workbenches/creation/README.md) |
 
 研究、分析、创作没有必经的先后顺序。保留各工作台已有流程、界面和完整 Skill 包；只共享 `vendor/agent-workflow`。本次不加入统一业务平台或强制跨台流程。
 

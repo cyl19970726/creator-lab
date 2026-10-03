@@ -14,7 +14,7 @@ export const BRIEF_SCHEMA_VERSION = 'brief-v1';
 const note = z.object({ from: z.string().min(1), note: z.string().min(1) }).strict();
 const material = z.object({ id: z.string().min(1), title: z.string().min(1), text: z.string().min(1) }).strict();
 const source = z.object({
-  stage: z.enum(['b1', 'b2', 'b3']), runId: z.string().min(1), revision: z.string().min(1),
+  stage: z.enum(['content', 'b1', 'b2', 'b3']), runId: z.string().min(1), revision: z.string().min(1),
   acceptedAt: z.string().min(1), reviewer: z.string().min(1),
 }).strict();
 
@@ -88,6 +88,37 @@ export function briefAfterB2(brief: PieceBrief, args: { script: Script; editor?:
   });
 }
 
+/** One accepted content run hands both the decision and the complete script to production. */
+export function briefAfterContent(args: {
+  input: Pick<B1Input, 'topicId' | 'opportunity' | 'account' | 'form' | 'materials'> & { readerGoal: string; requiredQuestions: string[] };
+  draft: { decision: ContentDecision; script: Script };
+  research: ResearchNotes['notes'];
+  review: { summary: string; criteria: Array<{ id: string; result: string; reason: string }>; questionCoverage: Array<{ question: string; answerInDraft: string; missing: string; result: string }> };
+  previousVersion?: number; gate: GateAcceptance;
+}): PieceBrief {
+  const materials = [...args.input.materials];
+  for (const m of researchToMaterials(args.research)) {
+    const existing = materials.find(candidate => candidate.id === m.id);
+    if (existing && (existing.title !== m.title || existing.text !== m.text)) throw new Error(`Conflicting material id in content handoff: ${m.id}`);
+    if (!existing) materials.push(m);
+  }
+  const { markdown: _decisionMarkdown, ...decision } = args.draft.decision as ContentDecision & { markdown?: string };
+  const { markdown: _scriptMarkdown, ...script } = args.draft.script as Script & { markdown?: string };
+  return briefSchema.parse({
+    schemaVersion: BRIEF_SCHEMA_VERSION, topicId: args.input.topicId, version: (args.previousVersion ?? 0) + 1,
+    sources: [{ stage: 'content', runId: args.gate.runId, revision: args.gate.revision, acceptedAt: args.gate.acceptedAt, reviewer: args.gate.reviewer }],
+    creator: { opportunity: args.input.opportunity, account: args.input.account, form: args.input.form },
+    audienceQuestion: { readerGoal: args.input.readerGoal, requiredQuestions: args.input.requiredQuestions, questionInAudienceWords: args.input.requiredQuestions[0] ?? decision.coreQuestion },
+    decision, script, materials, notesForB2: [],
+    notesForB3: [
+      ...args.gate.notesForNext.map(n => ({ from: args.gate.reviewer, note: n })),
+      { from: '内容检查', note: args.review.summary },
+      ...openItems('内容检查', args.review.criteria),
+      ...args.review.questionCoverage.filter(q => q.result !== 'ok').map(q => ({ from: '必答问题', note: `${q.question}：${q.missing || q.answerInDraft}` })),
+    ],
+  });
+}
+
 // ---------- per-role slices (the last table in docs/03-architecture/brief-and-handoff.md) ----------
 
 export function b2WriterContext(brief: PieceBrief) {
@@ -106,9 +137,12 @@ export function b2EditorContext(brief: PieceBrief) {
 
 function core(brief: PieceBrief) {
   const d = brief.decision as Partial<ContentDecision>;
+  const audience = brief.audienceQuestion as { readerGoal?: string; requiredQuestions?: string[] };
   return {
     coreQuestion: d.coreQuestion, oneLineAnswer: d.oneLineAnswer, hook: d.hook,
     beats: (d.beats ?? []).map(b => ({ beat: b.beat, visualIdea: b.visualIdea })),
+    ...(audience.readerGoal ? { readerGoal: audience.readerGoal } : {}),
+    ...(audience.requiredQuestions ? { requiredQuestions: audience.requiredQuestions } : {}),
   };
 }
 
@@ -117,6 +151,6 @@ export function b3DesignerContext(brief: PieceBrief) {
 }
 
 export function b3InspectorContext(brief: PieceBrief) {
-  const { coreQuestion, oneLineAnswer, hook } = core(brief);
-  return { core: { coreQuestion, oneLineAnswer, hook }, account: { name: brief.creator.account.name }, notesForB3: brief.notesForB3 };
+  const { coreQuestion, oneLineAnswer, hook, readerGoal, requiredQuestions } = core(brief);
+  return { core: { coreQuestion, oneLineAnswer, hook, readerGoal, requiredQuestions }, account: { name: brief.creator.account.name }, notesForB3: brief.notesForB3 };
 }

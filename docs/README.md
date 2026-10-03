@@ -4,7 +4,7 @@ Creator Lab 把三个工作台放在一个仓库里，各自独立使用，只�
 
 | 工作台 | 做什么 | 从这里读 |
 | --- | --- | --- |
-| 创作 | 把“从选题到成片”做成 B1 定题 → B2 成稿 → B3 成片三个 workflow，靠在真实题目上反复调优成形 | [创作文档导览](../workbenches/creation/docs/README.md) |
+| 创作 | 内容形成 → 制作；选题、研究和完整稿在同一 workflow 内反复调优 | [创作文档导览](../workbenches/creation/docs/README.md) |
 | 研究 | 对齐问题、研究与证据综合、图文报告、审阅修订 | [研究工作台](../workbenches/research/README.md) |
 | 分析 | 单帖内容还原、编导与画面分析；单博主作品研究 | [分析工作台](../workbenches/analysis/README.md) |
 

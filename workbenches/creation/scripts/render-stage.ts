@@ -7,6 +7,7 @@ import { SQLiteWorkflowRunStore } from '@signal-room/workflow-sqlite';
 import { B1_ROLES } from '../src/stages/b1.js';
 import { B2_ROLES } from '../src/stages/b2.js';
 import { B3_ROLES } from '../src/stages/b3.js';
+import { CONTENT_ROLES } from '../src/stages/content.js';
 import type { RoleSpec } from '../src/stages/runtime.js';
 import { findRunVideo } from '../src/stages/video-artifacts.js';
 
@@ -27,7 +28,7 @@ const run = requestedRun ? runs.find(r => r.id === requestedRun) : runs[0];
 if (!run) throw new Error(`No run found for ${topicId}${requestedRun ? ` / ${requestedRun}` : ''}`);
 const stage = String(run.metadata?.stage ?? 'b1');
 const roles: Record<string, RoleSpec> = Object.fromEntries(
-  Object.values<RoleSpec>(stage === 'b3' ? B3_ROLES : stage === 'b2' ? B2_ROLES : B1_ROLES).map(role => [role.id, role]),
+  Object.values<RoleSpec>(stage === 'content' ? CONTENT_ROLES : stage === 'b3' ? B3_ROLES : stage === 'b2' ? B2_ROLES : B1_ROLES).map(role => [role.id, role]),
 );
 
 const steps = await store.listSteps(run.id);
@@ -52,7 +53,7 @@ const agentInfo = (step: StepRecord) => {
   return { id: String(started?.data?.agentId ?? ''), model: String(started?.data?.model ?? ''), effort: String(started?.data?.reasoningEffort ?? ''), usage: done?.data?.usage };
 };
 
-const gate = (run.output as { details?: { reason?: string; rounds?: number; scope?: string } } | undefined)?.details;
+const gate = (run.output as { details?: { reason?: string; rounds?: number; scope?: string; guardFailures?: string[] } } | undefined)?.details;
 const videoScopeLabel = gate?.scope === 'sample' ? '样片' : gate?.scope === 'full' ? '全片' : '视频';
 const stateLabel: Record<string, [string, string]> = {
   'awaiting-human-review': ['等你审', 'wait'], 'not-converged': ['内部没审过，等你决定', 'warn'], 'final-edits-fact-checked': ['已按主编最后意见改完并核过事实，等你审', 'wait'], 'final-edits-with-fact-issues': ['改完了，但事实核查还有问题', 'warn'], blocked: ['卡住了', 'bad'],
@@ -63,10 +64,10 @@ const lastEvent = events.at(-1)?.timestamp;
 const totalTokens = phases.flatMap(childAgents).map(agentInfo).reduce((sum, a) => sum + (a.usage?.inputTokens ?? 0) + (a.usage?.outputTokens ?? 0), 0);
 
 // ---- the stage's main asset
-const mainRef = stage === 'b3' ? last('b3-script-file') : stage === 'b2' ? last('b2-script') : last('b1-content-decision');
+const mainRef = stage === 'content' ? last('content-draft') : stage === 'b3' ? last('b3-script-file') : stage === 'b2' ? last('b2-script') : last('b1-content-decision');
 const main = mainRef ? payloads.get(mainRef.id) : undefined;
-const verdictRef = stage === 'b3' ? last('b3-inspection') : stage === 'b2' ? last('b2-editor') : last('b1-challenge');
-const verdict = verdictRef ? payloads.get(verdictRef.id) as { verdict?: string; summary?: string; criteria?: Array<{ id: string; result: string; reason: string }>; mustChange?: unknown[] } : undefined;
+const verdictRef = stage === 'content' ? last('content-review') : stage === 'b3' ? last('b3-inspection') : stage === 'b2' ? last('b2-editor') : last('b1-challenge');
+const verdict = verdictRef ? payloads.get(verdictRef.id) as { verdict?: string; summary?: string; criteria?: Array<{ id: string; result: string; reason: string }>; questionCoverage?: Array<{ question: string; answerInDraft: string; missing: string; result: string }>; mustChange?: unknown[] } : undefined;
 const inputFile = path.join(root, stage, run.id, 'input.json');
 const input = existsSync(inputFile) ? JSON.parse(readFileSync(inputFile, 'utf8')) as Record<string, unknown> : undefined;
 
@@ -135,18 +136,30 @@ function inputBlock(): string {
   if (!input) return '<p class="sub">本次运行没有保存输入副本。</p>';
   const materials = (input.materials as Array<{ id: string; title: string }> | undefined) ?? [];
   const account = input.account as { name?: string; positioning?: string } | undefined;
-  const notes = byType('b1-research-notes').flatMap(ref => ((payloads.get(ref.id)?.notes as Array<{ id: string; title: string; url: string; publisher: string }> | undefined) ?? []));
+  const notes = byType(stage === 'content' ? 'content-research' : 'b1-research-notes').flatMap(ref => ((payloads.get(ref.id)?.notes as Array<{ id: string; title: string; url: string; publisher: string }> | undefined) ?? []));
   return `<table class="rows">
 <tr><th>选题判断</th><td>${esc(input.opportunity ?? '')}</td></tr>
 <tr><th>账号</th><td>${esc(account?.name ?? '')}：${esc(account?.positioning ?? '')}</td></tr>
 <tr><th>载体</th><td>${esc(input.form ?? '')}</td></tr>
+${stage === 'content' ? `<tr><th>读者目标</th><td>${esc(input.readerGoal ?? '')}</td></tr><tr><th>必答问题</th><td><ol>${((input.requiredQuestions as string[] | undefined) ?? []).map(q => `<li>${esc(q)}</li>`).join('')}</ol></td></tr>` : ''}
 <tr><th>给定材料</th><td>${materials.map(m => `<div><span class="mono">${esc(m.id)}</span> ${esc(m.title)}</div>`).join('')}</td></tr>
 ${notes.length ? `<tr><th>workflow 补的材料</th><td>${notes.map(n => `<div><span class="mono">${esc(n.id)}</span> <a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.title)}</a> <span class="sub">${esc(n.publisher)}</span></div>`).join('')}</td></tr>` : ''}
 </table>`;
 }
 
-const decisionHtml = main && typeof main.markdown === 'string' ? md.render(main.markdown) : '<p class="sub">还没有产出。</p>';
-const title = String(main?.workingTitle ?? main?.title ?? (input?.script as { title?: string } | undefined)?.title ?? topicId);
+function contentDraftHtml(): string {
+  if (!main) return '<p class="sub">还没有产出。</p>';
+  const decision = main.decision as Record<string, unknown> | undefined;
+  const script = main.script as Record<string, unknown> | undefined;
+  if (!decision || !script) return '<p class="sub">内容决定或完整稿尚未产出。</p>';
+  const beats = (decision.beats as Array<{ beat?: string; says?: string; visualIdea?: string }> | undefined) ?? [];
+  const segments = (script.segments as Array<{ time?: string; voiceover?: string; onScreenText?: string; visual?: string }> | undefined) ?? [];
+  return `<h2>完整稿</h2><p><b>${esc(script.title)}</b> · 封面字：${esc(script.coverText)} · 预计 ${esc(script.estimatedSeconds)} 秒</p>
+<table><tr><th>时间</th><th>口播</th><th>屏幕文字</th><th>画面</th></tr>${segments.map(s => `<tr><td>${esc(s.time)}</td><td>${esc(s.voiceover)}</td><td>${esc(s.onScreenText)}</td><td>${esc(s.visual)}</td></tr>`).join('')}</table>
+<h2>内容决定</h2><p><b>${esc(decision.workingTitle)}</b></p><p>核心问题：${esc(decision.coreQuestion)}</p><p>一句话答案：${esc(decision.oneLineAnswer)}</p><p>开头钩子：${esc(decision.hook)}</p><ol>${beats.map(b => `<li><b>${esc(b.beat)}</b>　${esc(b.says)}<br><span class="sub">画面：${esc(b.visualIdea)}</span></li>`).join('')}</ol><details><summary>完整内容决定</summary><pre>${esc(JSON.stringify(decision, null, 2))}</pre></details>`;
+}
+const decisionHtml = stage === 'content' ? contentDraftHtml() : main && typeof main.markdown === 'string' ? md.render(main.markdown) : '<p class="sub">还没有产出。</p>';
+const title = String((main?.script as { title?: string } | undefined)?.title ?? (main?.decision as { workingTitle?: string } | undefined)?.workingTitle ?? main?.workingTitle ?? main?.title ?? (input?.script as { title?: string } | undefined)?.title ?? topicId);
 
 const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(stage.toUpperCase())} · ${esc(title)}</title>
@@ -189,20 +202,22 @@ a{color:var(--accent)}
 </style></head><body><main>
 <header>
 <p><a href="../../index.html">← 返回作品工作台</a></p>
-<div class="stage">${esc(stage.toUpperCase())} · ${esc({ b1: '定题', b2: '成稿', b3: '成片' }[stage] ?? stage)} · ${esc(topicId)}</div>
+<div class="stage">${esc(stage === 'content' ? '内容' : stage.toUpperCase())} · ${esc({ content: '定题与成稿', b1: '定题', b2: '成稿', b3: '成片' }[stage] ?? stage)} · ${esc(topicId)}</div>
 <h1>${esc(title)}</h1>
 <div class="meta">${human?.verdict ? `<span class="pill ${human.verdict === 'accept' ? 'good' : 'warn'}">${esc({ accept: '审阅通过', revise: '审阅要求修改', invalid: '无效运行' }[human.verdict] ?? human.verdict)}${human.reviewer ? ` · ${esc(human.reviewer)}` : ''}</span><span class="sub">workflow：${esc(stateText)}</span>` : `<span class="pill ${stateClass}">${esc(stateText)}</span>`}<span>${time(firstEvent)} – ${time(lastEvent)}（${Math.round((seconds(firstEvent, lastEvent) ?? 0) / 6) / 10} 分钟）</span><span>内部审阅 ${gate?.rounds ?? '—'} 轮</span><span>约 ${Math.round(totalTokens / 1000)}k tokens</span><span class="mono">run ${esc(run.id.slice(0, 8))} · ${esc(run.workflowRevision)}</span></div>
 <ol class="strip">${strip()}</ol>
 </header>
 
 ${video ? `<section><h2>${videoScopeLabel}</h2><p class="sub">${esc(video)}</p><video controls preload="metadata" src="${esc(video)}"></video></section>` : ''}
-<section><h2>这一阶段的${stage === 'b3' ? '稿件文件' : '决定'}</h2><p class="sub">workflow 交到你手上的主资产（最后一版）。</p><div class="doc">${decisionHtml}</div></section>
+<section><h2>${stage === 'content' ? '内容决定与完整稿' : `这一阶段的${stage === 'b3' ? '稿件文件' : '决定'}`}</h2><p class="sub">workflow 交到你手上的主资产（最后一版）。</p><div class="doc">${decisionHtml}</div></section>
+${stage === 'content' ? `<section><h2>程序终态</h2><p>${esc(stateText)}</p>${gate?.guardFailures?.length ? `<ul>${gate.guardFailures.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}</section>` : ''}
 
 <section><h2>审阅</h2><p class="sub">左边是 workflow 内部的审阅者按标准卡给的判断；右边是已记录的阶段审阅，审阅者以实际记录为准。</p>
 <div class="twocol">
-<div class="col"><h3>${esc({ b1: '挑战者', b2: '主编', b3: '成品检查' }[stage] ?? '审阅者')} ${verdict?.verdict ? resultPill(verdict.verdict) : ''}</h3><p>${esc(verdict?.summary ?? '尚未审阅')}</p><div class="scroll"><table>${criteriaRows()}</table></div></div>
+<div class="col"><h3>${esc({ content: '内容检查', b1: '挑战者', b2: '主编', b3: '成品检查' }[stage] ?? '审阅者')} ${verdict?.verdict ? resultPill(verdict.verdict) : ''}</h3><p>${esc(verdict?.summary ?? '尚未审阅')}</p><div class="scroll"><table>${criteriaRows()}</table></div></div>
 <div class="col"><h3>审阅记录${human?.reviewer ? ` · ${esc(human.reviewer)}` : ''} ${human?.verdict ? resultPill(human.verdict) : '<span class="pill wait">待审</span>'}</h3>${human ? `<ol>${(human.notes ?? []).map(n => `<li>${esc(n)}</li>`).join('')}</ol>` : '<p class="sub">这一版还没有审阅记录。</p>'}</div>
 </div>${incomingNotes.length ? `<div class="col incoming"><h3>这一轮是按这些意见改的</h3><p class="sub">${esc(incoming?.reviewer ?? '')}</p><ol>${incomingNotes.map(n => `<li>${esc(n)}</li>`).join('')}</ol></div>` : ''}</section>
+${stage === 'content' ? `<section><h2>必答问题覆盖</h2><div class="scroll"><table class="rows"><tr><th>问题</th><th>稿中答案</th><th>缺口</th><th>判断</th></tr>${(verdict?.questionCoverage ?? []).map(q => `<tr><td>${esc(q.question)}</td><td>${esc(q.answerInDraft)}</td><td>${esc(q.missing)}</td><td>${resultPill(q.result)}</td></tr>`).join('')}</table></div></section>` : ''}
 
 <section><h2>为什么是这个 workflow</h2><p class="sub">每个角色都对应这个阶段的一种常见失败。</p><div class="scroll"><table class="rows">${roleRows()}</table></div></section>
 
