@@ -55,7 +55,9 @@ export function saveRunVideo(runDir: string, source: string, producerStepRunId: 
   try {
     copyFileSync(source, temporary);
     renameSync(temporary, target);
-    writeFileSync(path.join(runDir, MANIFEST_FILE), `${JSON.stringify({ file: VIDEO_FILE, source, producerStepRunId }, null, 2)}\n`);
+    const bytes = readFileSync(target);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    writeFileSync(path.join(runDir, MANIFEST_FILE), `${JSON.stringify({ file: VIDEO_FILE, source, producerStepRunId, sha256, bytes: bytes.byteLength }, null, 2)}\n`);
   } finally {
     rmSync(temporary, { force: true });
   }

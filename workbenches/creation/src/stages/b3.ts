@@ -58,6 +58,26 @@ const inspectionSchema = z.object({
   issues: z.array(z.object({ line: z.string(), standard: z.string(), problem: z.string(), fix: z.string() })),
   summary: z.string().min(1),
 });
+/** Schemas exported for the creation storage-contract registration package. */
+export const b3DesignAgentOutputSchema = designSchema;
+export const b3InspectionOutputSchema = inspectionSchema;
+export const b3FrameSpecsStoredSchema = z.object({
+  report: designSchema,
+  build: z.object({ ok: z.boolean(), output: z.string() }),
+  specs: z.array(z.object({ file: z.string(), content: z.string() })),
+});
+export const b3AssemblyReportSchema = z.object({
+  index: z.string(), retime: z.string(), technical: z.string(),
+  errors: z.array(z.object({ line: z.string(), code: z.string(), message: z.string(), selector: z.string(), time: z.number().nullable() })),
+  green: z.boolean(), snapshots: z.string(), sheets: z.array(z.string()), settle: z.string(),
+});
+export const b3VoiceManifestFileSchema = z.object({
+  lines: z.array(z.object({ index: z.number().int().positive(), durationMs: z.number().positive(), text: z.string() })),
+});
+export const b3VoiceManifestStoredSchema = z.object({
+  voice: z.enum(['placeholder', 'minimax']),
+  lines: z.array(z.object({ index: z.number().int().positive(), seconds: z.number().positive() })),
+});
 export type Design = z.infer<typeof designSchema>;
 export type Inspection = z.infer<typeof inspectionSchema>;
 
@@ -199,9 +219,10 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
     }, async phase => {
       const manifest = await phase.task('tts', () => {
         run(dir, 'bash', [input.voice === 'placeholder' ? 'scripts/tts-placeholder.sh' : 'scripts/tts.sh']);
-        return JSON.parse(readFileSync(path.join(dir, 'assets/voice-minimax/manifest.json'), 'utf8')) as { lines: Array<{ index: number; durationMs: number; text: string }> };
+        return b3VoiceManifestFileSchema.parse(JSON.parse(readFileSync(path.join(dir, 'assets/voice-minimax/manifest.json'), 'utf8')));
       }, { lines: prepared.lines, voice: input.voice });
-      const ref = await phase.publish('voice-manifest', 'b3-voice-manifest', { voice: input.voice, lines: manifest.lines.map(l => ({ index: l.index, seconds: l.durationMs / 1000 })) }, { validation: 'valid', review: 'not_applicable', dependsOn: [dependency(prepared.ref)] });
+      const payload = b3VoiceManifestStoredSchema.parse({ voice: input.voice, lines: manifest.lines.map(l => ({ index: l.index, seconds: l.durationMs / 1000 })) });
+      const ref = await phase.publish('voice-manifest', 'b3-voice-manifest', payload, { validation: 'valid', review: 'not_applicable', dependsOn: [dependency(prepared.ref)] });
       await phase.bindArtifact(ref, { role: 'voice-manifest', title: '配音清单', primary: true });
       return { ref, durations: manifest.lines.map(l => l.durationMs / 1000) };
     });

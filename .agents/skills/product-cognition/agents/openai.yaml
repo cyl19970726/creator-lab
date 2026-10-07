@@ -1,0 +1,4 @@
+interface:
+  display_name: "产品认知与整体设计"
+  short_description: "从业务目的与使用场景建立整体产品理解，用实际成果修正设计和优先级"
+  default_prompt: "使用 $product-cognition 建立或更新这个产品的整体理解，并说明当前最值得解决的问题及其依据。"

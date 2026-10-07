@@ -23,3 +23,7 @@ __pycache__/
 
 # Generated documentation site (pnpm docs:build)
 docs/site/
+
+# Private session forensics and machine-specific editor launch settings
+session-maps/
+.claude/launch.json
