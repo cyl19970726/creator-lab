@@ -83,9 +83,9 @@ Prompt 本身就可以是直接迭代的对象：阅读实际结果，修改任�
 
 生命周期描述方法怎样从假设走向有范围的稳定使用，再由新的证据进入下一轮。它不是菜单顺序，也不是每个案例必须重走一遍的向导。
 
-![Workflow 从业务目的、首版设计和真实运行走向评价、调优、候选验证与稳定服务，再由业务反馈触发下一轮。](diagrams/workflow-paradigm-20261007/workflow-lifecycle-final3.svg)
+![Workflow 从首版和真实运行走向评价、方法调优与稳定服务；共享能力缺口分流为 dogfood issue，经项目交付后回原业务复验。](diagrams/workflow-paradigm-20261007/workflow-lifecycle-final4.svg)
 
-[展开生命周期图](diagrams/workflow-paradigm-20261007/workflow-lifecycle-final3.html)。图表达目标范式，不表示所有阶段已自动化；下表补充每次转换所需的判断。
+[展开生命周期图](diagrams/workflow-paradigm-20261007/workflow-lifecycle-final4.html)。图表达目标范式，不表示所有阶段已自动化；下表补充每次转换所需的判断。
 
 | 阶段 | 这一阶段真正改变什么 | 转入下一阶段需要什么依据 |
 | --- | --- | --- |
@@ -103,9 +103,9 @@ Prompt 本身就可以是直接迭代的对象：阅读实际结果，修改任�
 
 从问题到候选，首先判断责任层次。可复用的操作与判断可以提炼成 skill；清楚的节点任务可能用合适的 Prompt＋tools 就能完成；现有执行器、工具与上下文的配置也可以调整。这些方法可以组合。若需要新增共享执行器、统一存储或改变底座接口，则形成 dogfood issue，交给项目层评估；不能把尚不存在的能力写进本轮可执行候选。
 
-![候选执行方案从真实任务出发，通过实践和机制解释选择 skill、Prompt 与工具、上下文或执行环境等可组合改变，经过验证再持续使用与修订。](diagrams/workflow-paradigm-20261007/skill-development-final3.svg)
+![真实任务分流为已有能力内的候选执行方案与项目层 dogfood issue；方法调优经过验证采用，项目缺口经过评估交付后回到原业务复验。](diagrams/workflow-paradigm-20261007/skill-development-final4.svg)
 
-[展开候选方案与 skill 开发图](diagrams/workflow-paradigm-20261007/skill-development-final3.html)。先确定候选要改变的因素，再选择方法的承载形式；“已写好、已配置或已部署”与“业务效果得到验证”是不同状态。
+[展开候选方案与 skill 开发图](diagrams/workflow-paradigm-20261007/skill-development-final4.html)。先确定候选要改变的因素，再选择方法的承载形式；“已写好、已配置或已部署”与“业务效果得到验证”是不同状态。
 
 | 问题假设 | 可以考虑的候选变化 | 验证重点 |
 | --- | --- | --- |

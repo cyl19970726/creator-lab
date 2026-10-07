@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 1329 708" role="img" lang="zh-CN" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase" data-reader-fit="intrinsic-height" data-reader-min-text="7.5" data-reader-primary-text="14" style="width: 1329px; height: 708px; min-width: 0px;" width="1329" height="708" xmlns="http://www.w3.org/2000/svg"><style>
+<svg viewBox="0 0 1260 708" role="img" lang="zh-CN" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase" data-reader-fit="intrinsic-height" data-reader-min-text="7.5" data-reader-primary-text="14" style="width: 1260px; height: 708px; min-width: 0px;" width="1260" height="708" xmlns="http://www.w3.org/2000/svg"><style>
 /*
 JetBrains Mono variable WOFF2 subsets from Google Fonts service revision v24.
 These fixed bytes are shared by the viewer and its SVG/raster exports.
@@ -407,7 +407,7 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
 svg[data-theme="light"] { --bg: #f4f5f7; --grid: #e9edf2; --canvas-dot: #d9dee5; --text: #111827; --text-muted: #5b6474; --text-dim: #9aa3b2; --text-faint: #6b7280; --panel: #ffffff; --panel-border: #e5e7eb; --lane-fill: rgba(248, 250, 252, 0.65); --lane-stroke: #cbd5e1; --arrow: #94a3b8; --arrow-emphasis: #059669; --mask: #ffffff; --frontend-fill: rgba(34, 211, 238, 0.15); --frontend-stroke: #0891b2; --backend-fill: rgba(52, 211, 153, 0.18); --backend-stroke: #059669; --database-fill: rgba(167, 139, 250, 0.2); --database-stroke: #7c3aed; --cloud-fill: rgba(251, 191, 36, 0.18); --cloud-stroke: #d97706; --security-fill: rgba(251, 113, 133, 0.15); --security-stroke: #e11d48; --messagebus-fill: rgba(251, 146, 60, 0.15); --messagebus-stroke: #ea580c; --external-fill: rgba(148, 163, 184, 0.18); --external-stroke: #64748b; --toolbar-bg: rgba(255, 255, 255, 0.92); --toolbar-border: #cbd5e1; --toolbar-text: #334155; --toolbar-hover: #ffffff; --toolbar-menu-bg: #ffffff; }
 svg[data-theme="dark"] { --bg: #020617; --grid: #1e293b; --canvas-dot: rgba(148, 163, 184, 0.16); --text: #ffffff; --text-muted: #94a3b8; --text-dim: #475569; --text-faint: #7d8da1; --panel: rgba(15, 23, 42, 0.5); --panel-border: #1e293b; --lane-fill: rgba(15, 23, 42, 0.22); --lane-stroke: #334155; --arrow: #64748b; --arrow-emphasis: #34d399; --mask: #0f172a; --frontend-fill: rgba(8, 51, 68, 0.4); --frontend-stroke: #22d3ee; --backend-fill: rgba(6, 78, 59, 0.4); --backend-stroke: #34d399; --database-fill: rgba(76, 29, 149, 0.4); --database-stroke: #a78bfa; --cloud-fill: rgba(120, 53, 15, 0.3); --cloud-stroke: #fbbf24; --security-fill: rgba(136, 19, 55, 0.4); --security-stroke: #fb7185; --messagebus-fill: rgba(251, 146, 60, 0.3); --messagebus-stroke: #fb923c; --external-fill: rgba(30, 41, 59, 0.5); --external-stroke: #94a3b8; --toolbar-bg: rgba(15, 23, 42, 0.8); --toolbar-border: #334155; --toolbar-text: #e2e8f0; --toolbar-hover: rgba(15, 23, 42, 0.95); --toolbar-menu-bg: #0f172a; }
 rect.c-bg-rect { fill: var(--bg); }
-</style><rect x="0" y="0" width="1329" height="708" class="c-bg-rect"/>
+</style><rect x="0" y="0" width="1260" height="708" class="c-bg-rect"/>
         <title id="archify-diagram-title">节点能力与 Skill：从实践到候选执行方案</title>
         <desc id="archify-diagram-description">由 Archify 生成的架构图。</desc>
         <!-- Definitions -->
@@ -476,8 +476,9 @@ rect.c-bg-rect { fill: var(--bg); }
           <path data-graph-role="automatic-crossover-underlay" d="M 875 430 L 875 570" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
           <path data-edge-from="trial" data-edge-to="revise" data-edge-label="发现偏差" data-edge-key="9" data-edge-id="trial-revise" data-composition-points="875,430;875,570" data-composition-crossover="halo" data-composition-independent="true" d="M 875 430 L 875 570" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         </g>
-        <path data-edge-from="revise" data-edge-to="candidate" data-edge-label="重做候选并复试" data-edge-key="10" data-edge-id="revise-candidate" data-composition-points="960,605;1250,605;1250,395;1200,395" d="M 960 605 L 1242 605 Q 1250 605 1250 597 L 1250 403 Q 1250 395 1242 395 L 1200 395" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="revise" data-edge-to="candidate" data-edge-label="重做候选并复试" data-edge-key="10" data-edge-id="revise-candidate" data-composition-points="960,605;990,605;990,450;1115,450;1115,430" d="M 960 605 L 982 605 Q 990 605 990 597 L 990 458 Q 990 450 998 450 L 1107 450 Q 1115 450 1115 442 L 1115 430" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="feedback" data-edge-to="explain" data-edge-label="回流机制理解" data-edge-key="11" data-edge-id="feedback-explain" data-composition-points="310,395;20,395;20,260;875,260;875,205" d="M 310 395 L 28 395 Q 20 395 20 387 L 20 268 Q 20 260 28 260 L 867 260 Q 875 260 875 252 L 875 205" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="explain" data-edge-to="dogfood" data-edge-label="共享底座缺口" data-edge-key="12" data-edge-id="explain-dogfood" data-composition-points="875,135;875,60;1220,60;1220,605;1200,605" d="M 875 135 L 875 68 Q 875 60 883 60 L 1212 60 Q 1220 60 1220 68 L 1220 597 Q 1220 605 1212 605 L 1200 605" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
         <g id="node-task" data-node-id="task" data-node-label="真实任务与样例" tabindex="0" role="button" aria-label="聚焦真实任务与样例，明确目的、输入与用途, 架构组件" aria-pressed="false" data-node-kind="external" data-node-sublabel="明确目的、输入与用途" data-node-context="架构组件">
@@ -549,15 +550,15 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="1115" y="184" class="t-muted" font-size="9" text-anchor="middle">适用条件、判断与做法</text>
         </g>
 
-        <g id="node-candidate" data-node-id="candidate" data-node-label="候选执行方案" tabindex="0" role="button" aria-label="聚焦候选执行方案，Skill／Prompt+tools／运行基座, 架构组件" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Skill／Prompt+tools／运行基座" data-node-context="架构组件">
-          <title>候选执行方案 · Skill／Prompt+tools／运行基座 · 架构组件</title>
+        <g id="node-candidate" data-node-id="candidate" data-node-label="候选执行方案" tabindex="0" role="button" aria-label="聚焦候选执行方案，Skill／Prompt与工具／既有配置, 架构组件" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Skill／Prompt与工具／既有配置" data-node-context="架构组件">
+          <title>候选执行方案 · Skill／Prompt与工具／既有配置 · 架构组件</title>
           <rect x="1030" y="360" width="170" height="70" rx="6" class="c-mask"/>
           <rect x="1030" y="360" width="170" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1036 366) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" x="1115" y="393" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">候选执行方案</text>
-        <text x="1115" y="409" class="t-muted" font-size="9" text-anchor="middle">Skill／Prompt+tools／运行基座</text>
+        <text x="1115" y="409" class="t-muted" font-size="9" text-anchor="middle">Skill／Prompt与工具／既有配置</text>
         </g>
 
         <g id="node-trial" data-node-id="trial" data-node-label="另一案例独立试用" tabindex="0" role="button" aria-label="聚焦另一案例独立试用，检验迁移与可理解性, 架构组件" aria-pressed="false" data-node-kind="security" data-node-sublabel="检验迁移与可理解性" data-node-context="架构组件">
@@ -607,6 +608,18 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="875" y="619" class="t-muted" font-size="9" text-anchor="middle">调整知识、边界或步骤</text>
         </g>
 
+        <g id="node-dogfood" data-node-id="dogfood" data-node-label="底座缺口→Dogfood issue" tabindex="0" role="button" aria-label="聚焦底座缺口→Dogfood issue，项目评估；非本轮方法调优, 架构组件" aria-pressed="false" data-node-kind="database" data-node-sublabel="项目评估；非本轮方法调优" data-node-context="架构组件">
+          <title>底座缺口→Dogfood issue · 项目评估；非本轮方法调优 · 架构组件</title>
+          <rect x="1030" y="570" width="170" height="70" rx="6" class="c-mask"/>
+          <rect x="1030" y="570" width="170" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(1036 576) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="1115" y="603" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">底座缺口→Dogfood issue</text>
+        <text x="1115" y="619" class="t-muted" font-size="9" text-anchor="middle">项目评估；非本轮方法调优</text>
+        </g>
+
         <!-- Connection labels -->
 
         <g data-edge-from="history" data-edge-to="v1" data-edge-label="借鉴历史" data-edge-key="1" data-edge-id="history-v1">
@@ -631,12 +644,16 @@ rect.c-bg-rect { fill: var(--bg); }
           <text x="844.8" y="503" class="t-edge-dashed" font-size="8" text-anchor="middle">发现偏差</text>
         </g>
         <g data-edge-from="revise" data-edge-to="candidate" data-edge-label="重做候选并复试" data-edge-key="10" data-edge-id="revise-candidate">
-          <rect x="1211.4" y="480" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="1250" y="490" class="t-edge-dashed" font-size="8" text-anchor="middle">重做候选并复试</text>
+          <rect x="951.4" y="507.5" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="990" y="517.5" class="t-edge-dashed" font-size="8" text-anchor="middle">重做候选并复试</text>
         </g>
         <g data-edge-from="feedback" data-edge-to="explain" data-edge-label="回流机制理解" data-edge-key="11" data-edge-id="feedback-explain">
           <rect x="131.2" y="375" width="67.6" height="14" rx="3" class="c-mask"/>
           <text x="165" y="385" class="t-edge-dashed" font-size="8" text-anchor="middle">回流机制理解</text>
+        </g>
+        <g data-edge-from="explain" data-edge-to="dogfood" data-edge-label="共享底座缺口" data-edge-key="12" data-edge-id="explain-dogfood">
+          <rect x="1013.7" y="40" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="1047.5" y="50" class="t-edge-dashed" font-size="8" text-anchor="middle">共享底座缺口</text>
         </g>
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->

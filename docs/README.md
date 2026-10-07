@@ -16,6 +16,8 @@ Creator Lab 把三个工作台放在一个仓库里，各自独立使用，共�
 
 **workflow 是调出来的。** 把一项业务交给 workflow，先做一个最简单、能真跑的第一版，然后在同一份冻结输入上反复真跑，读 trace 和资产找到出问题的那一层，只改一处并升版本，再重跑对比。调的过程中逐步定下三件事：看哪些 trace 和资产，关键流程怎么划分、在工作台里怎么显示，哪些资产给用户看。
 
+真实任务也会产生项目层的 **dogfood issue**：Prompt、节点和流程等改法进入 workflow 调优；统一存储、新的 SDK 接入等能力缺口进入 agent-workflow 项目的判断与安排。两条路径通过任务证据、依赖、项目交付和业务复验相连，发现问题不等于本轮立即实施。
+
 - 通用方法：agent-workflow 的[调优循环](../vendor/agent-workflow/docs/tuning-loop.md)
 - 在创作上的具体做法：[核心思想](../workbenches/creation/docs/01-principles.md)、[调优手册](../workbenches/creation/docs/05-tuning.md)
 

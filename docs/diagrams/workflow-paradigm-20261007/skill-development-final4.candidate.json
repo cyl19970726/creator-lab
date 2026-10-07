@@ -5,7 +5,7 @@
     "title": "节点能力与 Skill：从实践到候选执行方案",
     "locale": "zh-CN",
     "quality_profile": "showcase",
-    "output": "docs/diagrams/workflow-paradigm-20261007/skill-development-final3.html",
+    "output": "docs/diagrams/workflow-paradigm-20261007/skill-development-final4.html",
     "legend": { "mode": "auto", "entries": {
       "external": { "label": "任务输入" },
       "database": { "label": "经验与证据" },
@@ -21,11 +21,12 @@
     { "id": "execute", "type": "cloud", "label": "执行与观察", "sublabel": "Harness 供工具、资产与记录", "pos": [550, 135], "size": [170, 70] },
     { "id": "explain", "type": "backend", "label": "解释机制和失败边界", "sublabel": "何以有效、何时失效", "pos": [790, 135], "size": [170, 70] },
     { "id": "extract", "type": "database", "label": "提炼有效机制与动作", "sublabel": "适用条件、判断与做法", "pos": [1030, 135], "size": [170, 70] },
-    { "id": "candidate", "type": "backend", "label": "候选执行方案", "sublabel": "Skill／Prompt+tools／运行基座", "pos": [1030, 360], "size": [170, 70] },
+    { "id": "candidate", "type": "backend", "label": "候选执行方案", "sublabel": "Skill／Prompt与工具／既有配置", "pos": [1030, 360], "size": [170, 70] },
     { "id": "trial", "type": "security", "label": "另一案例独立试用", "sublabel": "检验迁移与可理解性", "pos": [790, 360], "size": [170, 70] },
     { "id": "accept", "type": "security", "label": "有范围采用", "sublabel": "真实试用后选择并继续观察", "pos": [550, 360], "size": [170, 70] },
     { "id": "feedback", "type": "database", "label": "实际使用反馈", "sublabel": "新证据进入下一轮理解", "pos": [310, 360], "size": [170, 70] },
-    { "id": "revise", "type": "backend", "label": "按试用结果修订", "sublabel": "调整知识、边界或步骤", "pos": [790, 570], "size": [170, 70] }
+    { "id": "revise", "type": "backend", "label": "按试用结果修订", "sublabel": "调整知识、边界或步骤", "pos": [790, 570], "size": [170, 70] },
+    { "id": "dogfood", "type": "database", "label": "底座缺口→Dogfood issue", "sublabel": "项目评估；非本轮方法调优", "pos": [1030, 570], "size": [170, 70] }
   ],
   "connections": [
     { "id": "task-v1", "from": "task", "to": "v1" },
@@ -38,11 +39,12 @@
     { "id": "trial-accept", "from": "trial", "to": "accept", "label": "可迁移", "variant": "emphasis" },
     { "id": "accept-feedback", "from": "accept", "to": "feedback", "label": "实际使用" },
     { "id": "trial-revise", "from": "trial", "to": "revise", "label": "发现偏差", "variant": "dashed" },
-    { "id": "revise-candidate", "from": "revise", "to": "candidate", "label": "重做候选并复试", "variant": "dashed", "fromSide": "right", "toSide": "right", "via": [[1250, 605], [1250, 395]] },
-    { "id": "feedback-explain", "from": "feedback", "to": "explain", "label": "回流机制理解", "variant": "dashed", "fromSide": "left", "toSide": "bottom", "via": [[20, 395], [20, 260], [875, 260]] }
+    { "id": "revise-candidate", "from": "revise", "to": "candidate", "label": "重做候选并复试", "variant": "dashed", "fromSide": "right", "toSide": "bottom", "via": [[990, 605], [990, 450], [1115, 450]] },
+    { "id": "feedback-explain", "from": "feedback", "to": "explain", "label": "回流机制理解", "variant": "dashed", "fromSide": "left", "toSide": "bottom", "via": [[20, 395], [20, 260], [875, 260]] },
+    { "id": "explain-dogfood", "from": "explain", "to": "dogfood", "label": "共享底座缺口", "variant": "dashed", "fromSide": "top", "toSide": "right", "via": [[875, 60], [1220, 60], [1220, 605]] }
   ],
   "cards": [
-    { "dot": "violet", "title": "候选方案可以组合", "items": ["节点可选 Skill 方法知识、Prompt+tools、上下文装配、Codex 或 Agent SDK 执行器与基础设施，按问题组合；不要求每节点都有 Skill。", "基础设施改善执行条件，不等同于知识包；写成 SKILL.md 或格式通过，也不等于业务有效。"] },
+    { "dot": "violet", "title": "候选与项目缺口分开", "items": ["已有能力内可组合 Skill、Prompt+tools、上下文，并选择已支持的 Codex 或 SDK 执行器；不要求每节点都有 Skill。", "新增 SDK 接入或统一存储缺口走 Dogfood issue 与项目排序；边界看职责及影响范围，不看耗时。", "Issue 提交不等于排期或交付；交付后须回原任务验证。"] },
     { "dot": "slate", "title": "Skill 与 Workflow／Harness", "items": ["Skill 是给 Agent 的可复用方法知识封装，可早写草案并经实践修订；新增 Skill 不会自动训练模型权重。", "Workflow 组织执行职责与产物／控制关系；harness 供工具、资产、上下文与记录。此图是目标范式，不声明具体 SDK 覆盖已完整。"] }
   ]
 }
