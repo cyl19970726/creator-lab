@@ -8,18 +8,19 @@ import { check, dependency, isTerminal, listOf, objectSchema, oneOf, stageAgent,
 export const CONTENT_REVISION = 'content-v2';
 export const contentStandardsPath = fileURLToPath(new URL('./standards/content.md', import.meta.url));
 
-const accountSchema = z.object({
+export const contentAccountSchema = z.object({
   name: z.string(), positioning: z.string(), currentAudience: z.string(),
   referencePieces: z.array(z.object({ title: z.string(), result: z.string(), lesson: z.string() }).strict()),
 }).strict();
-const materialSchema = z.object({ id: z.string().min(1), title: z.string().min(1), text: z.string().min(1) }).strict();
+export const contentMaterialSchema = z.object({ id: z.string().min(1), title: z.string().min(1), text: z.string().min(1) }).strict();
 const segmentSchema = z.object({ time: z.string(), voiceover: z.string().min(1), onScreenText: z.string(), visual: z.string().min(1) });
-const scriptSchema = z.object({
+export const contentSegmentSchema = segmentSchema;
+export const contentScriptSchema = z.object({
   title: z.string().min(1), coverText: z.string().min(1), estimatedSeconds: z.number().int().positive(),
   segments: z.array(segmentSchema).min(1), sourcesUsed: z.array(z.string()), changesFromPrevious: z.string(),
 });
 const beatSchema = z.object({ beat: z.string().min(1), says: z.string().min(1), evidence: z.array(z.string()), visualIdea: z.string().min(1) });
-const decisionSchema = z.object({
+export const contentDecisionSchema = z.object({
   workingTitle: z.string().min(1), coreQuestion: z.string().min(1), oneLineAnswer: z.string().min(1),
   audience: z.string().min(1), audienceChange: z.string().min(1), hook: z.string().min(1),
   beats: z.array(beatSchema).min(1), accountAngle: z.string().min(1),
@@ -27,7 +28,7 @@ const decisionSchema = z.object({
   openQuestions: z.array(z.string()), alternativesConsidered: z.array(z.object({ answer: z.string(), whyNotChosen: z.string() })),
   changesFromPrevious: z.string(),
 });
-const draftSchema = z.object({ decision: decisionSchema, script: scriptSchema });
+const draftSchema = z.object({ decision: contentDecisionSchema, script: contentScriptSchema });
 const noteSchema = z.object({
   id: z.string().min(1), title: z.string().min(1), url: z.string().min(1), publisher: z.string().min(1),
   date: z.string().min(1), keyPoints: z.array(z.string().min(1)).min(1), fillsGap: z.string().min(1), sourceKind: z.enum(['primary', 'secondary']),
@@ -54,6 +55,17 @@ const reviewSchema = z.object({
   questionCoverage: z.array(z.object({ question: z.string(), answerInDraft: z.string(), missing: z.string(), result: z.enum(['ok', 'weak', 'fail']) })),
   mustChange: z.array(z.string()), summary: z.string().min(1),
 });
+/** Zod contracts exported for the creation storage-contract registration package. */
+export const contentResearchAgentOutputSchema = researchSchema;
+export const contentDraftAgentOutputSchema = draftSchema;
+export const contentDraftStoredSchema = draftSchema.extend({ markdown: z.string() });
+export const contentReaderOutputSchema = readerSchema;
+export const contentFactCheckOutputSchema = factSchema;
+export const contentReviewAgentOutputSchema = reviewSchema;
+export const contentReviewStoredSchema = reviewSchema.extend({ guardFailures: z.array(z.string()).optional() });
+export const contentHumanFeedbackSchema = z.object({
+  reviewer: z.string().min(1), notes: z.array(z.string().min(1)).min(1),
+}).strict();
 export type ContentDraft = z.infer<typeof draftSchema>;
 export type ContentReview = z.infer<typeof reviewSchema> & { guardFailures?: string[] };
 export type ContentResearch = z.infer<typeof researchSchema>;
@@ -61,13 +73,16 @@ type ColdRead = z.infer<typeof readerSchema>;
 export type ContentFactCheck = z.infer<typeof factSchema>;
 type FactCheck = ContentFactCheck;
 
-export const contentInputSchema = z.object({
-  topicId: z.string().min(1), opportunity: z.string().min(1), account: accountSchema, form: z.string().min(1),
-  materials: z.array(materialSchema).min(1), standards: z.string().min(1), webResearch: z.boolean(),
+const contentInputFieldsSchema = z.object({
+  topicId: z.string().min(1), opportunity: z.string().min(1), account: contentAccountSchema, form: z.string().min(1),
+  materials: z.array(contentMaterialSchema).min(1), standards: z.string().min(1), webResearch: z.boolean(),
   readerGoal: z.string().min(1), requiredQuestions: z.array(z.string().min(1)).min(1),
   maxRevisions: z.number().int().min(0).max(5), maxSeconds: z.number().int().positive().optional(),
-  prior: z.object({ draft: draftSchema, humanReview: z.object({ reviewer: z.string().min(1), notes: z.array(z.string().min(1)).min(1) }).strict() }).strict().optional(),
-}).strict().superRefine((input, ctx) => {
+  prior: z.object({ draft: draftSchema, humanReview: contentHumanFeedbackSchema }).strict().optional(),
+}).strict();
+/** The non-material request fields bound to content roles in a workflow space. */
+export const contentOpportunitySchema = contentInputFieldsSchema.omit({ materials: true });
+export const contentInputSchema = contentInputFieldsSchema.superRefine((input, ctx) => {
   const ids = new Set<string>();
   for (const [index, material] of input.materials.entries()) {
     if (ids.has(material.id)) ctx.addIssue({ code: 'custom', path: ['materials', index, 'id'], message: `Duplicate material id: ${material.id}` });
@@ -201,15 +216,17 @@ export function contentAcceptanceFailures(input: ContentInput, review: ContentRe
   return failures;
 }
 
-export function createContentWorkflow(models: { worker: StageModel; judge: StageModel }): WorkflowDefinition<ContentInput, WorkflowTerminal<never>> {
-  const author = stageAgent<unknown, ContentDraft>(CONTENT_ROLES.author, models.judge, CONTENT_REVISION);
-  const reader = stageAgent<unknown, ColdRead>(CONTENT_ROLES.reader, models.worker, CONTENT_REVISION);
-  const checker = stageAgent<unknown, FactCheck>(CONTENT_ROLES.checker, models.worker, CONTENT_REVISION);
-  const editor = stageAgent<unknown, ContentReview>(CONTENT_ROLES.editor, models.judge, CONTENT_REVISION);
+export type ContentRoleSpecs = Record<keyof typeof CONTENT_ROLES, RoleSpec>;
+
+export function createContentWorkflow(models: { worker: StageModel; judge: StageModel }, roles: ContentRoleSpecs = CONTENT_ROLES): WorkflowDefinition<ContentInput, WorkflowTerminal<never>> {
+  const author = stageAgent<unknown, ContentDraft>(roles.author, models.judge, CONTENT_REVISION);
+  const reader = stageAgent<unknown, ColdRead>(roles.reader, models.worker, CONTENT_REVISION);
+  const checker = stageAgent<unknown, FactCheck>(roles.checker, models.worker, CONTENT_REVISION);
+  const editor = stageAgent<unknown, ContentReview>(roles.editor, models.judge, CONTENT_REVISION);
   return workflow<ContentInput, WorkflowTerminal<never>>('creation.content', { revision: CONTENT_REVISION }, async (ctx, raw) => {
     const input = contentInputSchema.parse(raw);
     const researcher = stageAgent<unknown, ContentResearch>(
-      { ...CONTENT_ROLES.researcher, webSearch: input.webResearch }, models.worker, CONTENT_REVISION,
+      { ...roles.researcher, webSearch: input.webResearch }, models.worker, CONTENT_REVISION,
     );
     let research: Published<ContentResearch> | undefined;
     let draft: Published<ContentDraft> | undefined;
@@ -224,7 +241,7 @@ export function createContentWorkflow(models: { worker: StageModel; judge: Stage
         const previousDraft = draft;
         const previousReview = review;
         const found = await ctx.phase(`content-research-${round}`, {
-          title: `研究编辑 v${round + 1}`, purpose: CONTENT_ROLES.researcher.guards, order: round * 20 + 1,
+          title: `研究编辑 v${round + 1}`, purpose: roles.researcher.guards, order: round * 20 + 1,
           expectedArtifacts: [{ role: 'research', title: '材料对答', required: true }],
         }, async phase => {
           const value = await phase.agent('research', researcher, {
@@ -250,7 +267,7 @@ export function createContentWorkflow(models: { worker: StageModel; judge: Stage
       const previousDraft = draft;
       const previousReview = review;
       const written = await ctx.phase(`content-draft-${round}`, {
-        title: `内容与完整稿 v${round + 1}`, purpose: CONTENT_ROLES.author.guards, order: round * 20 + 3,
+        title: `内容与完整稿 v${round + 1}`, purpose: roles.author.guards, order: round * 20 + 3,
         expectedArtifacts: [{ role: 'draft', title: '内容决定与完整稿', required: true }],
       }, async phase => {
         const value = await phase.agent('write', author, { ...original,
@@ -291,7 +308,7 @@ export function createContentWorkflow(models: { worker: StageModel; judge: Stage
       });
       if (isTerminal(checked)) return checked;
       const edited = await ctx.phase(`content-editor-${round}`, {
-        title: `主编 v${round + 1}`, purpose: CONTENT_ROLES.editor.guards, order: round * 20 + 7,
+        title: `主编 v${round + 1}`, purpose: roles.editor.guards, order: round * 20 + 7,
         expectedArtifacts: [{ role: 'review', title: '主编意见', required: true }],
       }, async phase => {
         const value = await phase.agent('edit', editor, { ...original, draft: currentDraft.value, research: currentResearch.value,

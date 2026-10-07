@@ -1,6 +1,8 @@
 # 创作工作台
 
-两条产品线，共用根目录的 agent-workflow：
+创作提供业务流程、工具、标准和作品展示，通用执行、PostgreSQL 资产 harness、一般 Agent SDK、版本评价与工作台由共享 [agent-workflow](../../vendor/agent-workflow/docs/product.md)提供。新增的 Space 接入使用共享 PG 存储、节点合同与只读控制台，见[接入与示例命令](docs/README.md#postgresql-space-接入)。共享目标尚未全部实现；原[本地工作台原型](docs/03-architecture/business-workbench.md)仍使用 SQLite、文件和 Codex，未自动迁移。
+
+现有两个入口仍保留，下文描述当前用法：
 
 - **阶段 workflow（主线）：** 内容形成 → B3 制作。选题、研究和完整稿在同一次内容运行中反复修改，完整内容验收后通过作品档案交接给制作。旧 B1/B2 保留历史可读。实现与内容质量分别验证；从[创作文档导览](docs/README.md)开始读。
 - **文章应用：** 建立账号工作区和作品，定义内容、写完整文章、对精确稿件独立复核，必要时在设定上限内自动修订；用户再选择、接受、退回或提出新一轮修订意见。网页 + API + 独立 worker，下文是它的启动方式。接口见[文章应用合同](docs/03-architecture/article-app.md)。真实 SDK 首稿已跑通；单题运行和模型自审不代表内容方法已验证。

@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "业务方法 Workflow：真实执行、采用与回调优",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/diagrams/workflow-paradigm-20261007/workflow-lifecycle-final4.html",
+    "legend": { "mode": "auto", "entries": {
+      "external": { "label": "业务输入" },
+      "database": { "label": "证据与资产" },
+      "backend": { "label": "方法与诊断" },
+      "security": { "label": "验证与决定" },
+      "cloud": { "label": "稳定服务" }
+    } }
+  },
+  "components": [
+    { "id": "intent", "type": "external", "label": "新业务意图", "sublabel": "目的、交付与标准", "pos": [60, 80], "size": [170, 64] },
+    { "id": "history", "type": "database", "label": "历史问题与证据", "sublabel": "已有案例和失败经验", "pos": [60, 190], "size": [170, 64] },
+    { "id": "v1", "type": "backend", "label": "最小真实方法 v1", "sublabel": "组织职责、产物与控制", "pos": [310, 135], "size": [170, 70] },
+    { "id": "run", "type": "database", "label": "真实案例与阶段资产", "sublabel": "Harness 供工具、上下文与记录", "pos": [550, 135], "size": [170, 70] },
+    { "id": "diagnose", "type": "backend", "label": "阅读评价与原因诊断", "sublabel": "区分单案与方法问题", "pos": [790, 135], "size": [170, 70] },
+    { "id": "single", "type": "backend", "label": "单案修订", "sublabel": "修这次产物，不升方法版", "pos": [1030, 135], "size": [170, 70] },
+    { "id": "candidate", "type": "backend", "label": "Workflow 候选改法", "sublabel": "Prompt／工具／节点／流程配置", "pos": [790, 350], "size": [170, 70] },
+    { "id": "verify", "type": "security", "label": "代表案例验证", "sublabel": "改善、退化、代价与边界", "pos": [550, 350], "size": [170, 70] },
+    { "id": "adopt", "type": "security", "label": "明确采用", "sublabel": "用户或明确受托者作决定", "pos": [310, 350], "size": [170, 70] },
+    { "id": "stable", "type": "cloud", "label": "稳定版继续服务", "sublabel": "候选验证时仍处理新案例", "pos": [70, 350], "size": [170, 70] },
+    { "id": "observe", "type": "database", "label": "持续观察与反馈", "sublabel": "跨案例成果、例外与成本", "pos": [70, 560], "size": [170, 70] },
+    { "id": "tune", "type": "backend", "label": "有证据再回调优", "sublabel": "重新诊断，形成下一候选", "pos": [310, 560], "size": [170, 70] },
+    { "id": "reject", "type": "security", "label": "不合格：实验或停止", "sublabel": "继续实验时返回候选", "pos": [550, 560], "size": [170, 70] },
+    { "id": "dogfood", "type": "database", "label": "Dogfood issue", "sublabel": "共享底座缺口：证据与影响", "pos": [1030, 350], "size": [170, 70] },
+    { "id": "project", "type": "security", "label": "项目评估／排期／交付", "sublabel": "逐道决定；可暂缓", "pos": [1030, 560], "size": [170, 70] },
+    { "id": "retest", "type": "cloud", "label": "回原业务任务验证", "sublabel": "基础能力交付后复验", "pos": [790, 560], "size": [170, 70] }
+  ],
+  "connections": [
+    { "id": "new-to-v1", "from": "intent", "to": "v1" },
+    { "id": "history-to-v1", "from": "history", "to": "v1", "label": "复用已有认识" },
+    { "id": "v1-run", "from": "v1", "to": "run" },
+    { "id": "run-diagnose", "from": "run", "to": "diagnose" },
+    { "id": "diagnose-single", "from": "diagnose", "to": "single", "label": "仅此案", "variant": "dashed" },
+    { "id": "diagnose-candidate", "from": "diagnose", "to": "candidate", "label": "共性原因", "fromSide": "bottom", "toSide": "top" },
+    { "id": "diagnose-dogfood", "from": "diagnose", "to": "dogfood", "label": "共享底座缺口", "variant": "dashed" },
+    { "id": "diagnose-verify", "from": "diagnose", "to": "verify", "label": "v1 可直接验证", "variant": "dashed" },
+    { "id": "candidate-verify", "from": "candidate", "to": "verify" },
+    { "id": "verify-adopt", "from": "verify", "to": "adopt", "label": "结果供决定", "variant": "emphasis" },
+    { "id": "adopt-stable", "from": "adopt", "to": "stable" },
+    { "id": "stable-observe", "from": "stable", "to": "observe" },
+    { "id": "observe-tune", "from": "observe", "to": "tune", "label": "共性证据", "variant": "dashed" },
+    { "id": "tune-diagnose", "from": "tune", "to": "diagnose", "label": "回到诊断", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "via": [[395, 690], [1240, 690], [1240, 40], [875, 40]] },
+    { "id": "verify-reject", "from": "verify", "to": "reject", "label": "未达标", "variant": "security" },
+    { "id": "reject-candidate", "from": "reject", "to": "candidate", "label": "继续实验", "variant": "dashed", "fromSide": "right", "toSide": "bottom", "via": [[750, 595], [750, 445], [875, 445]] },
+    { "id": "stable-new-run", "from": "stable", "to": "run", "label": "稳定版生产", "variant": "dashed", "fromSide": "left", "toSide": "top", "via": [[20, 385], [20, 25], [635, 25]] },
+    { "id": "dogfood-project", "from": "dogfood", "to": "project", "label": "项目排序", "variant": "dashed" },
+    { "id": "project-retest", "from": "project", "to": "retest", "label": "交付后", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "两种处理路径", "items": ["现有能力内的 Prompt、工具、节点或流程问题走 Workflow 候选、代表案例验证和明确采用。", "共享底座缺口形成带证据与影响的 Dogfood issue；提交不等于排期，排期不等于交付，项目可暂缓。", "基础能力交付后回原业务任务复验；本轮不必等待所有项目 issue。"] },
+    { "dot": "slate", "title": "概念边界", "items": ["Workflow 组织执行职责、产物及控制关系；harness 提供工具、资产、上下文和执行记录。", "这是目标业务方法范式，不表示当前代码已全实现，也不是界面任务清单。"] }
+  ]
+}

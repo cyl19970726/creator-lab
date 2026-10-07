@@ -23,3 +23,13 @@ __pycache__/
 
 # Generated documentation site (pnpm docs:build)
 docs/site/
+
+# Private session forensics and machine-specific editor launch settings
+session-maps/
+.claude/launch.json
+
+# Local diagram render diagnostics (keep published specs, HTML and SVG)
+docs/diagrams/**/*.browser-check.json
+docs/diagrams/**/*.delivery*.json
+docs/diagrams/**/*.finalize*.json
+docs/diagrams/**/*.visual-check.*

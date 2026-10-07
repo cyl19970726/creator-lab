@@ -86,7 +86,7 @@ describe('B3 video identity', () => {
     writeFileSync(rendered.output, 'later run');
     expect(findRunVideo(runDir, true)).toBe('video.mp4');
     expect(readFileSync(path.join(runDir, 'video.mp4'), 'utf8')).toBe('this run');
-    expect(JSON.parse(readFileSync(path.join(runDir, 'video.json'), 'utf8'))).toMatchObject({ producerStepRunId: 'artifact-1', source: rendered.output });
+    expect(JSON.parse(readFileSync(path.join(runDir, 'video.json'), 'utf8'))).toMatchObject({ producerStepRunId: 'artifact-1', source: rendered.output, bytes: 8, sha256: createHash('sha256').update('this run').digest('hex') });
   });
 
   test('historical run-scoped file is used only when an artifact exists and the choice is unique', () => {

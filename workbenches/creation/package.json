@@ -6,7 +6,7 @@
     "dev": "tsx apps/api/main.ts",
     "dev:web": "vite --config apps/web/vite.config.ts",
     "worker": "tsx apps/worker/main.ts",
-    "build": "pnpm typecheck && vite build --config apps/web/vite.config.ts",
+    "build": "pnpm typecheck && vite build --config apps/web/vite.config.ts && vite build --config apps/workbench/web/vite.config.ts && vite build --config apps/space-workbench/web/vite.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "test:publish": "node --test tooling/social-publish/*.test.mjs",
@@ -16,7 +16,16 @@
     "stage:trace": "tsx scripts/stage-trace.ts",
     "stage:eval-reviewer": "tsx scripts/eval-reviewer.ts",
     "stage:workbench": "tsx scripts/stage-workbench.ts",
-    "stage:accept": "tsx scripts/stage-accept.ts"
+    "stage:accept": "tsx scripts/stage-accept.ts",
+    "workbench": "tsx apps/workbench/main.ts",
+    "workbench:worker": "tsx apps/workbench/worker.ts",
+    "workbench:web": "vite --config apps/workbench/web/vite.config.ts",
+    "workbench:backup": "tsx scripts/workbench-backup.ts",
+    "space:demo": "tsx scripts/space-demo.ts",
+    "space:console": "tsx scripts/space-console.ts",
+    "content:workbench": "tsx scripts/content-workbench.ts",
+    "content:space": "tsx scripts/content-space.ts",
+    "space:workbench": "tsx scripts/space-workbench.ts"
   },
   "dependencies": {
     "markdown-it": "14.1.0",
@@ -31,7 +40,16 @@
     "react-dom": "^19.1.0",
     "zod": "^4.1.0",
     "fs-ext": "2.1.1",
-    "@openai/codex-sdk": "0.154.0"
+    "@openai/codex-sdk": "0.154.0",
+    "@signal-room/workflow-space-contracts": "workspace:*",
+    "@signal-room/workflow-spaces": "workspace:*",
+    "@signal-room/workflow-postgres": "workspace:*",
+    "pg": "8.23.1",
+    "@signal-room/workflow-agent-sdk": "workspace:*",
+    "@signal-room/workflow-space-api": "workspace:*",
+    "@signal-room/workflow-workbench-ui": "workspace:*",
+    "react-router": "7.18.4",
+    "@tanstack/react-query": "^5.0.0"
   },
   "devDependencies": {
     "esbuild": "0.25.9",
@@ -45,7 +63,8 @@
     "@types/react-dom": "^19.1.0",
     "@types/fs-ext": "^2.0.3",
     "@vitejs/plugin-react": "^5.0.0",
-    "@types/markdown-it": "14.2.0"
+    "@types/markdown-it": "14.2.0",
+    "@types/pg": "8.23.1"
   },
   "engines": {
     "node": ">=24 <25"
