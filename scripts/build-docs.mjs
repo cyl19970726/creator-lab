@@ -19,8 +19,12 @@ const NAV = [
   { title: 'Creator Lab', pages: [['docs/README.md', 0, '导览'], ['docs/overview.md', 0, '三个工作台'], ['README.md', 0, '仓库使用说明'], ['docs/migration.md', 0, '迁移记录']] },
   { title: 'agent-workflow', pages: [
     ['vendor/agent-workflow/README.md', 0, '首页与核心思想'],
+    ['docs/product-understanding.md', 0, '产品认知与设计推导'],
     ['vendor/agent-workflow/docs/product.md', 0, '产品定位与目标'],
-    ['docs/product-understanding.md', 1, '产品认知与逐层设计'],
+    ['vendor/agent-workflow/docs/designing-workflows.md', 0, '方法设计'],
+    ['vendor/agent-workflow/docs/evaluating-workflows.md', 1, '方法评估'],
+    ['vendor/agent-workflow/docs/optimizing-workflows.md', 1, '方法优化'],
+    ['vendor/agent-workflow/docs/tuning-loop.md', 1, '调优循环'],
     ['vendor/agent-workflow/docs/workbench-presentation.md', 0, 'Space 产品与图中心交互'],
     ['vendor/agent-workflow/docs/archify-viewer.md', 1, 'Archify 查看器使用'],
     ['vendor/agent-workflow/docs/architecture.md', 0, '架构与职责'],
@@ -32,10 +36,6 @@ const NAV = [
     ['vendor/agent-workflow/docs/space-storage.md', 1, '已实现的 Space 存储与接入'],
     ['vendor/agent-workflow/docs/postgres-sdk-plan.md', 1, '存储后端与 SDK 方案'],
     ['vendor/agent-workflow/docs/postgres-storage.md', 1, '已实现的 PG 执行账本'],
-    ['vendor/agent-workflow/docs/tuning-loop.md', 0, '调优循环'],
-    ['vendor/agent-workflow/docs/designing-workflows.md', 0, '设计'],
-    ['vendor/agent-workflow/docs/evaluating-workflows.md', 0, '评估'],
-    ['vendor/agent-workflow/docs/optimizing-workflows.md', 0, '优化'],
     ['vendor/agent-workflow/docs/getting-started.md', 0, '快速开始'],
     ['vendor/agent-workflow/docs/writing-workflows.md', 0, '编写工作流与 API'],
     ['vendor/agent-workflow/docs/codex-and-skills.md', 0, 'Codex 与 Skills'],
@@ -191,6 +191,7 @@ article h1{font-size:30px;line-height:1.3;margin:0 0 20px}
 article h2{font-size:22px;margin:40px 0 12px;padding-top:12px;border-top:1px solid var(--line)}
 article h3{font-size:18px;margin:28px 0 8px}
 article p,article li{max-width:46em}
+article img{max-width:100%;height:auto}
 code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
 pre{background:var(--code);padding:14px 16px;border-radius:6px;overflow-x:auto;font-size:13.5px;line-height:1.55}
 pre code{background:none;padding:0}
