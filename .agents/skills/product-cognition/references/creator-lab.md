@@ -13,6 +13,8 @@
 
 需要理解 agent-workflow 的核心范式时，继续读共享 `docs/designing-workflows.md`、`docs/tuning-loop.md`、`docs/optimizing-workflows.md` 和 `docs/codex-and-skills.md`。恢复“意图或历史→阶段/步骤/资产→合同内自主执行→评价归因→候选与验证→稳定服务→反馈”的因果链，并说明 skill、工具和 harness 分工。产品认知不应只取前端抱怨作为分析范围。
 
+调优的上层对象是候选执行方案。它可以改变流程结构、skill、Prompt＋tools、上下文、Codex／Agent SDK 执行器或基础设施，也可以组合变化；不要把所有候选都收窄为 skill。知识包、节点配置与运行环境各有责任，实际有效配置及条件变化须可追溯，效果需要真实业务验证。
+
 按实际问题选择阅读，不要求每次全读。当前状态有争议时回到相关产物、代码或运行现场，注明核对时点。
 
 `docs/product-understanding.md` 先独立说明这一项目的深层产品认知，再给出整体设计推导与取舍；更新现行事实时同时核对上述权威入口，避免新增平行路线图。公开项目文档不写私有稿件、原始trace、数据库内容或凭证。
