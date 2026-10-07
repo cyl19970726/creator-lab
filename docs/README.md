@@ -2,9 +2,7 @@
 
 Creator Lab 把三个工作台放在一个仓库里，各自独立使用，共享一份 agent-workflow。共享项目正在从现有执行包扩展为工作流执行与迭代底座：PostgreSQL 资产管理、一般 Agent SDK、评价比较与通用工作台都属于它的目标范围。creation 提供业务流程与扩展；研究和分析保留当前实现，不在本轮强制迁移。
 
-先读共享项目的[产品定位](../vendor/agent-workflow/docs/product.md)、[Space 工作台产品与交互](../vendor/agent-workflow/docs/workbench-presentation.md)、[架构与职责](../vendor/agent-workflow/docs/architecture.md)、[建设状态](../vendor/agent-workflow/docs/harness-roadmap.md)，再进入具体业务。Space 按工作流生命周期组织方法、执行、运营观察和版本演进画布；业务与资产提供跨案例工作入口，评价就近展开。当前整体产品仍在整改，不将历史局部验收视为完整交付。
-
-理解这些选择背后的原因，读[产品认知与逐层设计](product-understanding.md)：先讲深层目标、使用方式、价值积累和成功依据，再从整体工作台推到导航、各入口主体和具体操作，最后说明阶段取舍。这是设计推导，不能替代现行产品合同或实现状态。
+完整理解先读[产品认知、核心机制与设计推导](product-understanding.md)：业务方法为什么要这样形成，workflow 与 skill 如何开发和持续演化，由此需要哪些产品机制，再怎样组织使用。正式要求见[产品定义](../vendor/agent-workflow/docs/product.md)，人的使用方式见[工作台交互](../vendor/agent-workflow/docs/workbench-presentation.md)，实现分工见[架构](../vendor/agent-workflow/docs/architecture.md)，实际完成情况只查[建设状态](../vendor/agent-workflow/docs/harness-roadmap.md)。当前整体产品仍在整改，不将历史局部验收视为完整交付。
 
 | 工作台 | 做什么 | 从这里读 |
 | --- | --- | --- |
@@ -23,12 +21,13 @@ Creator Lab 把三个工作台放在一个仓库里，各自独立使用，共�
 
 ## 文档怎么组织
 
-通用产品和技术合同在 agent-workflow 维护；业务文档说明领域流程、schema、阅读器、标准与接入。阅读顺序是**产品目的 → 工作台使用方式 → 技术架构 → 唯一实现状态 → 业务接入与运行**。文档不按每轮对话追加一套平级架构；现行定义修订在原页，日期化计划和实施记录保留历史证据。
+通用产品和技术合同在 agent-workflow 维护；业务文档说明领域流程、schema、阅读器、标准与接入。整体论证顺序是**产品认知与范式 → 方法形成和生命周期 → 产品责任与机制 → 信息架构与交互 → 技术实现 → 当前证据与阶段取舍**。按问题直接进入相应文档，不要求每次全部通读。现行定义修订在原页，日期化计划和实施记录保留历史证据，避免每轮对话都在旧叙事后追加另一套答案。
 
 | 要回答的问题 | 唯一主要入口 |
 | --- | --- |
 | 产品是什么、为谁解决什么问题 | [product.md](../vendor/agent-workflow/docs/product.md) |
-| 深层目标如何推到使用场景、整体设计和阶段取舍 | [产品认知与逐层设计](product-understanding.md) |
+| 核心范式、skill/workflow 生命周期怎样推导产品机制与使用结构 | [产品认知与设计推导](product-understanding.md) |
+| 实际怎样形成首版、评价方法、验证并采用改法 | [设计](../vendor/agent-workflow/docs/designing-workflows.md)、[评估](../vendor/agent-workflow/docs/evaluating-workflows.md)、[优化](../vendor/agent-workflow/docs/optimizing-workflows.md)与[调优循环](../vendor/agent-workflow/docs/tuning-loop.md) |
 | Space 长什么样、图与各类对象如何使用 | [workbench-presentation.md](../vendor/agent-workflow/docs/workbench-presentation.md) |
 | 模块、包、服务与业务如何分工 | [architecture.md](../vendor/agent-workflow/docs/architecture.md) |
 | 前端如何分包、通信、分批落地 | [前端架构](../vendor/agent-workflow/docs/space-frontend-architecture.md)与[实施计划](../vendor/agent-workflow/docs/space-frontend-implementation-plan.md) |
