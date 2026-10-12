@@ -14,13 +14,14 @@ import {
   type ParsedCreateCreatorResearchBatchInput
 } from "../../../contracts/index.js";
 import type { CreatorResearchBatchRepository } from "./batch-repository.js";
+import type { Awaitable } from "./awaitable.js";
 
 export interface CreatorResearchRunIntake {
-  create(profileUrl: string, adapter: CreatorAcquisitionAdapter): CreatorResearchRun;
+  create(profileUrl: string, adapter: CreatorAcquisitionAdapter): Awaitable<CreatorResearchRun>;
 }
 
 export interface CreatorResearchRunReader {
-  get(runId: string): CreatorResearchRun | null;
+  get(runId: string): Awaitable<CreatorResearchRun | null>;
 }
 
 function commandHash(input: ParsedCreateCreatorResearchBatchInput): string {
@@ -82,14 +83,15 @@ export class CreatorResearchBatchService {
     private readonly runs: CreatorResearchRunReader
   ) {}
 
-  create(input: CreateCreatorResearchBatchInput): CreatorResearchBatchProjection {
+  async create(input: CreateCreatorResearchBatchInput): Promise<CreatorResearchBatchProjection> {
     const parsed = createCreatorResearchBatchInputSchema.parse(input);
     const hash = commandHash(parsed);
-    const prior = this.batches.getByOperationKey(parsed.operationKey, hash);
+    const prior = await this.batches.getByOperationKey(parsed.operationKey, hash);
     if (prior) return this.project(prior);
 
-    return this.project(this.batches.create(() => {
-      const runIds = parsed.creators.map((creator) => this.intake.create(creator.profileUrl, creator.adapter).id);
+    return this.project(await this.batches.create(async () => {
+      const runIds: string[] = [];
+      for (const creator of parsed.creators) runIds.push((await this.intake.create(creator.profileUrl, creator.adapter)).id);
       return creatorResearchBatchSchema.parse({
         schemaVersion: "creator-research-batch@1", id: randomUUID(), name: parsed.name,
         runIds, createdAt: new Date().toISOString()
@@ -97,19 +99,20 @@ export class CreatorResearchBatchService {
     }, parsed.operationKey, hash));
   }
 
-  get(batchId: string): CreatorResearchBatchProjection | null {
-    const batch = this.batches.get(batchId);
+  async get(batchId: string): Promise<CreatorResearchBatchProjection | null> {
+    const batch = await this.batches.get(batchId);
     return batch ? this.project(batch) : null;
   }
 
-  list(limit = 50): CreatorResearchBatchProjection[] {
-    return this.batches.list(limit).map((batch) => this.project(batch));
+  async list(limit = 50): Promise<CreatorResearchBatchProjection[]> {
+    const batches = await this.batches.list(limit);
+    return Promise.all(batches.map((batch) => this.project(batch)));
   }
 
-  private project(batch: CreatorResearchBatch): CreatorResearchBatchProjection {
+  private async project(batch: CreatorResearchBatch): Promise<CreatorResearchBatchProjection> {
     const counts = emptyCounts();
-    const items = batch.runIds.map((runId, index) => {
-      const run = this.runs.get(runId);
+    const items = await Promise.all(batch.runIds.map(async (runId, index) => {
+      const run = await this.runs.get(runId);
       if (!run) throw new Error(`creator research batch ${batch.id} references missing run ${runId}`);
       increment(counts, run.status);
       const maturity = runMaturity(run);
@@ -128,7 +131,7 @@ export class CreatorResearchBatchService {
         dashboardPath: run.dashboardPath,
         updatedAt: run.updatedAt
       };
-    });
+    }));
     const totalRuns = items.length;
     const completedRuns = counts.reviewable + counts.ready + counts.failed + counts.stale;
     const dossierReadyRuns = items.filter((item) => item.maturity !== "incomplete").length;

@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type AgentRunner, workflowFingerprint } from '@signal-room/workflow';
 import { PostgresBlobStore, WorkflowExecutorRegistry, WorkflowSpaceService, migrateWorkflowSpaces } from '@signal-room/workflow-spaces';
 import { SchemaRegistry } from '@signal-room/workflow-space-contracts';
-import { createContentWorkbench } from '../src/spaces/content-workbench.js';
+import { createContentWorkbench as createWorkbench } from '../src/spaces/content-workbench.js';
 import { createContentDeployment } from '../src/spaces/content-method.js';
 import { registerCreationSchemas } from '../src/spaces/contracts.js';
 import { creationAssetReaders } from '../src/spaces/readers.js';
@@ -38,6 +38,12 @@ const editorial = { verdict: 'pass', route: 'pass',
   questionCoverage: [{ question: input.requiredQuestions[0], answerInDraft: '评分改变下一次尝试', missing: '', result: 'ok' }],
   mustChange: [], summary: '虚构流程已讲清。' };
 let calls = 0;
+const activeHosts: Array<{ stop(): Promise<void> }> = [];
+function createContentWorkbench(...args: Parameters<typeof createWorkbench>) {
+  const host = createWorkbench(...args);
+  activeHosts.push(host);
+  return host;
+}
 const runner: AgentRunner = { async run(request) {
   calls++;
   const output: Record<string, unknown> = {
@@ -64,6 +70,13 @@ suite('CONTENT PostgreSQL business service', () => {
     const blobs = new PostgresBlobStore(pool); await blobs.migrate();
     service = new WorkflowSpaceService(pool, blobs, owner, { readerIds: Object.keys(creationAssetReaders),
       resultRoleIds: ['final-draft', 'research', 'cold-read', 'fact-check', 'editorial-review'] });
+  });
+  beforeEach(() => { calls = 0; });
+  afterEach(async () => {
+    const stopped = await Promise.allSettled(activeHosts.splice(0).map(host => host.stop()));
+    calls = 0;
+    const failures = stopped.filter(result => result.status === 'rejected').map(result => result.reason);
+    if (failures.length) throw new AggregateError(failures, 'CONTENT test hosts failed to stop');
   });
   afterAll(async () => { await pool?.end(); });
 

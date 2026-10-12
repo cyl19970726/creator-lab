@@ -112,8 +112,8 @@ async function settledCall<Input, Output>(ctx: WorkflowContext, key: string, def
   return result;
 }
 
-type SimpleReviewWorkflowVersion = { analyze: "v5" | "v6" | "v7" | "v8" | "v9"; build: "v1" | "v2" | "v3";
-  review: "v2" | "v3" | "v4"; repair: "v2" | "v3" | "v4"; retryFeedback: boolean; retryLink: boolean };
+type SimpleReviewWorkflowVersion = { analyze: "v5" | "v6" | "v7" | "v8" | "v9" | "v10" | "v11"; build: "v1" | "v2" | "v3" | "v4" | "v5";
+  review: "v2" | "v3" | "v4" | "v5" | "v6"; repair: "v2" | "v3" | "v4" | "v5" | "v6"; retryFeedback: boolean; retryLink: boolean };
 
 function createSimplePostWorkflowSuite(version: SimpleReviewWorkflowVersion, validators: PostWorkflowValidators,
   agents: Pick<ResearchAgentDefinitions, "postBuilder" | "postReviewer" | "postRepair" | "postEvaluationRepair">,
@@ -217,8 +217,8 @@ export function createPostWorkflowSuiteV9(validators: PostWorkflowValidators,
   return createSimplePostWorkflowSuite({ analyze: "v9", build: "v3", review: "v4", repair: "v4", retryFeedback: true, retryLink: true }, validators, agents, options);
 }
 
-function createSimpleCreatorSynthesisWorkflowSuite(version: { analyze: "v4" | "v5" | "v6" | "v7"; build: "v1" | "v2";
-  review: "v2" | "v3" | "v4"; repair: "v2" | "v3"; retryFeedback: boolean; retryLink: boolean }, validators: CreatorSynthesisWorkflowValidators,
+function createSimpleCreatorSynthesisWorkflowSuite(version: { analyze: "v4" | "v5" | "v6" | "v7" | "v8"; build: "v1" | "v2" | "v3";
+  review: "v2" | "v3" | "v4" | "v5"; repair: "v2" | "v3" | "v4"; retryFeedback: boolean; retryLink: boolean }, validators: CreatorSynthesisWorkflowValidators,
   agents: Pick<ResearchAgentDefinitions, "creatorBuilder" | "creatorReviewer" | "creatorRepair">,
   options: SimpleCreatorWorkflowSuiteOptions = {}) {
   const legacy = createCreatorSynthesisWorkflowSuite(validators, agents, {}, { build: version.build });
@@ -294,4 +294,24 @@ export function createCreatorSynthesisWorkflowSuiteV7(validators: CreatorSynthes
   agents: Pick<ResearchAgentDefinitions, "creatorBuilder" | "creatorReviewer" | "creatorRepair">,
   options: SimpleCreatorWorkflowSuiteOptions = {}) {
   return createSimpleCreatorSynthesisWorkflowSuite({ analyze: "v7", build: "v2", review: "v4", repair: "v3", retryFeedback: true, retryLink: true }, validators, agents, options);
+}
+
+/** Explicit Responses tools and prompts use new identities; historical Codex runs remain separate. */
+export function createPostWorkflowSuiteV10(validators: PostWorkflowValidators,
+  agents: Pick<ResearchAgentDefinitions, "postBuilder" | "postReviewer" | "postRepair" | "postEvaluationRepair">,
+  options: SimplePostWorkflowSuiteOptions = {}) {
+  return createSimplePostWorkflowSuite({ analyze: "v10", build: "v4", review: "v5", repair: "v5", retryFeedback: true, retryLink: true }, validators, agents, options);
+}
+
+export function createCreatorSynthesisWorkflowSuiteV8(validators: CreatorSynthesisWorkflowValidators,
+  agents: Pick<ResearchAgentDefinitions, "creatorBuilder" | "creatorReviewer" | "creatorRepair">,
+  options: SimpleCreatorWorkflowSuiteOptions = {}) {
+  return createSimpleCreatorSynthesisWorkflowSuite({ analyze: "v8", build: "v3", review: "v5", repair: "v4", retryFeedback: true, retryLink: true }, validators, agents, options);
+}
+
+/** Validated draft receipts and targeted patches preserve full reports without duplicate generation. */
+export function createPostWorkflowSuiteV11(validators: PostWorkflowValidators,
+  agents: Pick<ResearchAgentDefinitions, "postBuilder" | "postReviewer" | "postRepair" | "postEvaluationRepair">,
+  options: SimplePostWorkflowSuiteOptions = {}) {
+  return createSimplePostWorkflowSuite({ analyze: "v11", build: "v5", review: "v6", repair: "v6", retryFeedback: true, retryLink: true }, validators, agents, options);
 }

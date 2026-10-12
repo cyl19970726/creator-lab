@@ -28,11 +28,19 @@ export function validateVideoDepth(input: unknown, duration: number, ids: Set<st
     cursor = end;
     checkRefs(segment.evidenceRefs, `builderLenses.visualEditing.openingAnalysis.segments[${index}].evidenceRefs`);
     const times = [...new Set(segment.frameRefs.map(ref => frames.get(ref)).filter((time): time is number => time !== undefined))].sort((a,b) => a-b);
-    if (!times.length || times[0]! - start > .55 || end - times.at(-1)! > .55 ||
-        times.some((time,index) => index > 0 && time - times[index-1]! > 1.01)) fail("FRAME_STRIP_COVERAGE");
+    const gapIndex = times.findIndex((time, position) => position > 0 && time - times[position - 1]! > 1.01);
+    if (!times.length || times[0]! - start > .55 || end - times.at(-1)! > .55 || gapIndex >= 0) {
+      const reason = !times.length ? "no frames"
+        : times[0]! - start > .55 ? `start gap=${times[0]! - start}`
+          : end - times.at(-1)! > .55 ? `end gap=${end - times.at(-1)!}`
+            : `internal gap=${times[gapIndex]! - times[gapIndex - 1]!} at ${times[gapIndex - 1]}..${times[gapIndex]}`;
+      fail("FRAME_STRIP_COVERAGE", `segments[${index}](${segment.id}) range=[${start},${end}] ${reason}`);
+    }
     for (const ref of segment.frameRefs) {
       const time = frames.get(ref);
-      if (time === undefined || time < start - 0.05 || time > end + 0.05) fail("FRAME_RANGE");
+      if (time === undefined || time < start - 0.05 || time > end + 0.05) {
+        fail("FRAME_RANGE", `segments[${index}](${segment.id}):${ref}@${time ?? "missing"} outside [${start},${end}]`);
+      }
     }
   }
   if (Math.abs(cursor - opening.duration) > 0.001) fail("COVERAGE");

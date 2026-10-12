@@ -119,20 +119,23 @@ function safeThreeLens(batchItem: { threeLensEvaluationArtifactRef: string | nul
 
 function readJson(reference: string): unknown { return JSON.parse(fs.readFileSync(artifactPath(reference), "utf8")) as unknown; }
 
-function researchOwnerId(run: ReturnType<CreatorResearchService["list"]>[number]): string {
+function researchOwnerId(run: Awaited<ReturnType<CreatorResearchService["list"]>>[number]): string {
   return run.creatorId ?? run.canonicalSlug ?? `run-${run.id}`;
 }
 
-export function loadVideoResearch(service: CreatorResearchService, creatorId: string, videoId: string, requestedRunId?: string): VideoResearch | null {
+export async function loadVideoResearch(service: CreatorResearchService, creatorId: string, videoId: string, requestedRunId?: string): Promise<VideoResearch | null> {
   return loadVideoResearchSource(service, creatorId, videoId, requestedRunId);
 }
 
 /** Read an immutable workflow candidate without promoting it over the current report. */
-export function loadWorkflowVideoResearch(service: CreatorResearchService, runId: string, postId: string,
-  candidate: { reportArtifactRef: string; reportSha256: string; outcome: Record<string, unknown> }): VideoResearch | null {
-  const run = service.get(runId);
-  const original = service.portfolio(runId)?.reconstructionBatch?.items.find((item) => item.postExternalId === postId);
-  if (!run || !original || !candidate.reportArtifactRef.startsWith(`/artifacts/${runId}/workflow-reconstructions/`)) return null;
+export async function loadWorkflowVideoResearch(service: CreatorResearchService, runId: string, postId: string,
+  candidate: { reportArtifactRef: string; reportSha256: string; outcome: Record<string, unknown> }): Promise<VideoResearch | null> {
+  const run = await service.get(runId);
+  const original = (await service.portfolio(runId))?.reconstructionBatch?.items.find((item) => item.postExternalId === postId);
+  if (!run || !original || ![
+    `/artifacts/${runId}/workflow-reconstructions/`,
+    `/artifacts/${runId}/workflow-responses/`
+  ].some((prefix) => candidate.reportArtifactRef.startsWith(prefix))) return null;
   if (createHash("sha256").update(fs.readFileSync(artifactPath(candidate.reportArtifactRef))).digest("hex") !== candidate.reportSha256) {
     throw new Error("CANDIDATE_REVISION_CHANGED");
   }
@@ -146,17 +149,17 @@ export function loadWorkflowVideoResearch(service: CreatorResearchService, runId
   return loadVideoResearchSource(service, researchOwnerId(run), postId, runId, item);
 }
 
-export function listLatestVideoResearch(service: CreatorResearchService) {
-  const latestRuns = new Map<string, ReturnType<CreatorResearchService["list"]>[number]>();
-  for (const run of service.list(100)) {
+export async function listLatestVideoResearch(service: CreatorResearchService) {
+  const latestRuns = new Map<string, Awaited<ReturnType<CreatorResearchService["list"]>>[number]>();
+  for (const run of await service.list(100)) {
     const ownerId = researchOwnerId(run);
     if (!latestRuns.has(ownerId)) latestRuns.set(ownerId, run);
   }
-  return [...latestRuns.values()].flatMap((run) => {
+  const groups = await Promise.all([...latestRuns.values()].map(async (run) => {
     const ownerId = researchOwnerId(run);
-    const batch = service.portfolio(run.id)?.reconstructionBatch?.items ?? [];
-    return batch.flatMap((item) => {
-      const report = loadVideoResearchSource(service, ownerId, item.postExternalId, run.id);
+    const batch = (await service.portfolio(run.id))?.reconstructionBatch?.items ?? [];
+    const reports = await Promise.all(batch.map(async (item) => {
+      const report = await loadVideoResearchSource(service, ownerId, item.postExternalId, run.id);
       if (!report) return [];
       return [{
         creatorId: report.creatorId,
@@ -166,17 +169,19 @@ export function listLatestVideoResearch(service: CreatorResearchService) {
         runId: run.id,
         href: `/creators/${encodeURIComponent(report.creatorId)}/videos/${encodeURIComponent(report.id)}?run=${encodeURIComponent(run.id)}`
       }];
-    });
-  });
+    }));
+    return reports.flat();
+  }));
+  return groups.flat();
 }
 
-function loadVideoResearchSource(service: CreatorResearchService, creatorId: string, videoId: string, requestedRunId?: string,
-  candidateItem?: VideoReconstructionBatch["items"][number]): VideoResearch | null {
+async function loadVideoResearchSource(service: CreatorResearchService, creatorId: string, videoId: string, requestedRunId?: string,
+  candidateItem?: VideoReconstructionBatch["items"][number]): Promise<VideoResearch | null> {
   const run = requestedRunId
-    ? service.get(requestedRunId)
-    : service.list(100).find((item) => researchOwnerId(item) === creatorId) ?? null;
+    ? await service.get(requestedRunId)
+    : (await service.list(100)).find((item) => researchOwnerId(item) === creatorId) ?? null;
   if (!run || researchOwnerId(run) !== creatorId) return null;
-  const portfolio = service.portfolio(run.id);
+  const portfolio = await service.portfolio(run.id);
   const batchItem = candidateItem ?? portfolio?.reconstructionBatch?.items.find((item) => item.postExternalId === videoId);
   if (!batchItem?.reconstructionArtifactRef) return null;
   const selection = portfolio?.selection?.items.find((item) => item.externalId === videoId);
@@ -201,7 +206,7 @@ function loadVideoResearchSource(service: CreatorResearchService, creatorId: str
     list(builderVisual.carriers).length > 0 && list(builderVisual.claims).length > 0 &&
     list(builderVisual.shotSemantics).length > 0 && list(builderVisual.rhythm).length > 0;
   if (!hasBuilderThreeLenses) return null;
-  const rootRef = batchItem.reconstructionArtifactRef.replace(/reconstruction\.json$/, "");
+  const rootRef = `${path.posix.dirname(batchItem.reconstructionArtifactRef)}/`;
   const rootPath = path.dirname(artifactPath(batchItem.reconstructionArtifactRef));
   const articlePath = batchItem.articleArtifactRef ? artifactPath(batchItem.articleArtifactRef) : path.join(rootPath, "article.md");
   const article = fs.existsSync(articlePath) ? readReportSource(articlePath).text : null;

@@ -1,13 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, test } from 'vitest';
-import { MemoryRunStore, artifactPayloadSha256, runWorkflow, type AgentRunRequest, type AgentRunResult, type AgentRunner } from '@signal-room/workflow';
-import { SQLiteWorkflowRunStore } from '@signal-room/workflow-sqlite';
+import { MemoryRunStore, runWorkflow, type AgentRunRequest, type AgentRunResult, type AgentRunner } from '@signal-room/workflow';
 import { B3_ROLES, createB3Workflow, renderEpisodeVideo, type B3Input } from '../src/stages/b3.js';
 import { findRunVideo, saveRunVideo, selectB3ReviewImages } from '../src/stages/video-artifacts.js';
 
@@ -163,6 +161,7 @@ function workflowFixture(failRender: boolean): { cwd: string; input: B3Input; ol
   writeFileSync(path.join(episode, 'scripts/snapshot-review.sh'), '#!/bin/bash\nmkdir -p snapshots/review\nprintf image > snapshots/review/contact-01.jpg\nprintf 1 > snapshots/settle.txt\n');
   const input: B3Input = {
     topicId: 'fixture', episodeDir: episode, templateDir: cwd, referenceDir: reference,
+    stateRoot: path.join(cwd, '.local/creation'),
     scope: 'sample', sampleSegments: 1, voice: 'placeholder', standards: 'V1', maxRevisions: 0,
     brief: {
       schemaVersion: 'brief-v1', topicId: 'fixture', version: 2,
@@ -253,7 +252,7 @@ test('B3 roles receive the current render scope, accepted-script boundary, and c
 });
 
 const imageHash = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
-const changingSnapshots = '#!/bin/bash\nmkdir -p snapshots/review\nn=$(cat snapshots/counter 2>/dev/null || echo 0)\nn=$((n+1))\nprintf %s "$n" > snapshots/counter\nprintf "image-%s" "$n" > snapshots/review/contact-01.jpg\nprintf 1 > snapshots/settle.txt\n';
+const changingSnapshots = '#!/bin/bash\nmkdir -p snapshots/review\nn=$(cat snapshots/counter 2>/dev/null || echo 0)\nn=$((n+1))\nprintf %s "$n" > snapshots/counter\nrun_id=$(basename "$(dirname "$PWD")")\nprintf "image-%s-%s" "$run_id" "$n" > snapshots/review/contact-01.jpg\nprintf 1 > snapshots/settle.txt\n';
 
 test('B3 chooses a native contact sheet before a low-resolution review fallback', () => {
   const episode = fixture();
@@ -267,7 +266,7 @@ test('B3 chooses a native contact sheet before a low-resolution review fallback'
 test('B3 inspects full-resolution frames in numeric order when native and fallback sheets coexist', async () => {
   const original = process.cwd();
   const { cwd, input } = workflowFixture(false);
-  writeFileSync(path.join(input.episodeDir, 'scripts/snapshot-review.sh'), '#!/bin/bash\nmkdir -p snapshots/review snapshots/settle\nn=$(cat snapshots/counter 2>/dev/null || echo 0)\nn=$((n+1))\nprintf %s "$n" > snapshots/counter\nfor i in 00 02 10; do printf "full-%s-run-%s" "$i" "$n" > "snapshots/settle/frame-${i}-at-1s.png"; done\nprintf native > snapshots/settle/contact-sheet.jpg\nprintf fallback > snapshots/review/contact-1.jpg\nprintf 1 > snapshots/settle.txt\n');
+  writeFileSync(path.join(input.episodeDir, 'scripts/snapshot-review.sh'), '#!/bin/bash\nmkdir -p snapshots/review snapshots/settle\nn=$(cat snapshots/counter 2>/dev/null || echo 0)\nn=$((n+1))\nprintf %s "$n" > snapshots/counter\nrun_id=$(basename "$(dirname "$PWD")")\nfor i in 00 02 10; do printf "full-%s-%s-%s" "$i" "$run_id" "$n" > "snapshots/settle/frame-${i}-at-1s.png"; done\nprintf native > snapshots/settle/contact-sheet.jpg\nprintf fallback > snapshots/review/contact-1.jpg\nprintf 1 > snapshots/settle.txt\n');
   const inspectingAll: AgentRunner = {
     ...agentRunner,
     async run<Input, Output>(request: AgentRunRequest<Input>): Promise<AgentRunResult<Output>> {
@@ -283,11 +282,11 @@ test('B3 inspects full-resolution frames in numeric order when native and fallba
     expect(firstSheets.map(s => path.basename(s).split('-at-')[0])).toEqual(['frame-00', 'frame-02', 'frame-10']);
     expect(firstSheets.every(s => s.endsWith('.png'))).toBe(true);
     const hashes = firstSheets.map(imageHash);
-    expect(firstSheets.map(s => readFileSync(s, 'utf8'))).toEqual(['full-00-run-1', 'full-02-run-1', 'full-10-run-1']);
+    expect(firstSheets.map(s => readFileSync(s, 'utf8'))).toEqual(['00', '02', '10'].map(frame => `full-${frame}-${first.run.id}-1`));
     const second = await runWorkflow({ workflow: createB3Workflow(input, model), input, store, agentRunner: inspectingAll });
     const secondSheets = (store.artifacts.find(a => a.type === 'b3-assembly' && a.producedBy.workflowRunId === second.run.id)!.payload as { sheets: string[] }).sheets;
     expect(firstSheets.map(imageHash)).toEqual(hashes);
-    expect(secondSheets.map(s => readFileSync(s, 'utf8'))).toEqual(['full-00-run-2', 'full-02-run-2', 'full-10-run-2']);
+    expect(secondSheets.map(s => readFileSync(s, 'utf8'))).toEqual(['00', '02', '10'].map(frame => `full-${frame}-${second.run.id}-1`));
     expect((first.run.output as { details: { contactSheets: string[] } }).details.contactSheets).toEqual(firstSheets);
   } finally { process.chdir(original); }
 });
@@ -323,6 +322,7 @@ test('B3 contact sheets remain bound to each run sharing an episode', async () =
     expect(firstSheet).not.toBe(secondAssembly.sheets[0]);
     expect(imageHash(firstSheet)).toBe(firstHash);
     expect(imageHash(secondAssembly.sheets[0])).not.toBe(firstHash);
+    expect(readFileSync(secondAssembly.sheets[0], 'utf8')).toBe(`image-${second.run.id}-1`);
     expect((second.run.output as { details: { contactSheets: string[] } }).details.contactSheets).toEqual(secondAssembly.sheets);
   } finally { process.chdir(original); }
 });
@@ -353,14 +353,15 @@ test('B3 contact sheets remain bound to each revision round', async () => {
     const assemblies = store.artifacts.filter(a => a.type === 'b3-assembly' && a.producedBy.workflowRunId === run.id).map(a => a.payload as { sheets: string[] });
     expect(assemblies).toHaveLength(2);
     expect(assemblies[0].sheets[0]).not.toBe(assemblies[1].sheets[0]);
-    expect(imageHash(assemblies[0].sheets[0])).toBe(createHash('sha256').update('image-1').digest('hex'));
-    expect(imageHash(assemblies[1].sheets[0])).toBe(createHash('sha256').update('image-2').digest('hex'));
+    expect(imageHash(assemblies[0].sheets[0])).toBe(createHash('sha256').update(`image-${run.id}-1`).digest('hex'));
+    expect(imageHash(assemblies[1].sheets[0])).toBe(createHash('sha256').update(`image-${run.id}-2`).digest('hex'));
   } finally { process.chdir(original); }
 });
 
 test('the B3 workflow publishes the run copy only after a successful render', async () => {
   const original = process.cwd();
   const { cwd, input, oldVideo } = workflowFixture(false);
+  writeFileSync(path.join(input.episodeDir, 'SCRIPT.md'), 'historical script');
   process.chdir(cwd);
   try {
     const store = new MemoryRunStore();
@@ -368,10 +369,11 @@ test('the B3 workflow publishes the run copy only after a successful render', as
     expect(run.state).toBe('needs_review');
     const artifact = (await store.listArtifacts(run.id)).find(a => a.type === 'b3-video')!;
     const payload = store.artifacts.find(a => a.id === artifact.id)!.payload as { output: string; exports: string[] };
-    expect(payload.output).toBe(path.join(realpathSync(cwd), '.local/stages/fixture/b3', run.id, 'video.mp4'));
+    expect(payload.output).toBe(path.join(cwd, '.local/creation/runs', run.id, 'video.mp4'));
     expect(payload.exports).toEqual([payload.output]);
     expect(readFileSync(payload.output, 'utf8')).toBe('current-run');
-    expect(readFileSync(oldVideo, 'utf8')).toBe('current-run');
+    expect(readFileSync(oldVideo, 'utf8')).toBe('previous run');
+    expect(readFileSync(path.join(input.episodeDir, 'SCRIPT.md'), 'utf8')).toBe('historical script');
   } finally { process.chdir(original); }
 });
 
@@ -387,114 +389,4 @@ test('the B3 workflow fails instead of publishing a pre-existing video after ren
     expect((await store.listArtifacts(run.id)).some(a => a.type === 'b3-video')).toBe(false);
     expect(readFileSync(oldVideo, 'utf8')).toBe('previous run');
   } finally { process.chdir(original); }
-});
-
-test('stage and workbench pages link the run video and name the recorded reviewer', async () => {
-  const cwd = fixture();
-  const topic = 'fixture';
-  const root = path.join(cwd, '.local/stages', topic);
-  mkdirSync(root, { recursive: true });
-  const db = new DatabaseSync(path.join(root, 'ledger.sqlite'));
-  const store = new SQLiteWorkflowRunStore(db);
-  const run = await store.createRun({ workflowId: 'creation.b3', workflowRevision: 'b3-v10', inputFingerprint: 'fixture', state: 'needs_review', metadata: { topicId: topic, stage: 'b3' } });
-  const step = await store.createStep({ runId: run.id, key: 'video', kind: 'publish', workflowId: 'creation.b3', workflowRevision: 'b3-v10', inputFingerprint: 'fixture', configFingerprint: 'fixture', state: 'succeeded', validation: 'valid' });
-  const attempt = await store.createAttempt({ runId: run.id, stepRunId: step.id, state: 'succeeded' });
-  const source = path.join(cwd, 'episode', 'exports', 'current.mp4');
-  mkdirSync(path.dirname(source), { recursive: true });
-  writeFileSync(source, 'current run');
-  const payload = { output: source, log: 'verified' };
-  const ref = await store.publishArtifact({ type: 'b3-video', schemaVersion: '1', revision: '1', sha256: await artifactPayloadSha256(payload), uri: 'artifact://video', payload,
-    producedBy: { workflowRunId: run.id, stepRunId: step.id, attemptId: attempt.id }, dependsOn: [], validation: 'valid', review: 'pending' });
-  const runDir = path.join(root, 'b3', run.id);
-  mkdirSync(runDir, { recursive: true });
-  saveRunVideo(runDir, source, ref.id);
-  writeFileSync(path.join(root, 'decisions.json'), JSON.stringify({ title: 'fixture', current: { b3: run.id }, runs: { [run.id]: { purpose: 'fixture', review: { reviewer: 'main-agent-proxy', verdict: 'accept', notes: ['fixture'], at: '2026-10-03' } } } }));
-  db.close();
-  const creation = fileURLToPath(new URL('..', import.meta.url));
-  const loader = path.join(creation, 'node_modules/tsx/dist/loader.mjs');
-  execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/render-stage.ts'), topic, run.id], { cwd });
-  let stageHtml = readFileSync(path.join(runDir, 'index.html'), 'utf8');
-  expect(stageHtml).toContain('<video controls preload="metadata" src="video.mp4"');
-  expect(stageHtml).toContain('<section><h2>视频</h2>');
-  expect(stageHtml).toContain('审阅记录 · main-agent-proxy');
-  expect(stageHtml).toContain('审阅通过 · main-agent-proxy');
-  mkdirSync(path.join(cwd, 'docs/03-architecture'), { recursive: true });
-  writeFileSync(path.join(cwd, 'docs/03-architecture/brief-and-handoff.md'), '# Fixture flow');
-  execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/stage-workbench.ts'), topic], { cwd });
-  let workbenchHtml = readFileSync(path.join(root, 'index.html'), 'utf8');
-  expect(workbenchHtml).toContain(`src="b3/${run.id}/video.mp4"`);
-  expect(workbenchHtml).toContain('<div class="asset asset-video"><p class="sub">视频</p>');
-  expect(workbenchHtml).toContain('审阅记录 · main-agent-proxy');
-
-  for (const [scope, label] of [['sample', '样片'], ['full', '全片']] as const) {
-    const writableDb = new DatabaseSync(path.join(root, 'ledger.sqlite'));
-    await new SQLiteWorkflowRunStore(writableDb).updateRun(run.id, { output: { details: { scope, voice: 'placeholder' } } });
-    writableDb.close();
-    execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/render-stage.ts'), topic, run.id], { cwd });
-    execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/stage-workbench.ts'), topic], { cwd });
-    stageHtml = readFileSync(path.join(runDir, 'index.html'), 'utf8');
-    workbenchHtml = readFileSync(path.join(root, 'index.html'), 'utf8');
-    expect(stageHtml).toContain(`<section><h2>${label}</h2>`);
-    expect(workbenchHtml).toContain(`<div class="asset asset-video"><p class="sub">${label}</p>`);
-    expect(workbenchHtml).toContain('占位配音（macOS 语音），正式配音待定');
-  }
-});
-
-test('content pages show the complete draft and question coverage while keeping legacy B1 in history', async () => {
-  const cwd = fixture();
-  const topic = 'fixture';
-  const root = path.join(cwd, '.local/stages', topic);
-  mkdirSync(root, { recursive: true });
-  const db = new DatabaseSync(path.join(root, 'ledger.sqlite'));
-  const store = new SQLiteWorkflowRunStore(db);
-  const old = await store.createRun({ workflowId: 'creation.b1', workflowRevision: 'b1-v7', inputFingerprint: 'old', state: 'needs_review', metadata: { topicId: topic, stage: 'b1' } });
-  const legacy = await store.createRun({ workflowId: 'creation.b1', workflowRevision: 'b1-v7', inputFingerprint: 'legacy', state: 'needs_review', metadata: { topicId: topic } });
-  const run = await store.createRun({ workflowId: 'creation.content', workflowRevision: 'content-v1', inputFingerprint: 'new', state: 'needs_review', metadata: { topicId: topic, stage: 'content' } });
-  await store.updateRun(run.id, { output: { details: { stage: 'CONTENT', reason: 'awaiting-human-review', rounds: 1 } } });
-  const step = await store.createStep({ runId: run.id, key: 'publish', kind: 'publish', workflowId: run.workflowId, workflowRevision: run.workflowRevision, inputFingerprint: 'new', configFingerprint: 'new', state: 'succeeded', validation: 'valid' });
-  const attempt = await store.createAttempt({ runId: run.id, stepRunId: step.id, state: 'succeeded' });
-  const publish = async (type: string, payload: object) => store.publishArtifact({ type, schemaVersion: '1', revision: '1', sha256: await artifactPayloadSha256(payload), uri: `artifact://${type}`, payload,
-    producedBy: { workflowRunId: run.id, stepRunId: step.id, attemptId: attempt.id }, dependsOn: [], validation: 'valid', review: 'pending' });
-  await publish('content-draft', { decision: { workingTitle: '怎样训练', coreQuestion: '机制是什么？', oneLineAnswer: '通过反馈迭代', hook: '训练现场', beats: [] },
-    script: { title: '训练全过程', coverText: '训练', estimatedSeconds: 40, segments: [
-      { time: '0–5', voiceover: '第一段完整口播', onScreenText: '第一段', visual: '画面一' },
-      { time: '5–10', voiceover: '第二段完整口播', onScreenText: '第二段', visual: '画面二' },
-    ] }, markdown: '# 完整稿' });
-  await publish('content-review', { verdict: 'pass', route: 'pass', summary: '内容可交制作', criteria: [{ id: 'C1', result: 'ok', reason: '完整' }],
-    questionCoverage: [{ question: '机制是什么？', answerInDraft: '反馈迭代', missing: '', result: 'ok' }] });
-  const contentDir = path.join(root, 'content', run.id);
-  mkdirSync(contentDir, { recursive: true });
-  writeFileSync(path.join(contentDir, 'input.json'), JSON.stringify({ opportunity: '公开训练', account: { name: '测试账号', positioning: '科技' }, form: '视频', readerGoal: '看懂机制', requiredQuestions: ['机制是什么？'], materials: [] }));
-  writeFileSync(path.join(root, 'decisions.json'), JSON.stringify({ current: { b1: old.id, content: run.id }, runs: { [old.id]: { purpose: '历史', review: { reviewer: 'proxy', verdict: 'accept', notes: [], at: '2026-10-03' } }, [run.id]: { purpose: '生产', review: { reviewer: 'proxy', verdict: 'accept', notes: [], at: '2026-10-03' } } } }));
-  db.close();
-  const creation = fileURLToPath(new URL('..', import.meta.url));
-  const loader = path.join(creation, 'node_modules/tsx/dist/loader.mjs');
-  execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/render-stage.ts'), topic, run.id], { cwd });
-  const stageHtml = readFileSync(path.join(contentDir, 'index.html'), 'utf8');
-  for (const expected of ['<title>CONTENT · 训练全过程</title>', '内容决定与完整稿', '第一段完整口播', '第二段完整口播', '必答问题覆盖', '机制是什么？', '反馈迭代', '内容可交制作', '程序终态']) expect(stageHtml).toContain(expected);
-  mkdirSync(path.join(cwd, 'docs/03-architecture'), { recursive: true });
-  writeFileSync(path.join(cwd, 'docs/03-architecture/brief-and-handoff.md'), '# Fixture flow');
-  execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/stage-workbench.ts'), topic], { cwd });
-  const workbenchHtml = readFileSync(path.join(root, 'index.html'), 'utf8');
-  for (const expected of ['<title>作品工作台 · 训练全过程</title>', 'id="content"', 'id="b3"', '训练全过程', '第一段完整口播', '第二段完整口播', '机制是什么？：反馈迭代 <span class="pill good">通过</span>', '内容可交制作']) expect(workbenchHtml).toContain(expected);
-  expect(workbenchHtml).not.toContain('id="b1"');
-  expect(workbenchHtml).toContain(`href="b1/${old.id}/index.html"`);
-  expect(workbenchHtml.match(/<span class="tag">当前采用<\/span>/g)).toHaveLength(1); // Historical B1 is not adopted as the new flow.
-
-  const writableDb = new DatabaseSync(path.join(root, 'ledger.sqlite'));
-  await new SQLiteWorkflowRunStore(writableDb).updateRun(run.id, { output: { details: { stage: 'CONTENT', reason: 'not-converged', rounds: 1, guardFailures: ['必答问题未覆盖'] } } });
-  writableDb.close();
-  execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/render-stage.ts'), topic, legacy.id], { cwd });
-  const legacyHtml = readFileSync(path.join(root, 'b1', legacy.id, 'index.html'), 'utf8');
-  expect(legacyHtml).toContain('<title>B1 · fixture</title>');
-  expect(legacyHtml).not.toContain('内容决定与完整稿');
-  execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/render-stage.ts'), topic, run.id], { cwd });
-  const guardedHtml = readFileSync(path.join(contentDir, 'index.html'), 'utf8');
-  expect(guardedHtml).toContain('内部没审过，等你决定');
-  expect(guardedHtml).toContain('必答问题未覆盖');
-  expect(guardedHtml).toContain('内容可交制作'); // The model's opinion remains visible alongside the program refusal.
-  execFileSync(process.execPath, ['--import', loader, path.join(creation, 'scripts/stage-workbench.ts'), topic], { cwd });
-  const guardedWorkbench = readFileSync(path.join(root, 'index.html'), 'utf8');
-  expect(guardedWorkbench).toContain('程序终态：not-converged');
-  expect(guardedWorkbench).toContain('必答问题未覆盖');
 });

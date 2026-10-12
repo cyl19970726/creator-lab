@@ -27,8 +27,7 @@ pnpm build
 pnpm research          # 研究工作台，4327
 pnpm research:worker   # 需要执行研究时，另开终端
 pnpm analysis          # 分析 API + 网页开发预览
-pnpm creation          # 新创作工作台/API，4337
-pnpm creation:worker   # 独立终端：执行显式提交的创作任务
+pnpm creation          # PostgreSQL Space 创作工作台，4397
 ```
 
 各工作台的本地资料配置见各自 README。私有报告、运行数据库和媒体不随公开仓库分发。研究执行由独立 worker 处理；分析沿用内嵌 worker 配置，查看历史数据时使用其 README 的只读模式。
@@ -48,9 +47,9 @@ pnpm docs:serve
 
 ## 技术栈
 
-- 研究：React / Vite、Fastify、独立 worker、SQLite。
-- 分析：React / Vite、Express、分析 worker、SQLite。
-- 创作：TypeScript；阶段 workflow 以命令行 + 生成的静态页面运行；文章应用为 React / Vite、Fastify、独立 worker、SQLite。
+- 研究：React / Vite、Fastify、独立 worker、PostgreSQL。
+- 分析：React / Vite、Express、分析 worker、PostgreSQL。
+- 创作：TypeScript、共享 Workflow Space 工作台、PostgreSQL；B3 使用受控工具制作与检查媒体。
 - 公用：Node 24、pnpm workspace、一份固定版本的 agent-workflow。
 
-本次沿用现有实现，不为合仓改写框架。每个工作台的 `.agents/skills/` 包含方法及脚本、Schema、参考资料等完整资源，无全局安装。
+新执行统一使用官方 OpenAI Agents SDK 的 Agent / Runner / tool，默认模型为 `gpt-6-luna`；SIWC 保留 ChatGPT 授权及 Responses 传输。旧 Codex／SQLite 执行包已移除，SQLite 只供显式只读历史导入。迁移执行与构建验证完成，Reviewer 质量仍有未通过项，见[迁移验收与限制](workbenches/analysis/docs/postgres-sdk-retirement-20261012.md)。每个工作台的 `.agents/skills/` 包含方法及脚本、Schema、参考资料等完整资源，无全局安装。

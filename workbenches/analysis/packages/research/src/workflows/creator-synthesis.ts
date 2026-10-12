@@ -14,6 +14,14 @@ function dependency(ref: ArtifactRef) {
   return [{ artifactId: ref.id, revision: ref.revision, sha256: ref.sha256 }];
 }
 
+function reusedCandidateDependency(value: unknown): ReturnType<typeof dependency> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const reusedFrom = (value as { reusedFrom?: { candidate?: ArtifactRef } }).reusedFrom;
+  const candidate = reusedFrom?.candidate;
+  return candidate && typeof candidate.id === "string" && typeof candidate.revision === "string"
+    && typeof candidate.sha256 === "string" ? dependency(candidate) : [];
+}
+
 export function createCreatorSynthesisWorkflow(validators: CreatorSynthesisWorkflowValidators,
   agents: Pick<ResearchAgentDefinitions, "creatorBuilder" | "creatorReviewer" | "creatorRepair">) {
   return workflow<CreatorSynthesisWorkflowInput, CreatorSynthesisWorkflowOutput>("creator.synthesize", { revision: "v1" }, async (ctx, input) => {
@@ -63,13 +71,14 @@ export type CreatorWorkflowSuiteOptions = {
 /** V2 orchestration over independently retryable synthesis nodes. */
 export function createCreatorSynthesisWorkflowSuite(validators: CreatorSynthesisWorkflowValidators,
   agents: Pick<ResearchAgentDefinitions, "creatorBuilder" | "creatorReviewer" | "creatorRepair">,
-  options: CreatorWorkflowSuiteOptions = {}, revisions: { build?: "v1" | "v2" } = {}) {
+  options: CreatorWorkflowSuiteOptions = {}, revisions: { build?: "v1" | "v2" | "v3" } = {}) {
   const build = workflow<CreatorSynthesisWorkflowInput, CreatorBuildOutput>("creator.build", { revision: revisions.build ?? "v1" }, async (ctx, input) => {
     const produced = await ctx.agent("builder", agents.creatorBuilder, input);
     const checked = await ctx.validate("candidate-check", produced, validators.candidate);
     if (!checked.valid) return ctx.needsReview({ kind: "synthesis_contract", produced, checked }) as CreatorBuildOutput;
     const candidate = await ctx.publish("candidate", "creator-synthesis", produced.artifact, {
-      schemaVersion: "v1", dependsOn: dependency(input.frozenInputs), validation: "valid", review: "pending",
+      schemaVersion: "v1", dependsOn: [...dependency(input.frozenInputs), ...reusedCandidateDependency(produced.artifact)],
+      validation: "valid", review: "pending",
     });
     return { ok: true, candidate, receipt: produced };
   });

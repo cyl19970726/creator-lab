@@ -81,7 +81,14 @@ function setup() {
       updatedAt: "2026-09-16T00:00:00.000Z" })) };
   const initialRef = artifacts.write(id, "batch-r1.json", initial);
   const repository = new MemoryRepository({ ...run(id), reconstructionBatchArtifactRef: initialRef });
-  const registrar = new RepositoryResearchVersionRegistrar(repository, artifacts, { run: (_id, operation) => operation() },
+  let previous = Promise.resolve();
+  const registrar = new RepositoryResearchVersionRegistrar(repository, artifacts, { run: async (_id, operation) => {
+    const turn = previous;
+    let release!: () => void;
+    previous = new Promise<void>((resolve) => { release = resolve; });
+    await turn;
+    try { return await operation(); } finally { release(); }
+  } },
     () => "2026-09-16T01:00:00.000Z");
   const registeredBy = { workflowRunId: "workflow", stepRunId: "step", attemptId: "attempt" };
   return { id, artifacts, repository, registrar, initialRef, registeredBy };

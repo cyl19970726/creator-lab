@@ -16,13 +16,10 @@ import { contentRepository } from '../../packages/storage/content.ts';
 import { collaborationRepository } from '../../packages/domain/collaboration.ts';
 import { renderReader, readerCsp } from './reader.ts';
 // The migrated engine stays JS while public boundaries are validated TypeScript.
-export async function createApp(config: Config, service: any) {
+export async function createApp(config: Config, service: any, options: { collaboration?: ReturnType<typeof collaborationRepository> } = {}) {
   const app = Fastify({ bodyLimit: 65536, logger: { level: 'error' } });
   const content = contentRepository(config.contentRoot);
-  const collaboration = collaborationRepository(resolve(config.stateRoot, 'collaboration.sqlite'));
-  app.addHook('onClose', async () => {
-    collaboration.close();
-  });
+  const collaboration = options.collaboration ?? collaborationRepository(service.pool, service.workspaceId);
   app.addHook('onRequest', async (req, reply) => {
     const host = req.headers.host || '';
     if (!/^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(host))
@@ -45,7 +42,7 @@ export async function createApp(config: Config, service: any) {
         details: e.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
       });
     const known =
-      /^(Research run not found|Research source not found|Run not found|Unknown topic|Source outside topic|Unknown frozen source|Source changed;|Duplicate sources|Duplicate feedback|Feedback outside selected version|Idempotency key reused|Run cannot resume|Implementation revision changed;|Research agent method changed;|Artifact outside research run|Artifact identity mismatch|Exact artifact identity required|Expression repair requires|Prior artifact is outside|Invalid research|Frozen research|Repair candidate must|Research model is pinned|Research reasoning is pinned)/.test(
+      /^(Research run not found|Research source not found|Run not found|Unknown topic|Source outside topic|Unknown frozen source|Source changed;|Duplicate sources|Duplicate feedback|Feedback outside selected version|Idempotency key reused|Run cannot resume|Historical research runs are read-only|Implementation revision changed;|Research agent method changed;|Artifact outside research run|Artifact identity mismatch|Exact artifact identity required|Expression repair requires|Prior artifact is outside|Invalid research|Frozen research|Repair candidate must|Research model is pinned|Research reasoning is pinned)/.test(
         error.message,
       );
     if (known) {
@@ -60,7 +57,7 @@ export async function createApp(config: Config, service: any) {
   app.get('/api/health', async () => ({
     ok: true,
     execution: 'separate-worker',
-    model: 'gpt-5.6-luna',
+    model: 'gpt-6-luna',
   }));
   app.get('/api/topics', async () => ({ topics: content.topics() }));
   app.get<{ Params: { topicId: string; sourceId: string } }>(
@@ -94,13 +91,13 @@ export async function createApp(config: Config, service: any) {
     );
     return reply.code(202).send(result);
   });
-  const ensure = (id: string) => {
-    if (!service.getRun(id)) throw new Error('Run not found');
+  const ensure = async (id: string) => {
+    if (!(await service.getRun(id))) throw new Error('Run not found');
   };
   app.get<{ Params: { id: string; sourceId: string } }>(
     '/api/runs/:id/inputs/:sourceId',
     async (req, reply) => {
-      const payload = service.source(req.params.id, req.params.sourceId);
+      const payload = await service.source(req.params.id, req.params.sourceId);
       return reply
         .header('Content-Security-Policy', readerCsp)
         .header('Cache-Control', 'no-store')
@@ -109,20 +106,20 @@ export async function createApp(config: Config, service: any) {
     },
   );
   app.get<{ Params: { id: string } }>('/api/runs/:id/snapshot', async (req) => {
-    ensure(req.params.id);
+    await ensure(req.params.id);
     return service.snapshot(req.params.id);
   });
   app.get<{ Params: { id: string }; Querystring: { cursor: string } }>(
     '/api/runs/:id/changes',
     async (req) => {
-      ensure(req.params.id);
+      await ensure(req.params.id);
       return service.changes(req.params.id, req.query.cursor);
     },
   );
   app.get<{ Params: { id: string; phaseId: string }; Querystring: { cursor?: string } }>(
     '/api/runs/:id/stages/:phaseId',
     async (req) => {
-      ensure(req.params.id);
+      await ensure(req.params.id);
       return service.stageDetails(req.params.id, req.params.phaseId, {
         cursor: req.query.cursor,
         limit: 30,
@@ -151,10 +148,11 @@ export async function createApp(config: Config, service: any) {
       sha256: req.query.sha256,
     });
     await service.artifact(req.params.id, identity);
-    return { events: collaboration.list(req.params.id, identity) };
+    return { events: await collaboration.list(req.params.id, identity) };
   });
   app.post<{ Params: { id: string } }>('/api/runs/:id/feedback', async (req) => {
     const { identity, idempotencyKey, ...fields } = FeedbackSchema.parse(req.body);
+    await service.assertWritable(req.params.id);
     await service.artifact(req.params.id, identity);
     return collaboration.append(req.params.id, identity, idempotencyKey, {
       type: 'feedback',
@@ -163,6 +161,7 @@ export async function createApp(config: Config, service: any) {
   });
   app.post<{ Params: { id: string } }>('/api/runs/:id/decision', async (req) => {
     const { identity, idempotencyKey, ...fields } = DecisionSchema.parse(req.body);
+    await service.assertWritable(req.params.id);
     await service.artifact(req.params.id, identity);
     return collaboration.append(req.params.id, identity, idempotencyKey, {
       type: 'decision',
@@ -173,7 +172,7 @@ export async function createApp(config: Config, service: any) {
     const b = RepairSchema.parse(req.body);
     await service.artifact(req.params.id, b.identity);
     if (new Set(b.feedbackIds).size !== b.feedbackIds.length) throw new Error('Duplicate feedback');
-    const events = collaboration.list(req.params.id, b.identity);
+    const events = await collaboration.list(req.params.id, b.identity);
     const feedback = b.feedbackIds.map((id) => {
       const event = events.find((e) => e.id === id && e.type === 'feedback');
       if (!event) throw new Error('Feedback outside selected version');

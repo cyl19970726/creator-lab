@@ -26,6 +26,24 @@ function review(candidate: { id: string; revision: string; sha256: string }, fin
 }
 
 describe("simple reviewer workflows", () => {
+  it("records the reused creator candidate as a direct dependency of the new Builder candidate", async () => {
+    const store = new MemoryRunStore();
+    const evidence = await seed(store, "creator-evidence");
+    const original = await seed(store, "creator-synthesis");
+    const runner: AgentRunner = { async run(request) {
+      if (request.definition.id !== "creator-synthesis-builder") throw new Error("unexpected agent");
+      return { output: { artifact: { kind: "creator", reusedFrom: { candidate: original } } } };
+    } } as AgentRunner;
+    const suite = createCreatorSynthesisWorkflowSuiteV4({ candidate: () => ({ valid: true }), evaluation: () => ({ valid: true }) }, agents);
+    const result = await runWorkflow({ workflow: suite.build, input: { creatorRunId: crypto.randomUUID(), frozenInputs: evidence },
+      store, agentRunner: runner });
+    expect(result.run.state).toBe("succeeded");
+    const candidate = (result.output as { candidate: ArtifactRef }).candidate;
+    expect(candidate.dependsOn).toEqual(expect.arrayContaining([
+      { artifactId: evidence.id, revision: evidence.revision, sha256: evidence.sha256 },
+      { artifactId: original.id, revision: original.revision, sha256: original.sha256 },
+    ]));
+  });
   it("maps V9 only to the changed post executor children", () => {
     const check = sourceCheck();
     const suite = createPostWorkflowSuiteV9({ candidate: () => ({ valid: true }), evaluation: () => ({ valid: true }) }, agents,

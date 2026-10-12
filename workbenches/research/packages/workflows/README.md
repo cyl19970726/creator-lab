@@ -6,7 +6,7 @@
 import { createResearchAgents, implementationRevision } from './config.mjs';
 import { createResearchWorkflow } from './workflow.mjs';
 
-const agents = await createResearchAgents(); // Pins all roles to gpt-5.6-luna, medium.
+const agents = await createResearchAgents(); // Pins all roles to gpt-6-luna, medium.
 const workflow = createResearchWorkflow({ agents, revision: await implementationRevision() });
 ```
 
@@ -16,4 +16,6 @@ Research starts with a brief and adaptive plan, studies stable problem IDs, then
 
 On pass, the workflow publishes an editorial release with `candidate:{id,revision,sha256}` and the exact review references, then returns `needs_review` with reason `awaiting-human-acceptance`. This is a handoff for a real user decision, never a claim of human acceptance. A candidate's `review` field remains `pending`; validated review receipts carry `passed` or `findings`. Asset validation only verifies contracts and binding, not factual quality.
 
-`createResearchAgents()` freezes each complete project-local method package as a native Codex skill bundle before execution. The runner stages those frozen trees for each attempt, including references; source files are not re-read during a run. `skillsRevision` uses package names and tree digests, so relocating the checkout alone does not change it. `implementationRevision()` hashes workflow implementation, lockfile, built runtime, and complete method packages. A changed method or prompt requires a new workflow revision and run. The host should store the revision alongside the run and keep old definitions available for replay.
+`createResearchAgents()` freezes each complete project-local method package with `@signal-room/workflow-skill-snapshot` before execution. The host maps the frozen bytes into the SDK instructions for each attempt; source files are not re-read during a run. `skillsRevision` uses package names and bundle digests, so relocating the checkout alone does not change it. `implementationRevision()` hashes workflow/host/runner implementation, lockfile, built runtime, and complete method packages. A changed method or prompt requires a new workflow revision and run. The host stores the revision alongside the run and rejects resuming an attempt against different code.
+
+The production runner is `OpenAIAgentsSdkRunner` wrapped by `createResearchSiwcRunner`; the official Agents SDK owns turns and tool dispatch. Each attempt receives only `read_frozen_source`, `search_public_web`, and `open_public_page`. Search uses the public DuckDuckGo HTML endpoint without a new account. Web reading accepts public HTTPS text/HTML pages with redirect checks and byte limits. Search/page failures are execution errors; agent prose cannot stand in for a completed tool call. Frozen source, search results, and web page text are untrusted input. The SDK still returns a JSON object that the workflow's domain contracts validate; SDK response formatting does not establish research quality.

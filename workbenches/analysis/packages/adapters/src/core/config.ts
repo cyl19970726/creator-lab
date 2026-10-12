@@ -50,10 +50,6 @@ export function evidenceResearchRoot(): string {
   return path.join(evidenceArtifactsRoot(), "creator-research");
 }
 
-export function databasePath(): string {
-  return path.join(runtimeDir(), "self-media.sqlite");
-}
-
 export function runArtifactDir(runId: string): string {
   return path.join(runtimeDir(), "runs", runId);
 }

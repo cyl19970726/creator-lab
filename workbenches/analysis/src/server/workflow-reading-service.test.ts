@@ -15,6 +15,35 @@ async function producer(store: MemoryRunStore, runId: string) {
 }
 
 describe("research workflow reading adapters", () => {
+  it.each([undefined, "responses-creator-builder-v1"])("projects recorded Responses method facts with revision %s", async (methodRevision) => {
+    const store = new MemoryRunStore();
+    const run = await store.createRun({ workflowId: "creator.build", workflowRevision: "v3", inputFingerprint: "root", state: "succeeded" });
+    const { step } = await producer(store, run.id);
+    await store.appendEvent({ runId: run.id, stepRunId: step.id, type: "agent.started", data: { model: "legacy-model" } });
+    await store.appendEvent({ runId: run.id, stepRunId: step.id, type: "responses.method", data: {
+      role: "creator-builder", model: "gpt-6-sol", reasoningEffort: "medium", promptSha256: "b".repeat(64),
+      effectiveInstructionsSha256: "c".repeat(64), ...(methodRevision ? { methodRevision } : {})
+    } });
+    await store.appendEvent({ runId: run.id, stepRunId: step.id, type: "agent.usage", data: { inputTokens: 350115 } });
+    const snapshot = await createResearchReadingService(store, async () => undefined).getSnapshot({ rootRunId: run.id });
+    const call = snapshot.calls.find((item) => item.id === step.id);
+    expect(call).toMatchObject({ model: "gpt-6-sol", reasoningEffort: "medium", methodDigest: "b".repeat(64) });
+    expect(call?.methodRevision).toBe(methodRevision);
+  });
+
+  it("retains legacy recorded model and source-receipt method provenance", async () => {
+    const store = new MemoryRunStore();
+    const run = await store.createRun({ workflowId: "post.analyze", workflowRevision: "v7", inputFingerprint: "root", state: "succeeded" });
+    const { step } = await producer(store, run.id);
+    await store.updateStep(step.id, { output: { artifact: { provenance: {
+      model: "recorded-source-model", reasoningEffort: "high", methodRevision: "source-v1", methodSha256: "d".repeat(64)
+    } } } });
+    await store.appendEvent({ runId: run.id, stepRunId: step.id, type: "agent.started", data: { model: "recorded-agent-model" } });
+    const snapshot = await createResearchReadingService(store, async () => undefined).getSnapshot({ rootRunId: run.id });
+    expect(snapshot.calls.find((item) => item.id === step.id)).toMatchObject({ model: "recorded-agent-model",
+      reasoningEffort: "high", methodRevision: "source-v1", methodDigest: "d".repeat(64) });
+  });
+
   it("maps a published receipt to its exact agent call without time or name inference", async () => {
     const store = new MemoryRunStore();
     const run = await store.createRun({ workflowId: "post.analyze", workflowRevision: "v7", inputFingerprint: "root", state: "running", metadata: { creatorRunId: "creator", postId: "post" } });

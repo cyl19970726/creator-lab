@@ -23,10 +23,10 @@ class MemoryBatchRepository implements CreatorResearchBatchRepository {
     return this.batches.get(operation.batchId) ?? null;
   }
 
-  create(candidate: CreatorResearchBatch | (() => CreatorResearchBatch), operationKey: string, commandHash: string): CreatorResearchBatch {
+  async create(candidate: CreatorResearchBatch | (() => CreatorResearchBatch | Promise<CreatorResearchBatch>), operationKey: string, commandHash: string): Promise<CreatorResearchBatch> {
     const prior = this.getByOperationKey(operationKey, commandHash);
     if (prior) return prior;
-    const batch = typeof candidate === "function" ? candidate() : candidate;
+    const batch = typeof candidate === "function" ? await candidate() : candidate;
     this.batches.set(batch.id, batch);
     this.operations.set(operationKey, { hash: commandHash, batchId: batch.id });
     return batch;
@@ -117,7 +117,7 @@ describe("creator research batch contract", () => {
 });
 
 describe("CreatorResearchBatchService", () => {
-  it("creates fixed run references and is idempotent before run intake", () => {
+  it("creates fixed run references and is idempotent before run intake", async () => {
     const repository = new MemoryBatchRepository();
     const runs = new MemoryRuns();
     const service = new CreatorResearchBatchService(repository, runs, runs);
@@ -127,8 +127,8 @@ describe("CreatorResearchBatchService", () => {
       creators: [{ profileUrl: profile(1) }, { profileUrl: profile(2) }]
     };
 
-    const first = service.create(input);
-    const repeated = service.create(input);
+    const first = await service.create(input);
+    const repeated = await service.create(input);
 
     expect(repeated.batch.id).toBe(first.batch.id);
     expect(first.batch.runIds).toHaveLength(2);
@@ -137,24 +137,24 @@ describe("CreatorResearchBatchService", () => {
     expect(first.counts.queued).toBe(2);
   });
 
-  it("rejects reuse of an operation key for another command", () => {
+  it("rejects reuse of an operation key for another command", async () => {
     const repository = new MemoryBatchRepository();
     const runs = new MemoryRuns();
     const service = new CreatorResearchBatchService(repository, runs, runs);
-    service.create({ operationKey: "batch:conflict", creators: [{ profileUrl: profile(1) }] });
+    await service.create({ operationKey: "batch:conflict", creators: [{ profileUrl: profile(1) }] });
 
-    expect(() => service.create({
+    await expect(service.create({
       operationKey: "batch:conflict",
       creators: [{ profileUrl: profile(2) }]
-    })).toThrow("idempotency conflict for operation batch:conflict");
+    })).rejects.toThrow("idempotency conflict for operation batch:conflict");
     expect(runs.calls).toBe(1);
   });
 
-  it("projects current run states without copying them into the batch", () => {
+  it("projects current run states without copying them into the batch", async () => {
     const repository = new MemoryBatchRepository();
     const runs = new MemoryRuns();
     const service = new CreatorResearchBatchService(repository, runs, runs);
-    const created = service.create({
+    const created = await service.create({
       operationKey: "batch:live-projection",
       creators: [{ profileUrl: profile(1) }, { profileUrl: profile(2) }]
     });
@@ -178,7 +178,7 @@ describe("CreatorResearchBatchService", () => {
       updatedAt: "2026-08-31T00:30:00.000Z"
     }));
 
-    const projected = service.get(created.batch.id)!;
+    const projected = (await service.get(created.batch.id))!;
     expect(Object.keys(projected.batch)).toEqual(["schemaVersion", "id", "name", "runIds", "createdAt"]);
     expect(projected.status).toBe("partial");
     expect(projected.completedRuns).toBe(2);
@@ -193,11 +193,11 @@ describe("CreatorResearchBatchService", () => {
     expect(projected.updatedAt).toBe("2026-08-31T01:00:00.000Z");
   });
 
-  it("does not count a terminal reviewable run without a synthesis artifact as a completed dossier", () => {
+  it("does not count a terminal reviewable run without a synthesis artifact as a completed dossier", async () => {
     const repository = new MemoryBatchRepository();
     const runs = new MemoryRuns();
     const service = new CreatorResearchBatchService(repository, runs, runs);
-    const created = service.create({ operationKey: "batch:truth", creators: [{ profileUrl: profile(1) }] });
+    const created = await service.create({ operationKey: "batch:truth", creators: [{ profileUrl: profile(1) }] });
     const runId = created.batch.runIds[0]!;
     const run = runs.get(runId)!;
     runs.values.set(runId, creatorResearchRunSchema.parse({
@@ -208,7 +208,7 @@ describe("CreatorResearchBatchService", () => {
       blockers: [{ code: "video_reconstruction_incomplete", message: "2/12", userActionRequired: false }]
     }));
 
-    const projected = service.get(created.batch.id)!;
+    const projected = (await service.get(created.batch.id))!;
     expect(projected.status).toBe("partial");
     expect(projected.completedRuns).toBe(1);
     expect(projected.successfulRuns).toBe(0);

@@ -242,7 +242,7 @@ B3 可以使用现有外部渲染、配音、绘图或排版能力，但需要�
 | `ctx.task` 当前幂等键形如 runId + stepKey；相同 key 的输入变化不体现在该键中 | 外部工具不能只用该键判断语义上是否同一操作，工具成功到步骤落账之间也存在中断窗口 | 适配器使用明确操作 ID、输入摘要与回执核对；故障注入后判断是否需要在共享合同提供更合适的语义键 |
 | 发布资产会创建新的资产 ID；尚无明确唯一发布键 | 发布已成功、控制步骤尚未记成功时崩溃，重放可能重复登记 | 复现该窗口，再决定共享幂等发布接口及存储唯一约束；不能在 UI 中按文件名合并来掩盖重复执行 |
 
-这些观察来自当前 [core runtime](../../../../vendor/agent-workflow/packages/core/src/runtime.ts)、[执行合同](../../../../vendor/agent-workflow/packages/core/src/contracts.ts) 与 [SQLite store](../../../../vendor/agent-workflow/packages/sqlite/sqlite-run-store.ts)；设计时未将它们全部判定为必须修改 core 的缺陷。首版已通过 creation 存储适配器处理 run 与 job 同事务绑定、相同发布复用、文件与业务记录恢复，并加入故障测试。实际实现优先验证恢复正确性，不追求表面上所有动作都挂在同一个 run 下。
+这些观察来自当时 agent-workflow 的 core runtime、执行合同与 SQLite store；这些实现文件随旧原型退役后不再位于当前共享项目路径。设计时未将它们全部判定为必须修改 core 的缺陷。首版已通过 creation 存储适配器处理 run 与 job 同事务绑定、相同发布复用、文件与业务记录恢复，并加入故障测试。实际实现优先验证恢复正确性，不追求表面上所有动作都挂在同一个 run 下。
 
 用户已授权必要时修改共享库。修改须留在唯一子模块，记录对应 revision；涉及破坏性合同变化时，同步更新受影响消费者并运行 research/analysis 的相关集成检查。取消 creation 旧实现兼容，不等于可以让另外两个工作台失效。首个实现 PR 使用现有 vendor 接口，未修改子模块；creation 的恢复适配器不被宣称为共享库新增能力。
 

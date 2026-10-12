@@ -15,41 +15,50 @@ vi.mock("../core/artifacts.js", () => ({
 import { assertPinnedResearchInput, pinResearchInput, registerResearchInput } from "./research-inputs.js";
 
 const methodFiles = [
-  ".agents/skills/video-content-reconstruction/SKILL.md",
-  ".agents/skills/video-content-reconstruction/references/builder-operator.md",
-  ".agents/skills/video-content-reconstruction/references/evaluator-operator.md",
-  ".agents/skills/video-content-reconstruction/references/single-post-depth.md",
-  ".agents/skills/video-content-reconstruction/references/source-consistency.md",
-  ".agents/skills/video-content-reconstruction/schemas/reconstruction.schema.json",
-  ".agents/skills/video-content-reconstruction/schemas/evaluation.schema.json",
-  ".agents/skills/video-content-reconstruction/schemas/capture-protocol.schema.json",
-  ".agents/skills/video-content-reconstruction/scripts/validate-reconstruction.mjs",
-  ".agents/skills/video-content-reconstruction/scripts/build-evaluator-overview.mjs",
-  "packages/adapters/src/platform/video/codex-video-reconstruction-executor.ts",
-  "packages/adapters/src/platform/video/video-ocr-host-recovery.ts",
-  "packages/adapters/src/platform/video/video-ocr-builder-continuation.ts",
+  ...[
+    "responses-post-builder-v1.md", "responses-reviewer-v1.md", "responses-source-check-v1.md",
+    "responses-post-repair-v1.md", "responses-creator-builder-v1.md", "responses-creator-reviewer-v1.md",
+    "responses-image-post-builder-v1.md", "responses-pipeline-creator-evaluator-v1.md", "responses-pipeline-post-evaluator-v1.md",
+  ].map((name) => `prompts/${name}`),
+  "packages/adapters/src/workflow/responses-research-runner.ts",
+  "packages/adapters/src/workflow/validated-draft-store.ts",
+  "packages/adapters/src/workflow/reconstruction-patch.ts",
+  "packages/adapters/src/workflow/opening-frame-diagnostics.ts",
+  "packages/adapters/src/workflow/creator-evidence.ts",
+  "packages/adapters/src/workflow/responses-tools.ts",
+  "packages/adapters/src/workflow/persist-agent-attempt.ts",
+  "packages/adapters/src/workflow/responses-pipeline-executors.ts",
+  "packages/adapters/src/workflow/research-workflow-executor.ts",
+  "packages/adapters/src/workflow/postgres-research-workflow-executor.ts",
   "packages/adapters/src/platform/video/video-builder-integrity.ts",
   "packages/adapters/src/platform/video/video-depth-integrity.ts",
+  "packages/adapters/src/platform/video/video-reconstruction-media-preparer.ts",
   "packages/adapters/src/platform/video/video-reconstruction-host-assembler.ts",
-  "packages/adapters/src/platform/video/video-integrity-repair-receipt.ts",
-  "packages/adapters/src/platform/video/video-codex-execution.ts",
-  "packages/adapters/src/workflow/post-evaluation-repair.ts",
-  "packages/adapters/src/workflow/source-consistency-checker.ts",
-  "packages/research/src/video-analysis/runtime-three-lens-contracts.ts",
-  "packages/adapters/src/workflow/codex-sdk-runner.ts",
-  "vendor/agent-workflow/packages/codex/src/runner.ts",
-  "vendor/agent-workflow/packages/codex/src/skill-bundle.ts",
-  ".agents/skills/video-content-reconstruction/references/reviewer-operator.md",
+  "packages/adapters/src/platform/video/video-post-source-input.ts",
+  "packages/adapters/src/platform/artifacts/report-source-revision.ts",
+  "packages/adapters/src/platform/synthesis/creator-synthesis-inputs.ts",
   "packages/research/src/workflows/simple-review-contract.ts",
-  "packages/adapters/src/workflow/simple-review-runner.ts",
-  ".agents/skills/creator-synthesis/SKILL.md",
-  ".agents/skills/creator-synthesis/references/method.md",
-  ".agents/skills/creator-synthesis/references/reviewer-operator.md",
-  "packages/adapters/src/platform/synthesis/codex-creator-synthesis-executor.ts",
-  "packages/adapters/src/platform/synthesis/creator-synthesis-reuse.ts",
+  "packages/research/src/workflows/simple-review.ts",
+  "../../vendor/agent-workflow/packages/agent-sdk/src/responses.ts",
+  "../../vendor/agent-workflow/packages/agent-sdk/package.json",
+  "../../pnpm-lock.yaml",
+  ".agents/skills/video-content-reconstruction/schemas/reconstruction.schema.json",
+  ".agents/skills/video-content-reconstruction/schemas/capture-protocol.schema.json",
+  ".agents/skills/video-content-reconstruction/schemas/evaluation.schema.json",
+  ".agents/skills/video-content-reconstruction/schemas/probe.schema.json",
+  ".agents/skills/video-content-reconstruction/scripts/capture-protocol-evidence.mjs",
+  ".agents/skills/video-content-reconstruction/scripts/validate-schemas.py",
+  ".agents/skills/video-content-reconstruction/scripts/run-ocr.mjs",
+  "packages/research/src/video-analysis/runtime-three-lens-contracts.ts",
+  ".agents/skills/video-content-reconstruction/scripts/validate-reconstruction.mjs",
   "packages/research/src/creator-synthesis/contracts.ts",
-  "packages/research/src/creator-synthesis/cross-post-specificity.ts",
   "packages/research/src/creator-synthesis/validate.ts",
+  "packages/adapters/src/workflow/creator-candidate-reuse.ts",
+  "packages/research/src/workflows/creator-synthesis.ts",
+  "packages/contracts/src/cross-post-research.ts",
+  "packages/research/src/creator-synthesis/cross-post-specificity.ts",
+  "packages/research/src/creator-synthesis/portfolio-classification.ts",
+  "packages/adapters/src/platform/synthesis/creator-synthesis-reuse.ts",
 ];
 
 function ref(run: string, file: string) { return `/artifacts/${run}/${file}`; }
@@ -73,7 +82,10 @@ function creatorInput(): CreatorSynthesisWorkflowStartInput {
 
 beforeEach(() => {
   fs.rmSync(fixture.root, { recursive: true, force: true }); fs.mkdirSync(fixture.root, { recursive: true });
-  methodFiles.forEach((file) => { const target = path.join(fixture.root, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, `method:${file}`, "utf8"); });
+  methodFiles.filter((file) => !file.startsWith("../../")).forEach((file) => {
+    const target = path.join(fixture.root, file); fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, `method:${file}`, "utf8");
+  });
   write(ref("media", "media.json"), { media: true });
   write(ref("detail", "detail.json"), { detail: true, source: ref("deep-source", "source.json") });
   write(ref("deep-source", "source.json"), { immutable: "source-graph" });
@@ -198,12 +210,9 @@ describe("research input pinning", () => {
   });
 
   it.each([
-    "packages/adapters/src/platform/video/video-ocr-host-recovery.ts",
-    "packages/adapters/src/platform/video/video-ocr-builder-continuation.ts",
     "packages/adapters/src/platform/video/video-builder-integrity.ts",
     "packages/adapters/src/platform/video/video-depth-integrity.ts",
     "packages/adapters/src/platform/video/video-reconstruction-host-assembler.ts",
-    "packages/adapters/src/platform/video/video-integrity-repair-receipt.ts",
   ])("pins the Builder and OCR runtime helper digest: %s", (helper) => {
     const pinned = pinResearchInput("post", postInput());
     expect(pinned.methods).toContainEqual({ path: helper, sha256: expect.stringMatching(/^[a-f0-9]{64}$/u) });
@@ -212,36 +221,15 @@ describe("research input pinning", () => {
     expect(() => assertPinnedResearchInput(pinned)).toThrow(`FROZEN_METHOD_CHANGED: ${helper}`);
   });
 
-  it.each([
-    ["post" as const, "vendor/agent-workflow/packages/codex/src/runner.ts"],
-    ["post" as const, "vendor/agent-workflow/packages/codex/src/skill-bundle.ts"],
-    ["creator" as const, "vendor/agent-workflow/packages/codex/src/runner.ts"],
-    ["creator" as const, "vendor/agent-workflow/packages/codex/src/skill-bundle.ts"],
-  ])("pins the shared Codex runtime for %s inputs: %s", (kind, sharedSource) => {
-    const pinned = pinResearchInput(kind, kind === "post" ? postInput() : creatorInput());
-    expect(pinned.methods).toContainEqual({ path: sharedSource, sha256: expect.stringMatching(/^[a-f0-9]{64}$/u) });
-
-    fs.appendFileSync(path.join(fixture.root, sharedSource), "\nchanged", "utf8");
-    expect(() => assertPinnedResearchInput(pinned)).toThrow(`FROZEN_METHOD_CHANGED: ${sharedSource}`);
-  });
-
-  it("pins every file in the skill package, including resources not named by an executor", () => {
-    const resource = ".agents/skills/video-content-reconstruction/references/future-resource.md";
-    fs.writeFileSync(path.join(fixture.root, resource), "future-v1", "utf8");
+  it("pins the official Agent SDK runtime and rejects replay of historical Codex inputs", () => {
     const pinned = pinResearchInput("post", postInput());
-    expect(pinned.skillPackages).toEqual([{ path: ".agents/skills/video-content-reconstruction",
-      sha256: expect.stringMatching(/^[a-f0-9]{64}$/u) }]);
-
-    fs.writeFileSync(path.join(fixture.root, resource), "future-v2", "utf8");
-    expect(() => assertPinnedResearchInput(pinned)).toThrow("FROZEN_SKILL_PACKAGE_CHANGED");
-
-    const addedPinned = pinResearchInput("post", postInput());
-    fs.writeFileSync(path.join(fixture.root, ".agents/skills/video-content-reconstruction/references/new-resource.md"), "new");
-    expect(() => assertPinnedResearchInput(addedPinned)).toThrow("FROZEN_SKILL_PACKAGE_CHANGED");
-
-    const modePinned = pinResearchInput("post", postInput());
-    fs.chmodSync(path.join(fixture.root, resource), 0o755);
-    expect(() => assertPinnedResearchInput(modePinned)).toThrow("FROZEN_SKILL_PACKAGE_CHANGED");
+    expect(pinned.executor).toBe("responses");
+    expect(pinned.methods).toEqual(expect.arrayContaining([
+      { path: "../../vendor/agent-workflow/packages/agent-sdk/src/responses.ts", sha256: expect.stringMatching(/^[a-f0-9]{64}$/u) },
+      { path: "../../vendor/agent-workflow/packages/agent-sdk/package.json", sha256: expect.stringMatching(/^[a-f0-9]{64}$/u) },
+    ]));
+    expect(pinned.skillPackages).toBeUndefined();
+    expect(() => assertPinnedResearchInput({ ...pinned, executor: "codex" })).toThrow("LEGACY_CODEX_INPUT_NOT_EXECUTABLE");
   });
 
   it("registers an immutable, provenance-bearing frozen-input artifact", async () => {

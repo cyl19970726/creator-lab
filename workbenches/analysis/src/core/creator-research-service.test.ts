@@ -1,25 +1,22 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CreatorResearchService } from "./creator-research-service.js";
-import { CreatorResearchStore } from "./creator-research-store.js";
 import type { CreatorBrowserExecutor } from "../../packages/research/index.js";
 import type { CreatorArtifactStore } from "../../packages/research/index.js";
 import type { DeepMediaResolver, VideoReconstructionExecutor, CreatorSynthesisExecutor, CreatorResearchCompletionPort } from "../../packages/research/index.js";
+import { PostgresCreatorResearchRepository } from "../../packages/adapters/src/platform/database/postgres-creator-research-repository.js";
+import { createAnalysisPgTestDatabase, type AnalysisPgTestDatabase } from "../../packages/adapters/src/platform/database/postgres-test-database.js";
 
-const temporaryDirectories: string[] = [];
+let pgDatabase: AnalysisPgTestDatabase;
+let repository: PostgresCreatorResearchRepository;
+const databaseUrl = process.env.ANALYSIS_TEST_DATABASE_URL;
+const suite = databaseUrl ? describe : describe.skip;
 
 function serviceForTest(options: {
   values?: Map<string, unknown>;
   reconstruct?: VideoReconstructionExecutor["reconstruct"];
   synthesize?: CreatorSynthesisExecutor["synthesize"];
   completion?: CreatorResearchCompletionPort;
-  databasePath?: string;
 } = {}): CreatorResearchService {
-  const directory = options.databasePath ? path.dirname(options.databasePath)
-    : fs.mkdtempSync(path.join(os.tmpdir(), "creator-research-"));
-  if (!options.databasePath) temporaryDirectories.push(directory);
   const values = options.values ?? new Map<string, unknown>();
   const artifacts: CreatorArtifactStore = {
     write(runId, filename, value) {
@@ -113,7 +110,7 @@ function serviceForTest(options: {
     }
   };
   return new CreatorResearchService(
-    new CreatorResearchStore(options.databasePath ?? path.join(directory, "test.sqlite")),
+    repository,
     artifacts,
     mediaResolver,
     videoReconstructor,
@@ -123,48 +120,47 @@ function serviceForTest(options: {
   );
 }
 
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
-});
-
-describe("CreatorResearchService", () => {
+suite("CreatorResearchService", () => {
+  beforeAll(async () => { pgDatabase = await createAnalysisPgTestDatabase(); });
+  beforeEach(async () => {
+    await pgDatabase.reset();
+    repository = new PostgresCreatorResearchRepository(pgDatabase.context);
+  });
+  afterAll(async () => { await pgDatabase.close(); });
+  afterEach(() => vi.restoreAllMocks());
   it.each([
     { leaseState: "live", leaseOffset: 60_000, expectedActive: ["post-live"], expectedQueued: 2, expectedWorker: "running" },
     { leaseState: "expired", leaseOffset: -60_000, expectedActive: [], expectedQueued: 3, expectedWorker: "queued" }
-  ])("startup recovery preserves only $leaseState video leases", ({ leaseOffset, expectedActive, expectedQueued, expectedWorker }) => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "creator-research-recovery-"));
-    temporaryDirectories.push(directory);
-    const databasePath = path.join(directory, "test.sqlite");
+  ])("startup recovery preserves only $leaseState video leases", async ({ leaseOffset, expectedActive, expectedQueued, expectedWorker }) => {
     const values = new Map<string, unknown>();
-    const initial = serviceForTest({ databasePath, values });
-    const run = initial.create("https://www.xiaohongshu.com/user/profile/recovery-creator");
-    initial.close();
+    const initial = serviceForTest({ values });
+    const run = await initial.create("https://www.xiaohongshu.com/user/profile/recovery-creator");
+    await initial.close();
 
     const timestamp = new Date().toISOString();
-    const repository = new CreatorResearchStore(databasePath);
     run.videoWork = { concurrencyLimit: 3, activePostExternalIds: ["post-live"], queuedPosts: 2,
       analyzedPosts: 0, failedPosts: 0 };
     run.worker = { state: "running", attempt: 1, jobId: "11111111-1111-4111-8111-111111111112",
       workerId: "worker-one", lastHeartbeatAt: timestamp };
-    repository.save(run);
-    repository.enqueue({ id: "11111111-1111-4111-8111-111111111112", runId: run.id,
+    await repository.save(run);
+    await repository.enqueue({ id: "11111111-1111-4111-8111-111111111112", runId: run.id,
       nodeKey: "video.reconstruct", status: "running", idempotencyKey: `${run.id}:video:post-live`,
       attempts: 1, maxAttempts: 3, availableAt: timestamp, leaseOwner: "worker-one",
       leaseExpiresAt: new Date(Date.now() + leaseOffset).toISOString(), heartbeatAt: timestamp,
       payload: { postExternalId: "post-live" }, lastError: null, createdAt: timestamp, updatedAt: timestamp });
-    repository.close();
 
-    const recovered = serviceForTest({ databasePath, values });
-    expect(recovered.get(run.id)?.videoWork).toMatchObject({
+    const recovered = serviceForTest({ values });
+    await recovered.initialize();
+    expect((await recovered.get(run.id))?.videoWork).toMatchObject({
       activePostExternalIds: expectedActive, queuedPosts: expectedQueued
     });
-    expect(recovered.get(run.id)?.worker.state).toBe(expectedWorker);
-    recovered.close();
+    expect((await recovered.get(run.id))?.worker.state).toBe(expectedWorker);
+    await recovered.close();
   });
 
-  it("creates and persists a transparent queued run", () => {
+  it("creates and persists a transparent queued run", async () => {
     const service = serviceForTest();
-    const run = service.create("https://www.xiaohongshu.com/user/profile/creator-123");
+    const run = await service.create("https://www.xiaohongshu.com/user/profile/creator-123");
 
     expect(run.status).toBe("queued");
     expect(run.currentStage).toBe("preflight");
@@ -173,33 +169,33 @@ describe("CreatorResearchService", () => {
     expect(run.collectionPolicy.bypassChallenges).toBe(false);
     expect(run.worker.state).toBe("queued");
     expect(run.blockers).toEqual([]);
-    expect(service.get(run.id)).toEqual(run);
-    expect(service.list()).toEqual([run]);
-    expect(service.events(run.id).map((event) => event.type)).toEqual(["run.created", "job.queued"]);
-    service.close();
+    expect((await service.get(run.id))).toEqual(run);
+    expect((await service.list())).toEqual([run]);
+    expect((await service.events(run.id)).map((event) => event.type)).toEqual(["run.created", "job.queued"]);
+    await service.close();
   });
 
-  it("freezes RedFox as a distinct provider for the same creator URL", () => {
+  it("freezes RedFox as a distinct provider for the same creator URL", async () => {
     const service = serviceForTest();
     const profileUrl = "https://www.xiaohongshu.com/user/profile/provider-choice";
-    const accountRun = service.create(profileUrl, "ego-browser");
-    const redFoxRun = service.create(profileUrl, "redfox");
+    const accountRun = await service.create(profileUrl, "ego-browser");
+    const redFoxRun = await service.create(profileUrl, "redfox");
     expect(redFoxRun.id).not.toBe(accountRun.id);
     expect(redFoxRun.collectionPolicy).toMatchObject({ adapter: "redfox", browserProfile: null });
-    expect(service.create(profileUrl, "redfox").id).toBe(redFoxRun.id);
-    service.close();
+    expect((await service.create(profileUrl, "redfox")).id).toBe(redFoxRun.id);
+    await service.close();
   });
 
-  it("accepts a Xiaohongshu profile share link", () => {
+  it("accepts a Xiaohongshu profile share link", async () => {
     const service = serviceForTest();
-    expect(service.create("https://xhslink.cn/m/example").platform).toBe("xiaohongshu");
-    service.close();
+    expect((await service.create("https://xhslink.cn/m/example")).platform).toBe("xiaohongshu");
+    await service.close();
   });
 
-  it("imports a frozen public snapshot into the durable queue without reacquiring inventory", () => {
+  it("imports a frozen public snapshot into the durable queue without reacquiring inventory", async () => {
     const values = new Map<string, unknown>();
     const service = serviceForTest({ values });
-    const run = service.importSnapshot({
+    const run = await service.importSnapshot({
       profileUrl: "https://www.xiaohongshu.com/user/profile/cyber-duck",
       creatorId: "cyber-duck", creatorName: "赛博鸭AIGC", canonicalSlug: "cyber-duck-aigc",
       capturedAt: "2026-08-21T06:07:54.517Z",
@@ -219,23 +215,23 @@ describe("CreatorResearchService", () => {
     expect(run.currentStage).toBe("tiering");
     expect(run.coverage.discoveredPosts).toBe(1);
     expect(run.browserTaskSpaceId).toBe(4);
-    expect(service.events(run.id).map((event) => event.type)).toEqual(["run.created", "artifact.produced", "job.queued"]);
+    expect((await service.events(run.id)).map((event) => event.type)).toEqual(["run.created", "artifact.produced", "job.queued"]);
     expect(JSON.stringify(values.get(run.inventoryArtifactRef!))).toContain("displayed_count_gap:15");
-    service.close();
+    await service.close();
   });
 
-  it("rejects search pages and unsupported hosts", () => {
+  it("rejects search pages and unsupported hosts", async () => {
     const service = serviceForTest();
-    expect(() => service.create("https://www.xiaohongshu.com/search_result?keyword=ai")).toThrow(/博主主页/);
-    expect(() => service.create("https://example.com/user/profile/creator-123")).toThrow(/博主主页/);
-    service.close();
+    await expect(service.create("https://www.xiaohongshu.com/search_result?keyword=ai")).rejects.toThrow(/博主主页/);
+    await expect(service.create("https://example.com/user/profile/creator-123")).rejects.toThrow(/博主主页/);
+    await service.close();
   });
 
   it("leases a queued job and persists a reviewable inventory result", async () => {
     const values = new Map<string, unknown>();
     const completions: string[] = [];
     const service = serviceForTest({ values, completion: { publish(value) { completions.push(value.creatorRunId); } } });
-    const run = service.create("https://www.xiaohongshu.com/user/profile/creator-ready");
+    const run = await service.create("https://www.xiaohongshu.com/user/profile/creator-ready");
     const executor: CreatorBrowserExecutor = {
       async acquire() {
         return {
@@ -282,36 +278,36 @@ describe("CreatorResearchService", () => {
     };
 
     expect(await service.processNext("test-worker", executor)).toBe(true);
-    const updated = service.get(run.id);
+    const updated = await service.get(run.id);
     expect(updated?.status).toBe("collecting");
     expect(updated?.creatorName).toBe("测试博主");
     expect(updated?.coverage.discoveredPosts).toBe(1);
     expect(updated?.inventoryArtifactRef).toMatch(/creator-inventory\.json$/);
     expect((values.get(updated!.inventoryArtifactRef!) as { crawlDiagnostics?: unknown[] }).crawlDiagnostics).toHaveLength(1);
     expect(updated?.stages.find((entry) => entry.id === "inventory")?.status).toBe("complete");
-    expect(service.events(run.id).at(-1)?.type).toBe("job.queued");
+    expect((await service.events(run.id)).at(-1)?.type).toBe("job.queued");
 
     expect(await service.processNext("test-worker", executor)).toBe(true);
-    const portfolio = service.get(run.id);
+    const portfolio = await service.get(run.id);
     expect(portfolio?.status).toBe("collecting");
     expect(portfolio?.portfolioArtifactRef).toMatch(/corpus-analysis\.json$/);
     expect(portfolio?.selectionArtifactRef).toMatch(/creator-selection\.json$/);
     expect(portfolio?.coverage.comparisonPosts).toBe(1);
     expect(portfolio?.stages.find((entry) => entry.id === "tiering")?.status).toBe("complete");
-    expect(service.events(run.id).at(-1)?.type).toBe("job.queued");
+    expect((await service.events(run.id)).at(-1)?.type).toBe("job.queued");
 
     expect(await service.processNext("test-worker", executor)).toBe(true);
-    const detailed = service.get(run.id);
+    const detailed = await service.get(run.id);
     expect(detailed?.status).toBe("collecting");
     expect(detailed?.detailArtifactRef).toMatch(/creator-details\.json$/);
     expect(detailed?.mediaManifestArtifactRef).toMatch(/deep-media-manifest\.json$/);
     expect(detailed?.coverage.enrichedPosts).toBe(1);
     expect(await service.processNext("test-worker", executor)).toBe(true);
-    const reconstructed = service.get(run.id);
+    const reconstructed = await service.get(run.id);
     expect(reconstructed?.status).toBe("collecting");
     expect(reconstructed?.coverage.reconstructedPosts).toBe(1);
     expect(reconstructed?.currentStage).toBe("synthesis");
-    const childEvents = service.events(run.id).filter((event) => event.type.startsWith("child."));
+    const childEvents = (await service.events(run.id)).filter((event) => event.type.startsWith("child."));
     expect(childEvents.map((event) => event.type)).toEqual(["child.started", "child.completed"]);
     expect(childEvents[0]?.payload).toMatchObject({
       postExternalId: "post-1",
@@ -323,11 +319,11 @@ describe("CreatorResearchService", () => {
       outputArtifactRevisions: { "reconstruction.json": "b".repeat(64) }
     });
     expect(await service.processNext("test-worker", executor)).toBe(true);
-    const synthesized = service.get(run.id);
+    const synthesized = await service.get(run.id);
     expect(synthesized?.status).toBe("ready");
     expect(synthesized?.synthesisArtifactRef).toMatch(/creator-analysis\.json$/);
     expect(completions).toEqual([run.id]);
-    const synthesisChildEvents = service.events(run.id).filter((event) =>
+    const synthesisChildEvents = (await service.events(run.id)).filter((event) =>
       ["creator_synthesis", "creator_synthesis_evaluator"].includes(String(event.payload.role))
     );
     expect(synthesisChildEvents.map((event) => event.type)).toEqual([
@@ -338,13 +334,13 @@ describe("CreatorResearchService", () => {
       inputRevision: "d".repeat(64),
       outputArtifactRevisions: { "creator-synthesis-evaluation.json": "e".repeat(64) }
     });
-    service.close();
+    await service.close();
   });
 
   it("never persists transient signed media URLs in public JSON artifacts", async () => {
     const values = new Map<string, unknown>();
     const service = serviceForTest({ values });
-    const run = service.create("https://www.xiaohongshu.com/user/profile/creator-private-url");
+    const run = await service.create("https://www.xiaohongshu.com/user/profile/creator-private-url");
     const secret = "super-secret-signature";
     const executor: CreatorBrowserExecutor = {
       async acquire() {
@@ -365,12 +361,12 @@ describe("CreatorResearchService", () => {
     await service.processNext("worker", executor);
     await service.processNext("worker", executor);
     expect(JSON.stringify([...values.values()])).not.toContain(secret);
-    service.close();
+    await service.close();
   });
 
   it("stops for human handoff and resumes the same durable job", async () => {
     const service = serviceForTest();
-    const run = service.create("https://www.xiaohongshu.com/user/profile/creator-login");
+    const run = await service.create("https://www.xiaohongshu.com/user/profile/creator-login");
     const executor: CreatorBrowserExecutor = {
       async acquire() {
         return {
@@ -385,13 +381,13 @@ describe("CreatorResearchService", () => {
     };
 
     await service.processNext("test-worker", executor);
-    expect(service.get(run.id)?.status).toBe("needs_user");
-    expect(service.get(run.id)?.browserTaskSpaceId).toBe(21);
-    const resumed = service.resume(run.id);
+    expect((await service.get(run.id))?.status).toBe("needs_user");
+    expect((await service.get(run.id))?.browserTaskSpaceId).toBe(21);
+    const resumed = await service.resume(run.id);
     expect(resumed.status).toBe("queued");
     expect(resumed.worker.jobId).toBe(run.worker.jobId);
-    expect(service.events(run.id).at(-1)?.type).toBe("run.resumed");
-    service.close();
+    expect((await service.events(run.id)).at(-1)?.type).toBe("run.resumed");
+    await service.close();
   });
 
   it("requeues a reviewable creator synthesis after a policy-gate correction", async () => {
@@ -403,7 +399,7 @@ describe("CreatorResearchService", () => {
       failedGateIds: ["deep_9_ready"],
       message: "旧 evaluator 错把重叠样本要求成九条唯一视频。"
     }) });
-    const run = service.create("https://www.xiaohongshu.com/user/profile/synthesis-retry");
+    const run = await service.create("https://www.xiaohongshu.com/user/profile/synthesis-retry");
     const executor: CreatorBrowserExecutor = {
       async acquire() {
         return { state: "ready", finalUrl: run.profileUrl, creatorId: "synthesis-retry", creatorName: "综合重试博主",
@@ -422,17 +418,17 @@ describe("CreatorResearchService", () => {
     };
 
     for (let index = 0; index < 5; index += 1) expect(await service.processNext("worker", executor)).toBe(true);
-    const reviewable = service.get(run.id)!;
+    const reviewable = (await service.get(run.id))!;
     expect(reviewable.status).toBe("reviewable");
     expect(reviewable.blockers[0]?.code).toBe("creator_synthesis_not_ready");
     expect(completions).toEqual([]);
 
-    const resumed = service.resume(run.id);
+    const resumed = await service.resume(run.id);
     expect(resumed.status).toBe("queued");
     expect(resumed.currentStage).toBe("synthesis");
     expect(resumed.blockers).toEqual([]);
     expect(resumed.nextAction).toContain("重新生成博主归纳");
-    service.close();
+    await service.close();
   });
 
   it("atomically preserves video outcomes that complete out of lease order", async () => {
@@ -441,7 +437,7 @@ describe("CreatorResearchService", () => {
     const service = serviceForTest({ values, reconstruct: (request) => new Promise((resolve) => {
       pending.push({ postExternalId: request.postExternalId, resolve });
     }) });
-    const run = service.importSnapshot({
+    const run = await service.importSnapshot({
       profileUrl: "https://www.xiaohongshu.com/user/profile/concurrent-creator", creatorId: "concurrent-creator",
       creatorName: "并发博主", capturedAt: "2026-08-21T06:07:54.517Z", taskSpaceId: 4,
       stopReason: "quiescent_incomplete", warnings: [], sourceRefs: ["legacy:concurrent"],
@@ -461,20 +457,21 @@ describe("CreatorResearchService", () => {
         })) };
       }
     };
-    for (let step = 0; step < 8 && !service.get(run.id)?.reconstructionBatchArtifactRef; step += 1) {
+    for (let step = 0; step < 8 && !(await service.get(run.id))?.reconstructionBatchArtifactRef; step += 1) {
       await service.processNext("serial", executor, "serial");
     }
-    const initialRun = service.get(run.id)!;
+    const initialRun = (await service.get(run.id))!;
     expect(initialRun.reconstructionBatchArtifactRef, JSON.stringify(initialRun)).not.toBeNull();
     const normalizedSelection = values.get(initialRun.selectionArtifactRef!) as { items: Array<{ externalId: string; url: string }> };
     expect(normalizedSelection.items.every((item) => item.url === `https://www.xiaohongshu.com/explore/${item.externalId}`)).toBe(true);
     const initialBatch = values.get(initialRun.reconstructionBatchArtifactRef!) as { pendingPosts: number };
     expect(initialBatch.pendingPosts).toBeGreaterThanOrEqual(3);
 
+    // Keep three leased jobs open and finish them out of order to verify each
+    // completion merges against the latest persisted batch revision.
     const jobs = [1, 2, 3].map((slot) => service.processNext(`video-${slot}`, executor, "video"));
-    await Promise.resolve();
-    expect(pending).toHaveLength(3);
-    expect(service.get(run.id)?.videoWork.activePostExternalIds).toHaveLength(3);
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+    expect((await service.get(run.id))?.videoWork.activePostExternalIds).toHaveLength(3);
     const outcome = (postExternalId: string) => {
       const root = `/artifacts/${run.id}/video-reconstructions/${postExternalId}`;
       return { state: "ready" as const, reconstructionArtifactRef: `${root}/reconstruction.json`, articleArtifactRef: `${root}/article.md`,
@@ -486,10 +483,10 @@ describe("CreatorResearchService", () => {
     for (const index of [2, 0, 1]) {
       const entry = pending[index]!;
       entry.resolve(outcome(entry.postExternalId));
-      await jobs[index];
     }
+    await Promise.all(jobs);
 
-    const completedRun = service.get(run.id)!;
+    const completedRun = (await service.get(run.id))!;
     const completedBatch = values.get(completedRun.reconstructionBatchArtifactRef!) as {
       revision: number; readyPosts: number; pendingPosts: number; items: Array<{ state: string }>;
     };
@@ -499,13 +496,13 @@ describe("CreatorResearchService", () => {
     expect(completedBatch.items.filter((item) => item.state === "verified")).toHaveLength(3);
     expect(completedRun.videoWork).toMatchObject({ activePostExternalIds: [], analyzedPosts: 3,
       queuedPosts: initialBatch.pendingPosts - 3, failedPosts: 0 });
-    expect(service.events(run.id).filter((event) => event.message.includes("博主级研究归纳已进入持久队列"))).toHaveLength(0);
-    service.close();
-  });
+    expect((await service.events(run.id)).filter((event) => event.message.includes("博主级研究归纳已进入持久队列"))).toHaveLength(0);
+    await service.close();
+  }, 15_000);
 
   it("keeps a navigation redirect internal and allows only one task-level retry", async () => {
     const service = serviceForTest();
-    const run = service.importSnapshot({
+    const run = await service.importSnapshot({
       profileUrl: "https://www.xiaohongshu.com/user/profile/redirect-creator", creatorId: "redirect-creator",
       creatorName: "重定向博主", capturedAt: "2026-08-21T06:07:54.517Z", taskSpaceId: 4,
       stopReason: "quiescent_incomplete", warnings: [], sourceRefs: ["legacy:redirect"],
@@ -525,24 +522,24 @@ describe("CreatorResearchService", () => {
     };
     await service.processNext("worker", executor, "serial");
     await service.processNext("worker", executor, "serial");
-    const backoff = service.get(run.id)!;
+    const backoff = (await service.get(run.id))!;
     expect(backoff.status).toBe("backoff");
     expect(backoff.blockers[0]).toMatchObject({ code: "page_shape_unknown", userActionRequired: false });
-    expect(service.events(run.id).at(-1)).toMatchObject({ type: "node.progress",
+    expect((await service.events(run.id)).at(-1)).toMatchObject({ type: "node.progress",
       payload: { navigationDiagnostic: { failureClass: "navigation_redirect", postExternalId: "post-redirect" } } });
 
     await service.processNext("worker", executor, "serial");
-    const degraded = service.get(run.id)!;
+    const degraded = (await service.get(run.id))!;
     expect(degraded.status).not.toBe("failed");
     expect(degraded.coverage.enrichedPosts).toBe(1);
-    expect(service.events(run.id).some((event) => event.message.includes("记录为未知并继续后续帖子"))).toBe(true);
-    service.close();
+    expect((await service.events(run.id)).some((event) => event.message.includes("记录为未知并继续后续帖子"))).toBe(true);
+    await service.close();
   });
 
   it("persists RedFox partial detail checkpoints before retrying the unfinished item", async () => {
     const values = new Map<string, unknown>();
     const service = serviceForTest({ values });
-    const run = service.importSnapshot({
+    const run = await service.importSnapshot({
       profileUrl: "https://www.xiaohongshu.com/user/profile/redfox-partial", creatorId: "redfox-partial",
       creatorName: "部分完成博主", capturedAt: "2026-08-31T00:00:00.000Z", taskSpaceId: 4,
       stopReason: "explicit_end", warnings: [], sourceRefs: ["redfox:fixture"],
@@ -573,13 +570,13 @@ describe("CreatorResearchService", () => {
     await service.processNext("portfolio", executor, "portfolio");
     await service.processNext("redfox", executor, "any");
 
-    const checkpointed = service.get(run.id)!;
+    const checkpointed = (await service.get(run.id))!;
     expect(checkpointed.status).toBe("collecting");
     expect(checkpointed.coverage.enrichedPosts).toBe(1);
     const details = values.get(checkpointed.detailArtifactRef!) as { posts: Array<{ externalId: string }> };
     expect(details.posts.map((post) => post.externalId)).toEqual(["partial-1"]);
-    expect(service.events(run.id).some((event) => event.message.includes("成功条目先写入证据仓"))).toBe(true);
-    service.close();
+    expect((await service.events(run.id)).some((event) => event.message.includes("成功条目先写入证据仓"))).toBe(true);
+    await service.close();
   });
 
   it("requeues only failed video reconstructions without reacquiring the inventory", async () => {
@@ -591,7 +588,7 @@ describe("CreatorResearchService", () => {
         threeLensEvaluationArtifactRef: null, threeLensGateReportArtifactRef: null,
         failedGateIds: ["unchecked_channels"], message: "OCR transient failure" };
     } });
-    const run = service.importSnapshot({
+    const run = await service.importSnapshot({
       profileUrl: "https://www.xiaohongshu.com/user/profile/retry-creator", creatorId: "retry-creator",
       creatorName: "重试博主", capturedAt: "2026-08-21T06:07:54.517Z", taskSpaceId: 4,
       stopReason: "quiescent_incomplete", warnings: [], sourceRefs: ["legacy:retry"],
@@ -612,9 +609,9 @@ describe("CreatorResearchService", () => {
     await service.processNext("worker", executor);
     await service.processNext("worker", executor);
     await service.processNext("worker", executor);
-    const failed = service.get(run.id);
+    const failed = await service.get(run.id);
     expect(failed?.blockers[0]?.code).toBe("video_reconstruction_incomplete");
-    const retried = service.retryFailedReconstructions(run.id);
+    const retried = await service.retryFailedReconstructions(run.id);
     expect(retried.status).toBe("collecting");
     expect(retried.coverage.discoveredPosts).toBe(1);
     expect(retried.nextAction).toContain("仅重试 1 条未通过视频");
@@ -622,15 +619,15 @@ describe("CreatorResearchService", () => {
     expect(retryBatch.pendingPosts).toBe(1);
     expect(retryBatch.failedPosts).toBe(0);
     expect(retryBatch.items[0]?.state).toBe("queued");
-    expect(service.events(run.id).filter((event) => event.type === "run.resumed").at(-1)?.message).toContain("仅重新排队未通过项");
-    service.close();
+    expect((await service.events(run.id)).filter((event) => event.type === "run.resumed").at(-1)?.message).toContain("仅重新排队未通过项");
+    await service.close();
   });
 
   it("refreshes missing media before retrying video reconstruction and preserves ready items", async () => {
     const values = new Map<string, unknown>();
     const service = serviceForTest({ values });
     let mediaAvailable = false;
-    const run = service.importSnapshot({
+    const run = await service.importSnapshot({
       profileUrl: "https://www.xiaohongshu.com/user/profile/media-retry", creatorId: "media-retry",
       creatorName: "媒体重试博主", capturedAt: "2026-08-21T06:07:54.517Z", taskSpaceId: 4,
       stopReason: "quiescent_incomplete", warnings: [], sourceRefs: ["legacy:media-retry"],
@@ -652,17 +649,17 @@ describe("CreatorResearchService", () => {
     await service.processNext("worker", executor);
     await service.processNext("worker", executor);
     await service.processNext("worker", executor);
-    expect(service.get(run.id)?.blockers[0]?.code).toBe("video_reconstruction_pending");
+    expect((await service.get(run.id))?.blockers[0]?.code).toBe("video_reconstruction_pending");
 
     mediaAvailable = true;
-    const retried = service.retryFailedReconstructions(run.id);
+    const retried = await service.retryFailedReconstructions(run.id);
     expect(retried.status).toBe("collecting");
-    expect(service.events(run.id).filter((event) => event.type === "job.queued").at(-1)?.payload).toMatchObject({
+    expect((await service.events(run.id)).filter((event) => event.type === "job.queued").at(-1)?.payload).toMatchObject({
       nodeKey: "creator.enrich", postExternalIds: ["post-media-retry"]
     });
 
     await service.processNext("worker", executor, "serial");
-    const refreshed = service.get(run.id)!;
+    const refreshed = (await service.get(run.id))!;
     const refreshedBatch = values.get(refreshed.reconstructionBatchArtifactRef!) as {
       revision: number; readyPosts: number; pendingPosts: number; failedPosts: number;
       items: Array<{ state: string; sourceMediaArtifactRef: string | null }>;
@@ -673,9 +670,9 @@ describe("CreatorResearchService", () => {
       sourceMediaArtifactRef: `/artifacts/${run.id}/deep-media/post-media-retry/source-video.mp4` });
 
     await service.processNext("worker", executor, "video");
-    expect(service.get(run.id)?.status).not.toBe("failed");
-    const completed = values.get(service.get(run.id)!.reconstructionBatchArtifactRef!) as { readyPosts: number; failedPosts: number };
+    expect((await service.get(run.id))?.status).not.toBe("failed");
+    const completed = values.get((await service.get(run.id))!.reconstructionBatchArtifactRef!) as { readyPosts: number; failedPosts: number };
     expect(completed).toMatchObject({ readyPosts: 1, failedPosts: 0 });
-    service.close();
+    await service.close();
   });
 });

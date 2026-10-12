@@ -1,37 +1,29 @@
 # 创作工作台
 
-创作提供业务流程、工具、标准和作品展示，通用执行、PostgreSQL 资产 harness、一般 Agent SDK、版本评价与工作台由共享 [agent-workflow](../../vendor/agent-workflow/docs/product.md)提供。新增的 Space 接入使用共享 PG 存储、节点合同与只读控制台，见[接入与示例命令](docs/README.md#postgresql-space-接入)。共享目标尚未全部实现；原[本地工作台原型](docs/03-architecture/business-workbench.md)仍使用 SQLite、文件和 Codex，未自动迁移。
+创作把完整内容变成可验收的作品：CONTENT 负责研究、定位、写作和创作者交接；B3 负责真实配音、画面设计、装配、检查与渲染；交付与反馈仍是独立生命周期。研究和分析是可选材料来源，三个工作台没有强制先后顺序。
 
-现有两个入口仍保留，下文描述当前用法：
+当前运行统一使用共享 PostgreSQL workflow ledger 与官方 OpenAI Agents SDK。CONTENT 的 Space 工作台和业务命令见[创作文档导览](docs/README.md)。B3 保留真实视频制作 workflow，明确使用 `PostgresWorkflowRunStore` 和 `OpenAIAgentsSdkRunner`，不是 Space 中的合成 fixture。
 
-- **阶段 workflow（主线）：** 内容形成 → B3 制作。选题、研究和完整稿在同一次内容运行中反复修改，完整内容验收后通过作品档案交接给制作。旧 B1/B2 保留历史可读。实现与内容质量分别验证；从[创作文档导览](docs/README.md)开始读。
-- **文章应用：** 建立账号工作区和作品，定义内容、写完整文章、对精确稿件独立复核，必要时在设定上限内自动修订；用户再选择、接受、退回或提出新一轮修订意见。网页 + API + 独立 worker，下文是它的启动方式。接口见[文章应用合同](docs/03-architecture/article-app.md)。真实 SDK 首稿已跑通；单题运行和模型自审不代表内容方法已验证。
+## B3 制作入口
 
-## 文章应用：本地启动
-
-使用 Node 24，在仓库根目录运行：
+从仓库根目录使用 Node 24，为创作配置专用 PostgreSQL 数据库及 SIWC 授权：
 
 ```sh
-pnpm install
-pnpm build:workflow
+pnpm --filter @creator-lab/creation b3 ./path/to/input.json
+```
+
+输入是 `src/stages/b3.ts` 定义的严格 B3 JSON，必须含已接受的版本化作品档案、绝对 `episodeDir`、`templateDir` 和 `referenceDir`。默认模型是 `gpt-6-luna` / low；可用 `--model` 和 `--effort` 显式调整。PG 运行账本由 `WORKFLOW_DATABASE_URL` 指定；私有 run 输入、输出、截图和视频副本保存在 `CREATION_STATE_ROOT`（默认 `.local/creation`），不会写入仓库。
+
+B3 通过共享受限 workspace tools 给设计角色开放工程/参考读取、`frames-spec/` 写入及固定 `python3 scripts/build-frames.py --check` 命令；检查角色只读取本轮真实截图像素。其他配音、装配、技术检查、截图、渲染及视频哈希保存仍由原业务 workflow 执行。
+
+历史 Codex/SQLite 原型已退役，旧作品、数据库、报告、媒体和 trace 保持原样，不自动导入。只读历史 SQLite 文件归档工具为 `history:archive-sqlite`，它仅以 SQLite `readOnly` 模式做完整性核验，不启动或恢复旧 runtime。`tooling/social-publish` 和项目内 skills 仍是独立的交付工具与方法资料。
+
+## 检查
+
+```sh
+pnpm --filter @creator-lab/creation typecheck
+pnpm --filter @creator-lab/creation test
 pnpm --filter @creator-lab/creation build
-pnpm --filter @creator-lab/creation dev
 ```
 
-构建后的页面由 API 在 `http://127.0.0.1:4337` 提供。另开终端启动执行器，排队任务才会真正运行：
-
-```sh
-pnpm --filter @creator-lab/creation worker
-```
-
-改前端时，可另开终端运行 `pnpm --filter @creator-lab/creation dev:web`，访问 `http://127.0.0.1:4338`；Vite 将 `/api` 转发到 4337。`CREATION_PORT` 可更改 API 端口，默认 4337；前端开发代理目前固定指向 4337。API 和 worker 必须使用同一个 `CREATION_STATE_ROOT`，默认是 `workbenches/creation/data/local/platform-v1`。worker 用 `fs-ext` 的 OS 文件锁保证同一状态目录只由一个进程执行；目前要求 POSIX 本地文件系统，安装 `fs-ext` 需要可用的原生编译环境。
-
-启动前需让运行环境具备所选模型的 Codex SDK 凭据。创建工作区或作品不会调用模型；在页面明确输入模型、推理强度及最多 0–2 次自动修订并点击开始后，worker 才会运行。缺少 worker 时任务保持排队。API 只绑定本机回环地址，不应作为公网服务部署。
-
-## 文章应用：工作方式与数据
-
-页面可创建工作区和文章作品，填写核心问题、读者、目的、账号定位、约束与材料正文；材料链接只记录出处，不自动抓取网页。运行会冻结当次输入，并产生内容定义、文章草稿和绑定该稿的复核产物。复核未通过且修订预算耗尽时，任务进入 `needs_review`；它不是接受决定。用户意见会基于指定稿件及其哈希创建关联的新任务，不覆盖旧稿。执行失败可恢复同一个任务；取消与恢复状态见[合同](docs/03-architecture/article-app.md)。
-
-私有状态目录包含 `creation-v1.sqlite`、`artifacts/`、`traces/` 和 `worker.lock`。SQLite 保存业务对象及 vendor 原生运行账本；`artifacts/` 保存按哈希核验的内容，`traces/` 保存模型调用轨迹。备份或搬迁时应保留整套私有状态，并在进程停止后使用一致的 SQLite 备份方式；不要只复制单个正在写入的数据库文件。该目录被 Git 忽略。旧作品、旧数据库、旧 UI/API/CLI/schema 不会自动导入或兼容。
-
-现有 `tooling/social-publish` 是独立的历史发布工具，未接入新 UI、文章执行或阶段 workflow；项目内九个视频 skill 作为历史方法资料保留，B3 成片由阶段 workflow 实现（`src/stages/b3.ts`）。根目录的 `vendor/agent-workflow` 是唯一共享执行库，本工作台没有复制其引擎。可用 `pnpm --filter @creator-lab/creation check` 运行本工作台的类型检查、测试与构建；这些检查不替代真实模型或人工内容验收。
+测试通过不等于真实模型质量或创作者验收通过；两者需分别依据真实产物评估。

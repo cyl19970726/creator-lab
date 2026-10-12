@@ -1,12 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
-import { runWorkflow, workflow, type AgentRunner } from "@signal-room/workflow";
+import { MemoryRunStore, runWorkflow, workflow, type AgentRunner } from "@signal-room/workflow";
 import type { CreatorArtifactStore, CreatorResearchRepository, RepositoryResearchVersionRegistrar,
   SimpleRegistrationInput } from "../../../research/index.js";
-import { SQLiteWorkflowRunStore } from "./sqlite-run-store.js";
 import { fileDigest } from "./research-inputs.js";
 import { simpleReviewRegistration } from "./simple-review-registration.js";
 
@@ -15,9 +13,12 @@ describe("selected candidate registration binding", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "simple-register-"));
     const previous = process.env.SELF_MEDIA_RUNTIME_DIR;
     process.env.SELF_MEDIA_RUNTIME_DIR = root;
-    const db = new DatabaseSync(":memory:");
     try {
-      const store = new SQLiteWorkflowRunStore(db);
+      const memory = new MemoryRunStore();
+      const store = Object.assign(memory, { getArtifactPayload: async (id: string) => {
+        const artifact = memory.artifacts.find((item) => item.id === id);
+        return artifact?.payload;
+      } });
       const creatorRunId = "11111111-1111-4111-8111-111111111111";
       const directory = path.join(root, "runs", creatorRunId);
       fs.mkdirSync(directory, { recursive: true });
@@ -27,7 +28,7 @@ describe("selected candidate registration binding", () => {
       const receipt = { artifact: { reportArtifactRef, reportSha256: fileDigest(report),
         outcome: { state: "built_unevaluated", reconstructionArtifactRef: reportArtifactRef } } };
       const definition = workflow("register-fixture", { revision: "1" }, async (ctx) => {
-        const evidence = await ctx.publish("evidence", "post-evidence", { kind: "post", files: [], methods: [],
+        const evidence = await ctx.publish("evidence", "post-evidence", { kind: "post", executor: "responses", files: [], methods: [],
           source: { creatorRunId, postExternalId: "post", reconstructionBatchArtifactRef: "batch",
             selectionArtifactRef: "selection", detailArtifactRef: "details", mediaManifestArtifactRef: "media", sourceMediaArtifactRef: "source" } });
         const candidate = await ctx.publish("candidate", "post-candidate", receipt.artifact);
@@ -47,7 +48,7 @@ describe("selected candidate registration binding", () => {
       expect(registerPostVersion).toHaveBeenCalledWith(expect.objectContaining({ candidate: receipt.artifact.outcome,
         researchReview: expect.objectContaining({ reviewStatus: "failed", candidateReportSha256: receipt.artifact.reportSha256 }) }));
     } finally {
-      db.close(); fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
       if (previous === undefined) delete process.env.SELF_MEDIA_RUNTIME_DIR; else process.env.SELF_MEDIA_RUNTIME_DIR = previous;
     }
   });

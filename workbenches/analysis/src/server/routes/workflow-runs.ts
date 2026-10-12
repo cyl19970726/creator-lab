@@ -58,8 +58,8 @@ export interface WorkflowHttpService {
   startPost?(creatorRunId: string, input: unknown): Promise<unknown>;
   startCreatorAnalysis?(creatorRunId: string, input: unknown): Promise<unknown>;
   startSynthesis?(creatorRunId: string, input: unknown): Promise<unknown>;
-  registeredReview?(creatorRunId: string): CreatorRegisteredReview | null | undefined;
-  registeredPostReviews?(creatorRunId: string): CreatorRegisteredPostReviews | undefined;
+  registeredReview?(creatorRunId: string): CreatorRegisteredReview | null | undefined | Promise<CreatorRegisteredReview | null | undefined>;
+  registeredPostReviews?(creatorRunId: string): CreatorRegisteredPostReviews | undefined | Promise<CreatorRegisteredPostReviews | undefined>;
 }
 
 function afterCursor(value: unknown): number {
@@ -83,12 +83,14 @@ export function registerWorkflowRoutes(app: express.Express, service: WorkflowHt
     const raw = typeof request.query.creatorRunIds === "string" ? request.query.creatorRunIds : "";
     const ids = [...new Set(raw.split(",").map((id) => id.trim()).filter(Boolean))];
     if (ids.length === 0 || ids.length > 20) throw new Error("creatorRunIds 必须包含 1–20 个任务 ID");
-    response.json({ items: await Promise.all(ids.map((id) => projectCreatorWorkflowProgress(service.store, id, service.registeredReview?.(id), service.registeredPostReviews?.(id)))) });
+    response.json({ items: await Promise.all(ids.map(async (id) => projectCreatorWorkflowProgress(service.store, id,
+      await service.registeredReview?.(id), await service.registeredPostReviews?.(id)))) });
   }));
 
   app.get("/api/creator-runs/:id/workflow-progress", handler(async (request, response) => {
     const creatorRunId = String(request.params.id);
-    response.json(await projectCreatorWorkflowProgress(service.store, creatorRunId, service.registeredReview?.(creatorRunId), service.registeredPostReviews?.(creatorRunId)));
+    response.json(await projectCreatorWorkflowProgress(service.store, creatorRunId,
+      await service.registeredReview?.(creatorRunId), await service.registeredPostReviews?.(creatorRunId)));
   }));
 
   app.get("/api/creator-runs/:creatorRunId/posts/:postId/workflow-reading", handler(async (request, response) => {
@@ -231,6 +233,20 @@ export function registerWorkflowRoutes(app: express.Express, service: WorkflowHt
   }));
   app.post("/api/creator-runs/:id/workflows/synthesis", handler(async (request, response) => {
     if (!service.startSynthesis) throw new Error("综合工作流尚未启用");
-    response.status(202).json(await service.startSynthesis(String(request.params.id), request.body));
+    const input = request.body === undefined ? {} : request.body;
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      response.status(400).json({ error: "synthesis 请求体必须是对象" }); return;
+    }
+    if (input.candidateMode !== undefined && input.candidateMode !== "rebuild" && input.candidateMode !== "reuse") {
+      response.status(400).json({ error: "candidateMode 必须是 rebuild 或 reuse" }); return;
+    }
+    if (input.candidateMode === "reuse" && (typeof input.reuseCandidateArtifactId !== "string"
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(input.reuseCandidateArtifactId))) {
+      response.status(400).json({ error: "reuseCandidateArtifactId 必须是已登记的候选 ID" }); return;
+    }
+    if (input.candidateMode !== "reuse" && input.reuseCandidateArtifactId !== undefined) {
+      response.status(400).json({ error: "reuseCandidateArtifactId 仅能与 candidateMode=reuse 一起使用" }); return;
+    }
+    response.status(202).json(await service.startSynthesis(String(request.params.id), input));
   }));
 }

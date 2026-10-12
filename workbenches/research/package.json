@@ -8,10 +8,10 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "build:workflow": "pnpm --filter @signal-room/workflow build && pnpm --filter @signal-room/workflow-codex build && pnpm --filter @signal-room/workflow-sqlite build && pnpm --filter @signal-room/workflow-read-model build",
+    "build:workflow": "pnpm --filter @signal-room/workflow build && pnpm --filter @signal-room/workflow-agent-sdk build && pnpm --filter @signal-room/workflow-skill-snapshot build && pnpm --filter @signal-room/workflow-postgres build && pnpm --filter @signal-room/workflow-read-model build",
     "build": "pnpm build:workflow && vite build --config apps/web/vite.config.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test packages/**/*.test.* apps/api/*.test.* apps/web/src/*.test.ts",
+    "test": "node --import tsx --test packages/**/*.test.* scripts/*.test.mjs apps/api/*.test.* apps/web/src/*.test.ts",
     "check": "pnpm build && pnpm typecheck && pnpm test",
     "api": "node --import tsx apps/api/main.ts",
     "worker": "node --import tsx apps/worker/main.ts",
@@ -19,8 +19,9 @@
   },
   "dependencies": {
     "@signal-room/workflow": "workspace:*",
-    "@signal-room/workflow-codex": "workspace:*",
-    "@signal-room/workflow-sqlite": "workspace:*",
+    "@signal-room/workflow-agent-sdk": "workspace:*",
+    "@signal-room/workflow-skill-snapshot": "workspace:*",
+    "@signal-room/workflow-postgres": "workspace:*",
     "@signal-room/workflow-read-model": "workspace:*",
     "fastify": "^5.6.0",
     "@fastify/static": "^8.3.0",
@@ -28,10 +29,13 @@
     "react-dom": "^19.1.0",
     "zod": "^4.1.0",
     "markdown-it": "^14.1.0",
+    "pg": "^8.23.1",
+    "undici": "^7.29.0",
     "mermaid": "^11.12.0"
   },
   "devDependencies": {
     "typescript": "~5.9.3",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.20.0",
     "vite": "^7.1.0",
     "@types/node": "^24.0.0",

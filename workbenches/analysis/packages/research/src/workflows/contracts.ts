@@ -1,7 +1,7 @@
 import type { ArtifactRef, WorkflowDefinition } from "@signal-room/workflow";
 import { z } from "zod";
 
-const sourceConsistencyProvenanceSchema = z.object({ model: z.literal("gpt-5.6-luna"), reasoningEffort: z.literal("medium"),
+const sourceConsistencyProvenanceSchema = z.object({ model: z.string().min(1), reasoningEffort: z.literal("medium"),
   methodSha256: z.string().regex(/^[a-f0-9]{64}$/), threadId: z.string().nullable() });
 
 export const sourceConsistencyCheckV1Schema = z.object({
@@ -109,6 +109,8 @@ export type CreatorSynthesisWorkflowInput = {
 
 export type CreatorSynthesisWorkflowStartInput = {
   creatorRunId: string;
+  candidateMode?: "rebuild" | "reuse";
+  reuseCandidateArtifactId?: string;
   portfolioArtifactRef: string;
   portfolioAnnotationsArtifactRef: string;
   selectionArtifactRef: string;
@@ -174,11 +176,15 @@ export type WorkflowQueueReceipt = {
   state: "queued" | "running" | "waiting" | "blocked" | "needs_review" | "succeeded" | "failed" | "cancel_requested" | "canceled";
   generation: number;
   stepKey?: string;
+  automatic?: { operationKey: string; kind: "post" | "creator_synthesis"; postExternalId?: string;
+    sourceMediaArtifactRef?: string; sourceItemUpdatedAt?: string; sourceBatchArtifactRef?: string; sourceJobId?: string };
 };
 
 export interface ResearchWorkflowExecutor {
   createPost(input: PostWorkflowStartInput): Promise<WorkflowQueueReceipt>;
   createSynthesis(input: CreatorSynthesisWorkflowStartInput): Promise<WorkflowQueueReceipt>;
+  ensureAutomaticPost?(input: PostWorkflowStartInput, operationKey: string, sourceItemUpdatedAt: string): Promise<WorkflowQueueReceipt>;
+  ensureAutomaticSynthesis?(input: CreatorSynthesisWorkflowStartInput, operationKey: string, sourceJobId: string): Promise<WorkflowQueueReceipt>;
   createAnalysis(input: CreatorAnalysisWorkflowStartInput): Promise<WorkflowQueueReceipt>;
   advance(input: { creatorRunId: string; workflowRunId: string; generation: number; signal: AbortSignal }): Promise<WorkflowQueueReceipt>;
   prepareRetry(input: { creatorRunId: string; workflowRunId: string; stepKey: string }): Promise<WorkflowQueueReceipt>;

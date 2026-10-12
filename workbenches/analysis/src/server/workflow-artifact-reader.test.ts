@@ -19,7 +19,10 @@ import { loadWorkflowArtifactReader } from "./workflow-artifact-reader.js";
 const directories: string[] = [];
 afterEach(() => { paths.clear(); directories.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })); });
 
-it("reads a registered content-addressed synthesis while retaining frozen source and file checks", async () => {
+it.each([
+  "creator-analysis.4019cc5ad224.json",
+  "workflow-responses/creator-workflow/attempt-1/creator-analysis.4019cc5ad224.json"
+])("reads a registered content-addressed synthesis at %s while retaining frozen source and file checks", async (reportName) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "workflow-asset-reader-")); directories.push(root);
   const creatorRunId = "00000000-0000-4000-8000-000000000071";
   const files: Array<{ ref: string; sha256: string }> = [];
@@ -34,7 +37,7 @@ it("reads a registered content-addressed synthesis while retaining frozen source
   const pinnedReportRef = `/artifacts/${creatorRunId}/workflow-reconstructions/post-run/attempt/post-1/reconstruction.json`;
   const pinnedReportSha256 = write(pinnedReportRef, { builderLenses: {} });
   write(source.reconstructionBatchArtifactRef, { items: [{ postExternalId: "post-1", reconstructionArtifactRef: pinnedReportRef }] });
-  const reportArtifactRef = `/artifacts/${creatorRunId}/creator-analysis.4019cc5ad224.json`;
+  const reportArtifactRef = `/artifacts/${creatorRunId}/${reportName}`;
   const reportSha256 = write(reportArtifactRef, { inputs: source });
   const candidate = { evidence: { id: "evidence", sha256: "evidence-sha" }, reportArtifactRef, reportSha256 };
   const postArtifact = { id: "post-candidate", type: "post-candidate", schemaVersion: "v1" };
@@ -48,6 +51,11 @@ it("reads a registered content-addressed synthesis while retaining frozen source
   await expect(loadWorkflowArtifactReader(store, payload, creators, "workflow", "candidate"))
     .resolves.toMatchObject({ kind: "creator", data: { source, creatorName: "测试博主",
       evidenceHrefByPost: new Map([["post-1", "/workflow-runs/post-run#artifact-post-candidate"]]) } });
+  if (reportName.startsWith("workflow-responses/")) {
+    candidate.reportArtifactRef = `/artifacts/${creatorRunId}/workflow-responses/creator-workflow/attempt-1/other.4019cc5ad224.json`;
+    await expect(loadWorkflowArtifactReader(store, payload, creators, "workflow", "candidate")).resolves.toBeNull();
+    candidate.reportArtifactRef = reportArtifactRef;
+  }
   fs.writeFileSync(paths.get(source.selectionArtifactRef)!, "{}");
   await expect(loadWorkflowArtifactReader(store, payload, creators, "workflow", "candidate"))
     .rejects.toThrow("FROZEN_SOURCE_CHANGED");

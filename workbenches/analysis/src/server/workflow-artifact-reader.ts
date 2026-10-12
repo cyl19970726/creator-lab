@@ -55,16 +55,16 @@ export async function loadWorkflowArtifactReader(store: RunStore, payload: (id: 
   if (frozen.source.creatorRunId !== creatorRunId) throw new Error("CANDIDATE_SOURCE_RUN_MISMATCH");
   if (asset.type === "post-candidate") {
     if (typeof frozen.source.postExternalId !== "string") return null;
-    const data = loadWorkflowVideoResearch(creators, creatorRunId, frozen.source.postExternalId, candidate);
+    const data = await loadWorkflowVideoResearch(creators, creatorRunId, frozen.source.postExternalId, candidate);
     return data ? { kind: "post" as const, data } : null;
   }
-  // The synthesis executor registers content-addressed reports at the run root;
-  // its private attempt directory is not the public report location.
+  // Both the legacy synthesis executor and Responses runner register content-addressed reports.
   const namespace = `/artifacts/${creatorRunId}/`;
   if (!candidate.reportArtifactRef.startsWith(namespace)) return null;
   const relativeReport = candidate.reportArtifactRef.slice(namespace.length);
   if (!/^creator-analysis\.[a-f0-9]+\.json$/u.test(relativeReport)
-    && !relativeReport.startsWith("workflow-synthesis/")) return null;
+    && !relativeReport.startsWith("workflow-synthesis/")
+    && !/^workflow-responses\/[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*\/creator-analysis\.[a-f0-9]{12}\.json$/u.test(relativeReport)) return null;
   const reportBytes = fs.readFileSync(artifactPath(candidate.reportArtifactRef));
   if (createHash("sha256").update(reportBytes).digest("hex") !== candidate.reportSha256) throw new Error("CANDIDATE_REVISION_CHANGED");
   const source = frozen.source;
@@ -78,7 +78,7 @@ export async function loadWorkflowArtifactReader(store: RunStore, payload: (id: 
   const evidenceHrefByPost = await pinnedPostCandidateHrefs(store, payload, creatorRunId, source.reconstructionBatchArtifactRef);
   return { kind: "creator" as const, data: loadWorkflowCreatorReader({
     report: creatorSynthesisSchema.parse(JSON.parse(reportBytes.toString("utf8"))), source,
-    creatorName: creators.get(creatorRunId)?.creatorName ?? null,
+    creatorName: (await creators.get(creatorRunId))?.creatorName ?? null,
     evidenceHrefByPost,
   }) };
 }
