@@ -98,7 +98,9 @@ export class CreatorResearchWorker {
       for (let slot = 0; slot < this.active[lane].length; slot += 1) {
         if (this.active[lane][slot]) continue;
         this.active[lane][slot] = true;
-        void this.runLane(lane, slot).finally(() => {
+        void this.runLane(lane, slot).catch((error: unknown) => {
+          console.error(`creator research worker ${lane} slot ${slot + 1} failed`, error);
+        }).finally(() => {
           this.active[lane][slot] = false;
           this.resolveIdleWaiters();
         });

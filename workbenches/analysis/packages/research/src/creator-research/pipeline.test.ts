@@ -61,11 +61,11 @@ function versionedSelection(run: CreatorResearchRun) {
   };
 }
 
-function versionedDossier(run = activeVideoRun()) {
+async function versionedDossier(run = activeVideoRun()) {
   const service = { get: () => run, list: () => [run], portfolio: () => ({
     analysis: projectedAnalysis("bounded_partial", "budget_reached"), selection: versionedSelection(run)
   }) } as unknown as CreatorResearchService;
-  const dossier = projectRunDossier(service, run.id);
+  const dossier = await projectRunDossier(service, run.id);
   if (!dossier) throw new Error("versioned fixture did not project");
   return dossier;
 }
@@ -75,7 +75,7 @@ function projectionService(run: CreatorResearchRun, analysis: unknown): CreatorR
 }
 
 describe("creator research pipeline evaluation truth", () => {
-  it("does not call Builder-only videos independently evaluated", () => {
+  it("does not call Builder-only videos independently evaluated", async () => {
     const run = activeVideoRun();
     run.status = "reviewable";
     run.videoWork = { concurrencyLimit: 3, activePostExternalIds: [], queuedPosts: 0, analyzedPosts: 12, failedPosts: 0 };
@@ -91,7 +91,7 @@ describe("creator research pipeline evaluation truth", () => {
     });
   });
 
-  it("names the actual incomplete stages when a historic gate has passed", () => {
+  it("names the actual incomplete stages when a historic gate has passed", async () => {
     const run = activeVideoRun();
     run.status = "ready";
     run.worker.jobId = null;
@@ -103,27 +103,27 @@ describe("creator research pipeline evaluation truth", () => {
     expect(missing).not.toContain("全部上游阶段通过");
   });
 
-  it("keeps a fully liked bounded corpus partial and preserves full status for converged collection", () => {
+  it("keeps a fully liked bounded corpus partial and preserves full status for converged collection", async () => {
     const run = activeVideoRun();
     run.worker.jobId = null;
-    const bounded = projectRunDossier(projectionService(run, projectedAnalysis("bounded_partial", "budget_reached")), run.id);
+    const bounded = await projectRunDossier(projectionService(run, projectedAnalysis("bounded_partial", "budget_reached")), run.id);
     expect(bounded?.corpus.coverageRate).toBe(1);
     expect(bounded?.corpus.health.status).toBe("partial");
     expect(bounded?.corpus.health.reason).toContain("预算");
 
-    const complete = projectRunDossier(projectionService(run, projectedAnalysis("observed_converged", "explicit_end")), run.id);
+    const complete = await projectRunDossier(projectionService(run, projectedAnalysis("observed_converged", "explicit_end")), run.id);
     expect(complete?.corpus.health.status).toBe("full");
 
-    const incompleteLikes = projectRunDossier(projectionService(run, projectedAnalysis("observed_converged", "explicit_end", 0.5)), run.id);
+    const incompleteLikes = await projectRunDossier(projectionService(run, projectedAnalysis("observed_converged", "explicit_end", 0.5)), run.id);
     expect(incompleteLikes?.corpus.health.status).toBe("partial");
     expect(incompleteLikes?.corpus.health.reason).toContain("80%");
   });
 });
 
 describe("creator research pipeline projection", () => {
-  it("exposes the complete 13-stage Skill and runtime ledger", () => {
+  it("exposes the complete 13-stage Skill and runtime ledger", async () => {
     const run = activeVideoRun();
-    const pipeline = buildCreatorResearchPipeline(run, versionedDossier(run));
+    const pipeline = buildCreatorResearchPipeline(run, await versionedDossier(run));
     expect(pipeline.stages.map((stage) => stage.id)).toEqual([
       "run_contract", "identity_verification", "inventory_acquisition", "detail_enrichment",
       "portfolio_annotation", "corpus_statistics", "sample_selection", "media_verification",
@@ -135,9 +135,9 @@ describe("creator research pipeline projection", () => {
     expect(pipeline.stages.find((stage) => stage.id === "video_reconstruction")?.skillId).toBe("video-content-reconstruction");
   });
 
-  it("keeps a versioned partial run incomplete when detail, evaluation and synthesis evidence are missing", () => {
+  it("keeps a versioned partial run incomplete when detail, evaluation and synthesis evidence are missing", async () => {
     const run = activeVideoRun();
-    const pipeline = buildCreatorResearchPipeline(run, versionedDossier(run));
+    const pipeline = buildCreatorResearchPipeline(run, await versionedDossier(run));
     expect(pipeline.ready).toBe(false);
     expect(pipeline.state).not.toBe("ready");
     expect(pipeline.stages.find((stage) => stage.id === "inventory_acquisition")?.state).toBe("partial");
@@ -148,16 +148,16 @@ describe("creator research pipeline projection", () => {
     expect(pipeline.stages.find((stage) => stage.id === "dashboard_projection")?.state).toBe("partial");
   });
 
-  it("does not confuse a visible dashboard with a completed research run", () => {
+  it("does not confuse a visible dashboard with a completed research run", async () => {
     const run = activeVideoRun();
-    const pipeline = buildCreatorResearchPipeline(run, versionedDossier(run));
+    const pipeline = buildCreatorResearchPipeline(run, await versionedDossier(run));
     expect(pipeline.stages.find((stage) => stage.id === "dashboard_projection")?.artifactRefs).toContain("route:/creators/tester");
     expect(pipeline.stages.find((stage) => stage.id === "dashboard_projection")?.gateState).toBe("partial");
     expect(pipeline.ready).toBe(false);
   });
 
-  it("projects active video work onto video stages instead of stale detail enrichment", () => {
-    const base = versionedDossier();
+  it("projects active video work onto video stages instead of stale detail enrichment", async () => {
+    const base = await versionedDossier();
     const items = base.portfolio.items.map((item, index) => ({
       ...item,
       deepSample: index < 7,
@@ -176,7 +176,7 @@ describe("creator research pipeline projection", () => {
     expect(projected.stages.find((stage) => stage.id === "video_evaluation")?.missingInputs).toContain("单轮独立评估：1/7");
   });
 
-  it("uses the registered video batch counts in the run-only API projection", () => {
+  it("uses the registered video batch counts in the run-only API projection", async () => {
     const projected = buildCreatorResearchPipeline(activeVideoRun());
 
     expect(projected.currentStageId).toBe("video_reconstruction");
@@ -185,8 +185,8 @@ describe("creator research pipeline projection", () => {
     expect(projected.stages.find((stage) => stage.id === "video_evaluation")?.missingInputs).toContain("单轮独立评估：1/7");
   });
 
-  it("projects bounded media gaps as unavailable instead of passed or pending", () => {
-    const base = versionedDossier();
+  it("projects bounded media gaps as unavailable instead of passed or pending", async () => {
+    const base = await versionedDossier();
     const items = base.portfolio.items.map((item, index) => ({
       ...item,
       deepSample: index < 6,

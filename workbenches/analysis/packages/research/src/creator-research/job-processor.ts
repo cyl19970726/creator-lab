@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type CreatorResearchRun } from "../../../contracts/index.js";
 import type { CreatorResearchRepository, ResearchJobLane } from "./repository.js";
 import type { CreatorArtifactStore } from "./artifact-store.js";
+import { startLeaseHeartbeat } from "./lease-heartbeat.js";
 import {
   buildCreatorPortfolio, corpusIntegrityFromCorpus,
   buildCreatorPortfolioAnnotations,
@@ -21,7 +22,8 @@ import {
   type CreatorSynthesisExecutor,
   type CreatorResearchCompletionPort
 } from "../../index.js";
-import type { ResearchWorkflowExecutor } from "../workflows/contracts.js";
+import type { ResearchWorkflowExecutor, WorkflowQueueReceipt } from "../workflows/contracts.js";
+import { CreatorResearchWorkflowScheduler } from "../workflows/queue-scheduler.js";
 import { CreatorResearchVideoSynthesisProcessor } from "./video-synthesis-processor.js";
 import { creatorSynthesisCoverage } from "./synthesis-coverage.js";
 
@@ -61,7 +63,8 @@ export class CreatorResearchJobProcessor {
     private readonly videoConcurrencyLimit: number,
     completionPort?: CreatorResearchCompletionPort,
     imagePostReconstructor?: ImagePostReconstructionExecutor,
-    private readonly workflowExecutor?: ResearchWorkflowExecutor
+    private readonly workflowExecutor?: ResearchWorkflowExecutor,
+    private readonly automaticVersionedWorkflows = false
   ) {
     this.videoProcessor = new CreatorResearchVideoSynthesisProcessor(
       repository,
@@ -70,91 +73,119 @@ export class CreatorResearchJobProcessor {
       synthesisExecutor,
       videoConcurrencyLimit,
       completionPort,
-      imagePostReconstructor
+      imagePostReconstructor,
+      automaticVersionedWorkflows
     );
   }
 
   async processNext(workerId: string, executor: CreatorBrowserExecutor, lane: ResearchJobLane = "any",
     runId?: string): Promise<boolean> {
     const leasedAt = now();
-    const job = this.repository.claimNext(workerId, leasedAt, leaseUntil(), lane, runId);
+    const job = await this.repository.claimNext(workerId, leasedAt, leaseUntil(), lane, runId);
     if (!job) return false;
-    const run = this.repository.get(job.runId);
-    if (!run) {
-      this.repository.updateJobStatus({ jobId: job.id, status: "failed", updatedAt: now(), lastError: "run_missing" });
-      return true;
-    }
+    const processClaimed = async (): Promise<boolean> => {
+      const run = await this.repository.get(job.runId);
+      if (!run) {
 
-    if (job.nodeKey === "creator.portfolio") {
-      this.processPortfolio(run, job, workerId);
-      return true;
-    }
-    if (job.nodeKey === "creator.enrich") {
-      await this.processDetail(run, job, workerId, executor);
-      return true;
-    }
-    if (job.nodeKey === "video.reconstruct") {
-      await this.videoProcessor.processVideoReconstruction(run, job, workerId);
-      return true;
-    }
-    if (job.nodeKey === "creator.synthesize") {
-      await this.videoProcessor.processSynthesis(run, job, workerId);
-      return true;
-    }
-    if (job.nodeKey === "workflow.advance") {
-      await this.processWorkflowAdvance(run, job, workerId);
-      return true;
-    }
-
-    run.status = "preflight";
-    run.currentStage = "preflight";
-    run.updatedAt = leasedAt;
-    run.blockers = [];
-    run.nextAction = run.collectionPolicy.adapter === "ego-browser"
-      ? "Worker 正在使用隔离的 ego-browser TaskSpace 验证登录和博主身份。"
-      : "Worker 正在通过红狐公开数据接口验证博主身份与作品清单。";
-    run.worker = { state: "running", attempt: job.attempts, jobId: job.id, workerId, lastHeartbeatAt: leasedAt };
-    stage(run, "preflight").status = "running";
-    stage(run, "preflight").message = run.collectionPolicy.adapter === "ego-browser"
-      ? "正在连接 hhh-01 登录态并验证主页。"
-      : "正在调用红狐账号与作品接口；不会使用浏览器登录态。";
-    this.repository.save(run);
-    this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: leasedAt });
-    this.repository.appendEvent({
-      runId: run.id, jobId: job.id, type: "job.leased", createdAt: leasedAt,
-      message: `任务由 ${workerId} 接管。`, payload: { attempt: job.attempts }
-    });
-    this.repository.appendEvent({
-      runId: run.id, jobId: job.id, type: "node.started", createdAt: leasedAt,
-      message: "开始身份、登录与作品清单预检。", payload: { nodeKey: job.nodeKey }
-    });
-
-    const heartbeat = setInterval(() => {
-      const at = now();
-      this.repository.heartbeat(job.id, workerId, at, leaseUntil());
-      const latest = this.repository.get(run.id);
-      if (latest && latest.worker.jobId === job.id) {
-        latest.worker.lastHeartbeatAt = at;
-        latest.updatedAt = at;
-        this.repository.save(latest);
+        await this.repository.updateJobStatus({ jobId: job.id, status: "failed", updatedAt: now(), lastError: "run_missing" });
+        return true;
       }
-    }, 20_000);
 
-    try {
-      const result = await executor.acquire({
-        adapter: run.collectionPolicy.adapter,
-        runId: run.id,
-        profileUrl: run.profileUrl,
-        maxScrollRounds: run.collectionPolicy.budgets.maxScrollRounds,
-        taskSpaceId: run.browserTaskSpaceId
+      if (job.nodeKey === "creator.portfolio") {
+        await this.processPortfolio(run, job, workerId);
+        return true;
+      }
+      if (job.nodeKey === "creator.enrich") {
+        await this.processDetail(run, job, workerId, executor);
+        return true;
+      }
+      if (job.nodeKey === "video.reconstruct") {
+        if (job.payload.automaticVersioned === true && job.payload.evidenceKind === "video") {
+          try { await this.processAutomaticPost(run, job); }
+          catch (error) {
+            if (error instanceof Error && error.message.includes("STALE_RESEARCH_LEASE")) throw error;
+            await this.failAutomaticStart(run, job, "post", error);
+          }
+        } else await this.videoProcessor.processVideoReconstruction(run, job, workerId);
+        return true;
+      }
+      if (job.nodeKey === "creator.synthesize") {
+        if (job.payload.automaticVersioned === true) {
+          try { await this.processAutomaticSynthesis(run, job); }
+          catch (error) {
+            if (error instanceof Error && error.message.includes("STALE_RESEARCH_LEASE")) throw error;
+            await this.failAutomaticStart(run, job, "creator_synthesis", error);
+          }
+        }
+        else await this.videoProcessor.processSynthesis(run, job, workerId);
+        return true;
+      }
+      if (job.nodeKey === "workflow.advance") {
+        await this.processWorkflowAdvance(run, job, workerId);
+        return true;
+      }
+
+      run.status = "preflight";
+      run.currentStage = "preflight";
+      run.updatedAt = leasedAt;
+      run.blockers = [];
+      run.nextAction = run.collectionPolicy.adapter === "ego-browser"
+        ? "Worker 正在使用隔离的 ego-browser TaskSpace 验证登录和博主身份。"
+        : "Worker 正在通过红狐公开数据接口验证博主身份与作品清单。";
+      run.worker = { state: "running", attempt: job.attempts, jobId: job.id, workerId, lastHeartbeatAt: leasedAt };
+      stage(run, "preflight").status = "running";
+      stage(run, "preflight").message = run.collectionPolicy.adapter === "ego-browser"
+        ? "正在连接 hhh-01 登录态并验证主页。"
+        : "正在调用红狐账号与作品接口；不会使用浏览器登录态。";
+      await this.repository.save(run);
+      await this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: leasedAt });
+      await this.repository.appendEvent({
+        runId: run.id, jobId: job.id, type: "job.leased", createdAt: leasedAt,
+        message: `任务由 ${workerId} 接管。`, payload: { attempt: job.attempts }
       });
-      this.applyAcquisitionResult(run, job, workerId, result);
+      await this.repository.appendEvent({
+        runId: run.id, jobId: job.id, type: "node.started", createdAt: leasedAt,
+        message: "开始身份、登录与作品清单预检。", payload: { nodeKey: job.nodeKey }
+      });
+
+      const heartbeat = startLeaseHeartbeat(async () => {
+        const at = now();
+        if (!await this.repository.heartbeat(job.id, workerId, at, leaseUntil())) throw new Error("STALE_RESEARCH_LEASE");
+        const latest = await this.repository.get(run.id);
+        if (latest && latest.worker.jobId === job.id) {
+          latest.worker.lastHeartbeatAt = at;
+          latest.updatedAt = at;
+          await this.repository.save(latest);
+        }
+      });
+
+      try {
+        const result = await executor.acquire({
+          adapter: run.collectionPolicy.adapter,
+          runId: run.id,
+          profileUrl: run.profileUrl,
+          maxScrollRounds: run.collectionPolicy.budgets.maxScrollRounds,
+          taskSpaceId: run.browserTaskSpaceId
+        });
+        await heartbeat.stop();
+        await this.applyAcquisitionResult(run, job, workerId, result);
+      } catch (error) {
+        await heartbeat.stop();
+        if (error instanceof Error && error.message.includes("STALE_RESEARCH_LEASE")) return true;
+        await this.failRun(run, job, workerId, error instanceof Error ? error.message : "采集 Worker 失败");
+      } finally {
+        await heartbeat.stop();
+      }
+      return true;
+    };
+    try {
+      return this.repository.runWithJobLease
+        ? await this.repository.runWithJobLease(job.id, workerId, job.attempts, processClaimed)
+        : await processClaimed();
     } catch (error) {
-      this.failRun(run, job, workerId, error instanceof Error ? error.message : "采集 Worker 失败");
-    } finally {
-      clearInterval(heartbeat);
+      if (error instanceof Error && error.message.includes("STALE_RESEARCH_LEASE")) return true;
+      throw error;
     }
-    return true;
   }
 
   private async processWorkflowAdvance(run: CreatorResearchRun, job: ResearchJob, workerId: string): Promise<void> {
@@ -162,47 +193,219 @@ export class CreatorResearchJobProcessor {
     const workflowRunId = typeof job.payload.workflowRunId === "string" ? job.payload.workflowRunId : null;
     const generation = typeof job.payload.generation === "number" ? job.payload.generation : 0;
     if (!workflowRunId || !this.workflowExecutor) {
-      this.repository.updateJobStatus({ jobId: job.id, status: "failed", updatedAt: startedAt,
+
+      await this.repository.updateJobStatus({ jobId: job.id, status: "failed", updatedAt: startedAt,
         lastError: !workflowRunId ? "workflow_payload_invalid" : "workflow_executor_unavailable" });
       return;
     }
-    this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: startedAt });
-    this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.started", createdAt: startedAt,
+    await this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: startedAt });
+    await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.started", createdAt: startedAt,
       message: "Workflow 节点开始执行。", payload: { workflowRunId, generation } });
     const controller = new AbortController();
-    const heartbeat = setInterval(() => {
-      if (!this.repository.heartbeat(job.id, workerId, now(), leaseUntil(180))) controller.abort();
-    }, 20_000);
+    const heartbeat = startLeaseHeartbeat(async () => {
+      if (!await this.repository.heartbeat(job.id, workerId, now(), leaseUntil(180))) controller.abort();
+    }, () => controller.abort());
     try {
       const receipt = await this.workflowExecutor.advance({ creatorRunId: run.id, workflowRunId, generation,
         signal: controller.signal });
+      await heartbeat.stop();
+      if (receipt.automatic && ["succeeded", "failed", "blocked", "needs_review", "canceled"].includes(receipt.state)) {
+        await this.completeAutomaticWorkflow(run.id, receipt);
+      }
       const completedAt = now();
-      this.repository.updateJobStatus({ jobId: job.id,
+
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: completedAt,
+        message: "Workflow 节点已释放任务租约。", payload: { workflowRunId, generation, state: receipt.state } });
+      await this.repository.updateJobStatus({ jobId: job.id,
         status: receipt.state === "canceled" || receipt.state === "cancel_requested" ? "canceled" : "succeeded",
         updatedAt: completedAt });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: completedAt,
-        message: "Workflow 节点已释放任务租约。", payload: { workflowRunId, generation, state: receipt.state } });
     } catch (error) {
+      await heartbeat.stop();
+      if (error instanceof Error && error.message.includes("STALE_RESEARCH_LEASE")) return;
       const completedAt = now();
       const message = error instanceof Error ? error.message : String(error);
       const snapshot = await this.workflowExecutor.snapshot(run.id, workflowRunId).catch(() => null);
       const canceled = controller.signal.aborted || snapshot?.state === "canceled" || snapshot?.state === "cancel_requested";
-      this.repository.updateJobStatus({ jobId: job.id, status: canceled ? "canceled" : "failed",
-        updatedAt: completedAt, lastError: message });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: canceled ? "node.completed" : "child.failed", createdAt: completedAt,
+      if (snapshot?.automatic && ["succeeded", "failed", "blocked", "needs_review", "canceled"].includes(snapshot.state)) {
+        await this.completeAutomaticWorkflow(run.id, snapshot);
+      }
+
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: canceled ? "node.completed" : "child.failed", createdAt: completedAt,
         message: canceled ? "Workflow 已取消并释放任务租约。" : "Workflow 节点执行失败；已保留成功步骤供恢复。",
         payload: { workflowRunId, generation, error: message, canceled } });
+      await this.repository.updateJobStatus({ jobId: job.id, status: canceled ? "canceled" : "failed",
+        updatedAt: completedAt, lastError: message });
     } finally {
-      clearInterval(heartbeat);
+      await heartbeat.stop();
     }
   }
 
-  private applyAcquisitionResult(
+  private async scheduleAutomaticWorkflow(receipt: WorkflowQueueReceipt): Promise<void> {
+    await new CreatorResearchWorkflowScheduler(this.repository).enqueue({ creatorRunId: receipt.creatorRunId,
+      workflowRunId: receipt.workflowRunId, workflowId: receipt.workflowId, workflowRevision: receipt.workflowRevision,
+      generation: receipt.generation,
+      idempotencyKey: `${receipt.creatorRunId}:workflow.advance:${receipt.workflowRunId}:${receipt.generation}` });
+  }
+
+  private async failAutomaticStart(run: CreatorResearchRun, job: ResearchJob,
+    kind: "post" | "creator_synthesis", error: unknown): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    await this.completeAutomaticWorkflow(run.id, { creatorRunId: run.id, workflowRunId: job.id,
+      workflowId: kind === "post" ? "post.analyze" : "creator.synthesize", workflowRevision: "automatic-start",
+      generation: 1, state: "failed", automatic: { operationKey: job.idempotencyKey, kind,
+        ...(kind === "creator_synthesis" ? {
+          sourceBatchArtifactRef: typeof job.payload.reconstructionBatchArtifactRef === "string"
+            ? job.payload.reconstructionBatchArtifactRef : undefined, sourceJobId: job.id } : {}),
+        ...(kind === "post" && typeof job.payload.postExternalId === "string"
+          ? { postExternalId: job.payload.postExternalId,
+            ...(typeof job.payload.sourceMediaArtifactRef === "string"
+              ? { sourceMediaArtifactRef: job.payload.sourceMediaArtifactRef } : {}),
+            ...(typeof job.payload.sourceItemUpdatedAt === "string"
+              ? { sourceItemUpdatedAt: job.payload.sourceItemUpdatedAt } : {}) } : {}) } });
+    await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "child.failed", createdAt: now(),
+      message: "自动 Workflow 未能启动；批次已记录技术失败。", payload: { kind, error: message } });
+    await this.repository.updateJobStatus({ jobId: job.id, status: "failed", updatedAt: now(), lastError: message });
+  }
+
+  private async processAutomaticPost(run: CreatorResearchRun, job: ResearchJob): Promise<void> {
+    const startedAt = now();
+    if (!this.workflowExecutor?.ensureAutomaticPost) throw new Error("Automatic post workflow executor unavailable");
+    await this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: startedAt });
+    const latest = await this.repository.get(run.id) ?? run;
+    const postExternalId = typeof job.payload.postExternalId === "string" ? job.payload.postExternalId : null;
+    if (!postExternalId || !latest.detailArtifactRef || !latest.mediaManifestArtifactRef || !latest.selectionArtifactRef
+      || !latest.reconstructionBatchArtifactRef) throw new Error("Automatic post workflow source unavailable");
+    const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(latest.reconstructionBatchArtifactRef));
+    const item = batch.items.find((candidate) => candidate.postExternalId === postExternalId);
+    if (!item?.sourceMediaArtifactRef || item.evidenceKind !== "video") throw new Error("Automatic video workflow source changed");
+    if (typeof job.payload.sourceItemUpdatedAt === "string" && item.updatedAt !== job.payload.sourceItemUpdatedAt) {
+      await this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: now(), lastError: "superseded_by_newer_post_revision" });
+      return;
+    }
+    if (!["queued", "running"].includes(item.state)) {
+      await this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: now() });
+      return;
+    }
+    const receipt = await this.workflowExecutor.ensureAutomaticPost({ creatorRunId: run.id, postExternalId,
+      evidenceKind: "video", sourceUrl: canonicalXhsPostUrl(postExternalId),
+      ...(job.payload.evaluationOnly === true ? { candidateMode: "reuse" as const } : {}),
+      sourceMediaArtifactRef: item.sourceMediaArtifactRef, detailArtifactRef: latest.detailArtifactRef,
+      mediaManifestArtifactRef: latest.mediaManifestArtifactRef, selectionArtifactRef: latest.selectionArtifactRef,
+      reconstructionBatchArtifactRef: latest.reconstructionBatchArtifactRef }, job.idempotencyKey, item.updatedAt);
+    await this.scheduleAutomaticWorkflow(receipt);
+    await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: now(),
+      message: "视频完整拉片 Workflow 已进入持久队列。", payload: { postExternalId, workflowRunId: receipt.workflowRunId } });
+    await this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: now() });
+  }
+
+  private async processAutomaticSynthesis(run: CreatorResearchRun, job: ResearchJob): Promise<void> {
+    const startedAt = now();
+    if (!this.workflowExecutor?.ensureAutomaticSynthesis) throw new Error("Automatic synthesis workflow executor unavailable");
+    await this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: startedAt });
+    const latest = await this.repository.get(run.id) ?? run;
+    if (!latest.portfolioArtifactRef || !latest.portfolioAnnotationsArtifactRef || !latest.selectionArtifactRef
+      || !latest.detailArtifactRef || !latest.reconstructionBatchArtifactRef) throw new Error("Automatic synthesis source unavailable");
+    const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(latest.reconstructionBatchArtifactRef));
+    const selection = creatorSelectionSchema.parse(await this.artifacts.read(latest.selectionArtifactRef));
+    const coverage = creatorSynthesisCoverage(selection, batch);
+    if (!coverage.provisionalAllowed && !coverage.formalAllowed) throw new Error("Automatic synthesis coverage no longer ready");
+    const receipt = await this.workflowExecutor.ensureAutomaticSynthesis({ creatorRunId: run.id,
+      portfolioArtifactRef: latest.portfolioArtifactRef,
+      portfolioAnnotationsArtifactRef: latest.portfolioAnnotationsArtifactRef,
+      selectionArtifactRef: latest.selectionArtifactRef, detailArtifactRef: latest.detailArtifactRef,
+      reconstructionBatchArtifactRef: latest.reconstructionBatchArtifactRef,
+      previousSynthesisArtifactRef: latest.synthesisArtifactRef,
+      previousSynthesisGateArtifactRef: latest.synthesisGateArtifactRef }, job.idempotencyKey, job.id);
+    await this.scheduleAutomaticWorkflow(receipt);
+    await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: now(),
+      message: "博主综合完整 Workflow 已进入持久队列。", payload: { workflowRunId: receipt.workflowRunId } });
+    await this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: now() });
+  }
+
+  private async completeAutomaticWorkflow(runId: string, receipt: WorkflowQueueReceipt): Promise<void> {
+    const automatic = receipt.automatic;
+    if (!automatic) return;
+    const finish = async () => {
+      const run = await this.repository.get(runId);
+      if (!run) return;
+      const completedAt = now();
+      if (automatic.kind === "creator_synthesis") {
+        if (receipt.state === "succeeded") return; // Registration owns the successful projection.
+        if (stage(run, "synthesis").status === "complete") return; // Retain an already registered candidate.
+        if (automatic.sourceBatchArtifactRef && run.reconstructionBatchArtifactRef !== automatic.sourceBatchArtifactRef) return;
+        if (automatic.sourceJobId && run.worker.jobId !== automatic.sourceJobId) return;
+        run.status = "reviewable";
+        run.updatedAt = completedAt;
+        run.worker = { state: "failed", attempt: 0, jobId: null, workerId: null, lastHeartbeatAt: completedAt };
+        run.blockers = [{ code: "creator_workflow_incomplete", message: `本次博主综合 Workflow ${receipt.state}；已登记的旧版本仍可读取。`, userActionRequired: false }];
+        run.nextAction = "请检查博主综合 Workflow 的失败步骤，修复后重试。";
+        stage(run, "synthesis").status = "blocked";
+        stage(run, "synthesis").message = run.blockers[0]!.message;
+        await this.repository.save(run);
+        return;
+      }
+      if (!run.reconstructionBatchArtifactRef || !automatic.postExternalId) return;
+      const previousRef = run.reconstructionBatchArtifactRef;
+      const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(previousRef));
+      const item = batch.items.find((candidate) => candidate.postExternalId === automatic.postExternalId);
+      if (!item) return;
+      if (automatic.sourceMediaArtifactRef && item.sourceMediaArtifactRef !== automatic.sourceMediaArtifactRef) return;
+      if (["queued", "running"].includes(item.state) && automatic.sourceItemUpdatedAt
+        && item.updatedAt !== automatic.sourceItemUpdatedAt) return;
+      let nextRef = previousRef;
+      if (["queued", "running"].includes(item.state)) {
+        // A successful execution without registration is still an unresolved technical outcome.
+        const missingRegistration = receipt.state === "succeeded";
+        item.state = "not_ready";
+        item.failedGateIds = [missingRegistration ? "post_workflow_registration_missing" : `post_workflow_${receipt.state}`];
+        item.message = missingRegistration ? "拉片 Workflow 已结束，但版本未能登记。" : `本次拉片 Workflow ${receipt.state}；未得到可登记版本。`;
+        item.updatedAt = completedAt;
+        batch.revision += 1;
+        batch.generatedAt = completedAt;
+        batch.builtPosts = batch.items.filter((candidate) => ["built_unevaluated", "evaluated_with_findings", "verified", "ready"].includes(candidate.state)).length;
+        batch.verifiedPosts = batch.items.filter((candidate) => ["verified", "ready"].includes(candidate.state)).length;
+        batch.readyPosts = batch.verifiedPosts;
+        batch.pendingPosts = batch.items.filter((candidate) => ["queued", "running"].includes(candidate.state)).length;
+        batch.failedPosts = batch.items.filter((candidate) => ["not_ready", "blocked"].includes(candidate.state)).length;
+        nextRef = await this.artifacts.write(run.id, `video-reconstruction-batch-r${batch.revision}.json`, batch, [previousRef]);
+        run.reconstructionBatchArtifactRef = nextRef;
+        await this.repository.appendEvent({ runId, jobId: null, type: "artifact.produced", createdAt: completedAt,
+          message: "拉片 Workflow 技术终态已回填研究批次。", payload: { artifactRef: nextRef,
+            postExternalId: automatic.postExternalId, workflowRunId: receipt.workflowRunId, state: receipt.state } });
+      }
+      run.updatedAt = completedAt;
+      run.coverage.reconstructedPosts = batch.builtPosts;
+      run.videoWork = { ...run.videoWork, analyzedPosts: batch.builtPosts, failedPosts: batch.failedPosts,
+        queuedPosts: batch.pendingPosts };
+      if (receipt.state === "canceled") {
+        run.status = "reviewable";
+        run.blockers = [{ code: "post_workflow_canceled", message: "单帖 Workflow 已取消；不会自动启动综合。", userActionRequired: false }];
+        run.nextAction = "如需继续，请重新启动这条帖子的研究。";
+        stage(run, "deep_capture").status = "blocked";
+      } else if (batch.pendingPosts === 0 && run.selectionArtifactRef && !run.synthesisArtifactRef) {
+        const selection = creatorSelectionSchema.parse(await this.artifacts.read(run.selectionArtifactRef));
+        if (!await this.queueSynthesis(run, nextRef, batch, selection, completedAt)) {
+          run.status = "reviewable";
+          run.blockers = [{ code: "video_reconstruction_incomplete", message: "深度内容未达到综合覆盖门槛。", userActionRequired: false }];
+          run.nextAction = "检查失败帖子的 Workflow 步骤并重试；已完成的版本保留。";
+          stage(run, "deep_capture").status = "blocked";
+        }
+      } else if (batch.pendingPosts > 0) {
+        run.status = "collecting";
+        run.nextAction = `深度内容仍有 ${batch.pendingPosts} 条等待完整拉片 Workflow 完成。`;
+      }
+      await this.repository.save(run);
+    };
+    if (this.repository.withRunTransaction) await this.repository.withRunTransaction(runId, finish);
+    else await finish();
+  }
+
+  private async applyAcquisitionResult(
     run: CreatorResearchRun,
     job: ResearchJob,
     workerId: string,
     result: CreatorAcquisitionResult
-  ): void {
+  ): Promise<void> {
     const timestamp = now();
     if (result.state === "needs_user") {
       run.status = "needs_user";
@@ -213,21 +416,22 @@ export class CreatorResearchJobProcessor {
       run.nextAction = "请在已交接的 ego-browser 页面完成登录或验证，然后回到这里点击继续。";
       stage(run, "preflight").status = "blocked";
       stage(run, "preflight").message = result.message;
-      this.repository.save(run);
-      this.repository.updateJobStatus({ jobId: job.id, status: "needs_user", updatedAt: timestamp });
-      this.repository.appendEvent({
+      await this.repository.save(run);
+
+      await this.repository.appendEvent({
         runId: run.id, jobId: job.id, type: "handoff.required", createdAt: timestamp,
         message: result.message, payload: { code: result.code, taskSpaceId: result.taskSpaceId }
       });
+      await this.repository.updateJobStatus({ jobId: job.id, status: "needs_user", updatedAt: timestamp });
       return;
     }
 
     if (result.state === "blocked") {
-      this.failRun(run, job, workerId, result.message, result.code);
+      await this.failRun(run, job, workerId, result.message, result.code);
       return;
     }
 
-    const artifactRef = this.artifacts.write(run.id, "creator-inventory.json", {
+    const artifactRef = await this.artifacts.write(run.id, "creator-inventory.json", {
       schemaVersion: "1.1.0",
       provider: result.provider ?? run.collectionPolicy.adapter,
       runId: run.id,
@@ -241,7 +445,7 @@ export class CreatorResearchJobProcessor {
       posts: result.posts,
       warnings: result.warnings
     }, [`run:${run.id}`, ...(result.sourceRefs ?? [])]);
-    const portfolioJob = this.repository.enqueue({
+    const portfolioJob = await this.repository.enqueue({
       id: randomUUID(), runId: run.id, nodeKey: "creator.portfolio", status: "queued",
       idempotencyKey: `${run.id}:creator.portfolio:ranked-7x3-v1`, attempts: 0, maxAttempts: 3,
       availableAt: timestamp, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null,
@@ -268,23 +472,24 @@ export class CreatorResearchJobProcessor {
     stage(run, "inventory").message = `发现 ${result.posts.length} 条公开作品；停止原因：${result.stopReason}。`;
     stage(run, "tiering").status = "pending";
     stage(run, "tiering").message = "等待从冻结清单复算统计与规范 21 条选择。";
-    this.repository.save(run);
-    this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: timestamp });
-    this.repository.appendEvent({
+    await this.repository.save(run);
+
+    await this.repository.appendEvent({
       runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: timestamp,
       message: "公开作品清单已写入证据仓。", payload: { artifactRef, postCount: result.posts.length }
     });
-    this.repository.appendEvent({
+    await this.repository.appendEvent({
       runId: run.id, jobId: job.id, type: "node.completed", createdAt: timestamp,
       message: "身份预检与作品清单采集完成。", payload: { stopReason: result.stopReason }
     });
-    this.repository.appendEvent({
+    await this.repository.appendEvent({
       runId: run.id, jobId: portfolioJob.id, type: "job.queued", createdAt: timestamp,
       message: "Portfolio 分析节点已进入持久队列。", payload: { nodeKey: portfolioJob.nodeKey }
     });
+    await this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: timestamp });
   }
 
-  private processPortfolio(run: CreatorResearchRun, job: ResearchJob, workerId: string): void {
+  private async processPortfolio(run: CreatorResearchRun, job: ResearchJob, workerId: string): Promise<void> {
     const timestamp = now();
     run.status = "collecting";
     run.currentStage = "tiering";
@@ -294,28 +499,28 @@ export class CreatorResearchJobProcessor {
     run.worker = { state: "running", attempt: job.attempts, jobId: job.id, workerId, lastHeartbeatAt: timestamp };
     stage(run, "tiering").status = "running";
     stage(run, "tiering").message = "统计已知点赞覆盖率；未知值不会按 0 处理。";
-    this.repository.save(run);
-    this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: timestamp });
-    this.repository.appendEvent({
+    await this.repository.save(run);
+    await this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: timestamp });
+    await this.repository.appendEvent({
       runId: run.id, jobId: job.id, type: "job.leased", createdAt: timestamp,
       message: `Portfolio 节点由 ${workerId} 接管。`, payload: { attempt: job.attempts }
     });
-    this.repository.appendEvent({
+    await this.repository.appendEvent({
       runId: run.id, jobId: job.id, type: "node.started", createdAt: timestamp,
       message: "开始计算表现分布与规范选择集。", payload: { nodeKey: job.nodeKey }
     });
 
     try {
       if (!run.inventoryArtifactRef) throw new Error("Portfolio 节点缺少作品清单 artifact");
-      const inventory = this.artifacts.read(run.inventoryArtifactRef);
+      const inventory = await this.artifacts.read(run.inventoryArtifactRef);
       const { corpus, selection } = buildCreatorPortfolio(inventory, run.inventoryArtifactRef, timestamp);
       for (const record of corpus.records) record.url = canonicalXhsPostUrl(record.externalId);
       for (const item of selection.items) item.url = canonicalXhsPostUrl(item.externalId);
-      const corpusRef = this.artifacts.write(run.id, "creator-corpus.json", corpus, [run.inventoryArtifactRef]);
+      const corpusRef = await this.artifacts.write(run.id, "creator-corpus.json", corpus, [run.inventoryArtifactRef]);
       const annotations = buildCreatorPortfolioAnnotations(corpus, corpusRef, timestamp);
-      const annotationsRef = this.artifacts.write(run.id, "portfolio-annotations.json", annotations, [corpusRef]);
+      const annotationsRef = await this.artifacts.write(run.id, "portfolio-annotations.json", annotations, [corpusRef]);
       selection.sourceCorpusArtifactRef = corpusRef;
-      const selectionRef = this.artifacts.write(run.id, "creator-selection.json", selection, [corpusRef]);
+      const selectionRef = await this.artifacts.write(run.id, "creator-selection.json", selection, [corpusRef]);
       const analysis = creatorPortfolioAnalysisSchema.parse({
         schemaVersion: "1.0.0",
         runId: run.id,
@@ -334,8 +539,8 @@ export class CreatorResearchJobProcessor {
         unknowns: corpus.unknowns,
         ...corpusIntegrityFromCorpus(corpus)
       });
-      const portfolioRef = this.artifacts.write(run.id, "corpus-analysis.json", analysis, [corpusRef, selectionRef]);
-      const detailJob = this.repository.enqueue({
+      const portfolioRef = await this.artifacts.write(run.id, "corpus-analysis.json", analysis, [corpusRef, selectionRef]);
+      const detailJob = await this.repository.enqueue({
         id: randomUUID(), runId: run.id, nodeKey: "creator.enrich", status: "queued",
         idempotencyKey: `${run.id}:creator.enrich:${selectionRef}:0`, attempts: 0, maxAttempts: 3,
         availableAt: timestamp, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null,
@@ -356,25 +561,26 @@ export class CreatorResearchJobProcessor {
       stage(run, "tiering").message = `已选 ${selection.denominator.selectedPosts} 条：High ${selection.tierCounts.high} / Base ${selection.tierCounts.base} / Low ${selection.tierCounts.low}。`;
       stage(run, "deep_capture").status = "pending";
       stage(run, "deep_capture").message = `${selection.items.filter((item) => item.deepCandidate).length} 条深度候选等待内容还原。`;
-      this.repository.save(run);
-      this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: timestamp });
+      await this.repository.save(run);
+
       for (const [kind, artifactRef] of [["creator.corpus", corpusRef], ["creator.portfolio_annotations", annotationsRef], ["creator.selection", selectionRef], ["creator.portfolio", portfolioRef]]) {
-        this.repository.appendEvent({
+        await this.repository.appendEvent({
           runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: timestamp,
           message: `${kind} artifact 已写入证据仓。`, payload: { kind, artifactRef }
         });
       }
-      this.repository.appendEvent({
+      await this.repository.appendEvent({
         runId: run.id, jobId: job.id, type: "node.completed", createdAt: timestamp,
         message: "全量表层标注、统计与 High / Base / Low 规范选择完成。",
         payload: { annotated: annotations.denominator.annotatedPosts, selected: selection.denominator.selectedPosts }
       });
-      this.repository.appendEvent({
+      await this.repository.appendEvent({
         runId: run.id, jobId: detailJob.id, type: "job.queued", createdAt: timestamp,
         message: "选择集详情节点已进入持久队列。", payload: { nodeKey: detailJob.nodeKey }
       });
+      await this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: timestamp });
     } catch (error) {
-      this.failRun(run, job, workerId, error instanceof Error ? error.message : "Portfolio 分析失败");
+      await this.failRun(run, job, workerId, error instanceof Error ? error.message : "Portfolio 分析失败");
     }
   }
 
@@ -388,27 +594,27 @@ export class CreatorResearchJobProcessor {
     run.worker = { state: "running", attempt: job.attempts, jobId: job.id, workerId, lastHeartbeatAt: timestamp };
     stage(run, "deep_capture").status = "running";
     stage(run, "deep_capture").message = "详情采集限定为规范选择集，不打开全量作品。";
-    this.repository.save(run);
-    this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: timestamp });
-    this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "job.leased", createdAt: timestamp,
+    await this.repository.save(run);
+    await this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: timestamp });
+    await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "job.leased", createdAt: timestamp,
       message: `详情节点由 ${workerId} 接管。`, payload: { attempt: job.attempts } });
-    this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.started", createdAt: timestamp,
+    await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.started", createdAt: timestamp,
       message: "开始选择集公开详情采集。", payload: { nodeKey: job.nodeKey } });
-    const heartbeat = setInterval(() => {
+    const heartbeat = startLeaseHeartbeat(async () => {
       const at = now();
-      this.repository.heartbeat(job.id, workerId, at, leaseUntil());
-      const latest = this.repository.get(run.id);
+      if (!await this.repository.heartbeat(job.id, workerId, at, leaseUntil())) throw new Error("STALE_RESEARCH_LEASE");
+      const latest = await this.repository.get(run.id);
       if (latest && latest.worker.jobId === job.id) {
         latest.worker.lastHeartbeatAt = at;
         latest.updatedAt = at;
-        this.repository.save(latest);
+        await this.repository.save(latest);
       }
-    }, 20_000);
+    });
     try {
       if (!run.selectionArtifactRef) throw new Error("详情节点缺少选择集 artifact");
-      let selection = creatorSelectionSchema.parse(this.artifacts.read(run.selectionArtifactRef));
+      let selection = creatorSelectionSchema.parse(await this.artifacts.read(run.selectionArtifactRef));
       const previousDetails = run.detailArtifactRef
-        ? creatorDetailCollectionSchema.parse(this.artifacts.read(run.detailArtifactRef))
+        ? creatorDetailCollectionSchema.parse(await this.artifacts.read(run.detailArtifactRef))
         : null;
       const completedIds = new Set(previousDetails?.posts.map((item) => item.externalId) ?? []);
       const pendingSelection = selection.items.filter((item) => !completedIds.has(item.externalId));
@@ -433,11 +639,12 @@ export class CreatorResearchJobProcessor {
         taskSpaceId: run.browserTaskSpaceId,
         closeWhenDone: mediaRefresh && remainingMediaIds.length === 0
       });
+      await heartbeat.stop();
       const completedAt = now();
       if (result.state === "blocked" && result.partialPosts && result.partialPosts.length > 0) {
         const interrupted = result;
         const partialPosts = result.partialPosts;
-        this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.progress", createdAt: completedAt,
+        await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.progress", createdAt: completedAt,
           message: "红狐详情批次部分完成；成功条目先写入证据仓，未完成条目留给下一批。",
           payload: { code: interrupted.code, checkpointed: partialPosts.length,
             navigationDiagnostic: interrupted.navigationDiagnostic ?? null } });
@@ -460,11 +667,12 @@ export class CreatorResearchJobProcessor {
           : "请完成详情页面的登录或验证，然后回到任务台继续。";
         stage(run, "deep_capture").status = "blocked";
         stage(run, "deep_capture").message = result.message;
-        this.repository.save(run);
-        this.repository.updateJobStatus({ jobId: job.id, status: "needs_user", updatedAt: completedAt });
-        this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "handoff.required", createdAt: completedAt,
+        await this.repository.save(run);
+
+        await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "handoff.required", createdAt: completedAt,
           message: result.message, payload: { code: result.code, taskSpaceId: result.taskSpaceId,
             navigationDiagnostic: result.navigationDiagnostic ?? null } });
+        await this.repository.updateJobStatus({ jobId: job.id, status: "needs_user", updatedAt: completedAt });
         return;
       }
       if (result.state === "blocked") {
@@ -476,18 +684,19 @@ export class CreatorResearchJobProcessor {
           run.nextAction = "内部 canonical/fallback 导航将自动恢复一次；不要求用户接管，也不重抓基本盘。";
           stage(run, "deep_capture").status = "pending";
           stage(run, "deep_capture").message = result.message;
-          this.repository.save(run);
-          this.repository.updateJobStatus({ jobId: job.id, status: "backoff", updatedAt: completedAt, lastError: result.message });
-          this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.progress", createdAt: completedAt,
+          await this.repository.save(run);
+
+          await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.progress", createdAt: completedAt,
             message: "详情导航归因为内部可恢复阻塞；将进行唯一一次任务级重试。",
             payload: { code: result.code, retry: 1, navigationDiagnostic: result.navigationDiagnostic ?? null } });
+          await this.repository.updateJobStatus({ jobId: job.id, status: "backoff", updatedAt: completedAt, lastError: result.message });
           return;
         }
         if (result.code === "page_shape_unknown" && result.navigationDiagnostic?.postExternalId && result.taskSpaceId !== null) {
           const navigationDiagnostic = result.navigationDiagnostic;
           const unavailable = detailBatch.find((item) => item.externalId === navigationDiagnostic.postExternalId) ?? detailBatch[0];
           if (!unavailable) throw new Error("详情导航失败但缺少对应选择记录");
-          this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.progress", createdAt: completedAt,
+          await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.progress", createdAt: completedAt,
             message: "目标详情在 canonical 与唯一一次 fallback 后仍不可访问；记录为未知并继续后续帖子。",
             payload: { code: result.code, navigationDiagnostic } });
           result = {
@@ -501,10 +710,10 @@ export class CreatorResearchJobProcessor {
             warnings: ["一条详情在有界自动恢复后仍不可访问；字段保持未知，未要求用户接管。"]
           };
         } else {
-          this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.progress", createdAt: completedAt,
+          await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.progress", createdAt: completedAt,
             message: "详情阻塞已归因，诊断随失败事件保留。",
             payload: { code: result.code, navigationDiagnostic: result.navigationDiagnostic ?? null } });
-          this.failRun(run, job, workerId, result.message, result.code);
+          await this.failRun(run, job, workerId, result.message, result.code);
           return;
         }
       }
@@ -540,7 +749,7 @@ export class CreatorResearchJobProcessor {
           "封面本地证据与源视频仍需媒体解析节点单独获取和校验。"
         ]
       });
-      const detailRef = this.artifacts.write(run.id, "creator-details.json", details,
+      const detailRef = await this.artifacts.write(run.id, "creator-details.json", details,
         [run.selectionArtifactRef, run.detailArtifactRef].filter((ref): ref is string => Boolean(ref)));
       const deepIds = new Set(selection.items.filter((item) => item.deepCandidate).map((item) => item.externalId));
       const resolvedMedia = await this.mediaResolver.resolve({
@@ -555,7 +764,7 @@ export class CreatorResearchJobProcessor {
         }))
       });
       const previousMedia = run.mediaManifestArtifactRef
-        ? deepMediaManifestSchema.parse(this.artifacts.read(run.mediaManifestArtifactRef))
+        ? deepMediaManifestSchema.parse(await this.artifacts.read(run.mediaManifestArtifactRef))
         : null;
       const resolvedIds = new Set(resolvedMedia.items.map((item) => item.externalId));
       const mergedMediaItems = [...(previousMedia?.items.filter((item) => !resolvedIds.has(item.externalId)) ?? []), ...resolvedMedia.items]
@@ -576,9 +785,9 @@ export class CreatorResearchJobProcessor {
         items: mergedMediaItems,
         unknowns: [...new Set([...(previousMedia?.unknowns ?? []), ...resolvedMedia.unknowns])]
       });
-      const mediaManifestRef = this.artifacts.write(run.id, "deep-media-manifest.json", mediaManifest, [detailRef]);
+      const mediaManifestRef = await this.artifacts.write(run.id, "deep-media-manifest.json", mediaManifest, [detailRef]);
       if (!mediaRefresh && details.inspectedPosts < details.requestedPosts) {
-        const nextJob = this.repository.enqueue({
+        const nextJob = await this.repository.enqueue({
           id: randomUUID(), runId: run.id, nodeKey: "creator.enrich", status: "queued",
           idempotencyKey: `${run.id}:creator.enrich:${run.selectionArtifactRef}:${details.inspectedPosts}`, attempts: 0, maxAttempts: 3,
           availableAt: completedAt, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null,
@@ -596,18 +805,19 @@ export class CreatorResearchJobProcessor {
         run.nextAction = `详情已分批保存 ${details.inspectedPosts}/${details.requestedPosts}；下一批从未完成作品继续。`;
         stage(run, "deep_capture").status = "pending";
         stage(run, "deep_capture").message = run.nextAction;
-        this.repository.save(run);
-        this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: completedAt });
-        this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
+        await this.repository.save(run);
+
+        await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
           message: "详情批次与媒体证据已增量登记。", payload: { detailArtifactRef: detailRef, mediaManifestArtifactRef: mediaManifestRef, inspected: details.inspectedPosts } });
-        this.repository.appendEvent({ runId: run.id, jobId: nextJob.id, type: "job.queued", createdAt: completedAt,
+        await this.repository.appendEvent({ runId: run.id, jobId: nextJob.id, type: "job.queued", createdAt: completedAt,
           message: "下一详情批次已进入持久队列。", payload: { nodeKey: nextJob.nodeKey, remaining: details.requestedPosts - details.inspectedPosts } });
+        await this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: completedAt });
         return;
       }
       if (!mediaRefresh) {
         const mediaTypes = new Map(details.posts.map((item) => [item.externalId, item.mediaType]));
         const refined = refineDeepSelectionForVerifiedMedia(selection, mediaTypes, completedAt);
-        const refinedRef = this.artifacts.write(run.id, "creator-selection-video-refined.json", refined,
+        const refinedRef = await this.artifacts.write(run.id, "creator-selection-video-refined.json", refined,
           [run.selectionArtifactRef, detailRef]);
         selection = refined;
         run.selectionArtifactRef = refinedRef;
@@ -622,7 +832,7 @@ export class CreatorResearchJobProcessor {
           .map((item) => item.externalId);
         if (mediaIds.length > 0) {
           const [firstBatch, ...rest] = Array.from({ length: Math.ceil(mediaIds.length / 3) }, (_, index) => mediaIds.slice(index * 3, index * 3 + 3));
-          const nextJob = this.repository.enqueue({
+          const nextJob = await this.repository.enqueue({
             id: randomUUID(), runId: run.id, nodeKey: "creator.enrich", status: "queued",
             idempotencyKey: `${run.id}:creator.enrich:media-refresh:${refinedRef}:0`, attempts: 0, maxAttempts: 3,
             availableAt: completedAt, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null,
@@ -640,19 +850,20 @@ export class CreatorResearchJobProcessor {
           run.nextAction = `媒体类型已核验并重算四组深样本；正在补取 ${mediaIds.length} 条深度媒体。`;
           stage(run, "deep_capture").status = "pending";
           stage(run, "deep_capture").message = run.nextAction;
-          this.repository.save(run);
-          this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: completedAt });
-          this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
+          await this.repository.save(run);
+
+          await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
             message: "详情核验后的四组深度选样已登记。", payload: { artifactRef: refinedRef, deepCount: mediaIds.length } });
-          this.repository.appendEvent({ runId: run.id, jobId: nextJob.id, type: "job.queued", createdAt: completedAt,
+          await this.repository.appendEvent({ runId: run.id, jobId: nextJob.id, type: "job.queued", createdAt: completedAt,
             message: "深度媒体补取已进入持久队列。", payload: { nodeKey: nextJob.nodeKey, remaining: mediaIds.length } });
+          await this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: completedAt });
           return;
         }
       } else if (remainingMediaIds.length > 0) {
         const nextIds = remainingMediaIds.slice(0, 3);
         const rest = remainingMediaIds.slice(3);
         const batchIndex = typeof job.payload.batchIndex === "number" ? job.payload.batchIndex + 1 : 1;
-        const nextJob = this.repository.enqueue({
+        const nextJob = await this.repository.enqueue({
           id: randomUUID(), runId: run.id, nodeKey: "creator.enrich", status: "queued",
           idempotencyKey: `${run.id}:creator.enrich:media-refresh:${run.selectionArtifactRef}:${batchIndex}`,
           attempts: 0, maxAttempts: 3, availableAt: completedAt, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null,
@@ -669,17 +880,18 @@ export class CreatorResearchJobProcessor {
         run.nextAction = `深度媒体分批保存；剩余 ${remainingMediaIds.length} 条继续补取。`;
         stage(run, "deep_capture").status = "pending";
         stage(run, "deep_capture").message = run.nextAction;
-        this.repository.save(run);
-        this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: completedAt });
-        this.repository.appendEvent({ runId: run.id, jobId: nextJob.id, type: "job.queued", createdAt: completedAt,
+        await this.repository.save(run);
+
+        await this.repository.appendEvent({ runId: run.id, jobId: nextJob.id, type: "job.queued", createdAt: completedAt,
           message: "下一媒体补取批次已进入持久队列。", payload: { nodeKey: nextJob.nodeKey, remaining: remainingMediaIds.length } });
+        await this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: completedAt });
         return;
       }
       const mediaById = new Map(mediaManifest.items.map((item) => [item.externalId, item]));
       const deepItems = selection.items.filter((item) => item.deepCandidate);
       const previousBatchRef = mediaRefresh ? run.reconstructionBatchArtifactRef : null;
       const previousBatch = previousBatchRef
-        ? videoReconstructionBatchSchema.parse(this.artifacts.read(previousBatchRef))
+        ? videoReconstructionBatchSchema.parse(await this.artifacts.read(previousBatchRef))
         : null;
       const previousItems = new Map(previousBatch?.items.map((item) => [item.postExternalId, item]) ?? []);
       const batchItems = deepItems.map((item) => {
@@ -718,20 +930,23 @@ export class CreatorResearchJobProcessor {
           "每条深度帖子只做一次 Builder；独立评估可选，只有媒体或产物损坏才阻断。"
         ])]
       });
-      const batchRef = this.artifacts.write(run.id, `video-reconstruction-batch-r${revision}.json`, batch,
+      const batchRef = await this.artifacts.write(run.id, `video-reconstruction-batch-r${revision}.json`, batch,
         [run.selectionArtifactRef, detailRef, mediaManifestRef, previousBatchRef].filter((ref): ref is string => Boolean(ref)));
-      const queuedJobs = batch.items.filter((item) => item.state === "queued").map((item) => {
+      const queuedJobs: ResearchJob[] = [];
+      for (const item of batch.items.filter((item) => item.state === "queued")) {
         const selected = selection.items.find((candidate) => candidate.externalId === item.postExternalId);
         if (!selected || !item.sourceMediaArtifactRef) throw new Error(`深度任务 ${item.postExternalId} 缺少选择或媒体引用`);
-        return this.repository.enqueue({
+        queuedJobs.push(await this.repository.enqueue({
           id: randomUUID(), runId: run.id, nodeKey: "video.reconstruct", status: "queued",
           idempotencyKey: `${run.id}:video.reconstruct:${item.postExternalId}:${item.sourceMediaArtifactRef}`,
           attempts: 0, maxAttempts: 2, availableAt: completedAt, leaseOwner: null, leaseExpiresAt: null,
           heartbeatAt: null, payload: { postExternalId: item.postExternalId, sourceUrl: canonicalXhsPostUrl(item.postExternalId),
-            sourceMediaArtifactRef: item.sourceMediaArtifactRef, evidenceKind: item.evidenceKind },
+            sourceMediaArtifactRef: item.sourceMediaArtifactRef, sourceItemUpdatedAt: item.updatedAt,
+            evidenceKind: item.evidenceKind,
+            automaticVersioned: this.automaticVersionedWorkflows && item.evidenceKind === "video" },
           lastError: null, createdAt: completedAt, updatedAt: completedAt
-        });
-      });
+        }));
+      }
       run.updatedAt = completedAt;
       run.browserTaskSpaceId = null;
       run.detailArtifactRef = detailRef;
@@ -740,7 +955,7 @@ export class CreatorResearchJobProcessor {
       run.coverage.enrichedPosts = details.inspectedPosts;
       run.videoWork = { concurrencyLimit: this.videoConcurrencyLimit, activePostExternalIds: [], queuedPosts: queuedJobs.length,
         analyzedPosts: batch.readyPosts, failedPosts: batch.failedPosts };
-      const synthesisQueued = queuedJobs.length === 0 && this.queueSynthesis(run, batchRef, batch, selection, completedAt);
+      const synthesisQueued = queuedJobs.length === 0 && await this.queueSynthesis(run, batchRef, batch, selection, completedAt);
       if (!synthesisQueued) {
         run.status = queuedJobs.length > 0 ? "collecting" : "reviewable";
         run.worker = queuedJobs.length > 0
@@ -754,41 +969,46 @@ export class CreatorResearchJobProcessor {
         stage(run, "deep_capture").status = "pending";
         stage(run, "deep_capture").message = `已补齐 ${details.inspectedPosts}/${details.requestedPosts} 条页面详情；媒体就绪 ${mediaManifest.readyPosts}/${mediaManifest.requestedPosts}，内容还原待执行。`;
       }
-      this.repository.save(run);
-      this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: completedAt });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
+      await this.repository.save(run);
+
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
         message: "选择集详情 artifact 已写入证据仓。", payload: { artifactRef: detailRef, inspectedPosts: details.inspectedPosts } });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
         message: "深度候选本地媒体清单已写入证据仓。", payload: { artifactRef: mediaManifestRef, readyPosts: mediaManifest.readyPosts } });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
         message: "深度内容重建批次已经冻结。", payload: { artifactRef: batchRef, queuedPosts: queuedJobs.length } });
-      for (const queued of queuedJobs) this.repository.appendEvent({ runId: run.id, jobId: queued.id, type: "job.queued", createdAt: completedAt,
+      for (const queued of queuedJobs) await this.repository.appendEvent({ runId: run.id, jobId: queued.id, type: "job.queued", createdAt: completedAt,
         message: "深度内容重建已进入持久队列。", payload: { nodeKey: queued.nodeKey } });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: completedAt,
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: completedAt,
         message: "选择集公开详情采集完成。", payload: { requested: details.requestedPosts, inspected: details.inspectedPosts } });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "run.reviewable", createdAt: completedAt,
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "run.reviewable", createdAt: completedAt,
         message: "Portfolio 与公开详情已可复核；视频机制保持未完成。", payload: {} });
+      await this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: completedAt });
     } catch (error) {
-      this.failRun(run, job, workerId, error instanceof Error ? error.message : "详情采集失败");
+      await heartbeat.stop();
+      if (error instanceof Error && error.message.includes("STALE_RESEARCH_LEASE")) return;
+      await this.failRun(run, job, workerId, error instanceof Error ? error.message : "详情采集失败");
     } finally {
-      clearInterval(heartbeat);
+      await heartbeat.stop();
     }
   }
 
-  private queueSynthesis(
+  private async queueSynthesis(
     run: CreatorResearchRun,
     batchRef: string,
     batch: ReturnType<typeof videoReconstructionBatchSchema.parse>,
     selection: ReturnType<typeof creatorSelectionSchema.parse>,
     queuedAt: string
-  ): boolean {
+  ): Promise<boolean> {
     const coverage = creatorSynthesisCoverage(selection, batch);
     if (!coverage.provisionalAllowed && !coverage.formalAllowed) return false;
     const mode = coverage.formalAllowed ? "formal" : "provisional";
-    const synthesisJob = this.repository.enqueue({ id: randomUUID(), runId: run.id, nodeKey: "creator.synthesize", status: "queued",
+    const synthesisJob = await this.repository.enqueue({ id: randomUUID(), runId: run.id, nodeKey: "creator.synthesize", status: "queued",
       idempotencyKey: `${run.id}:creator.synthesize:${mode}:${batchRef}`, attempts: 0, maxAttempts: 2, availableAt: queuedAt,
-      leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null, payload: { reconstructionBatchArtifactRef: batchRef, mode },
+      leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null, payload: { reconstructionBatchArtifactRef: batchRef, mode,
+        automaticVersioned: this.automaticVersionedWorkflows },
       lastError: null, createdAt: queuedAt, updatedAt: queuedAt });
+    if (["succeeded", "failed", "canceled"].includes(synthesisJob.status)) return false;
     run.status = "collecting";
     run.currentStage = "synthesis";
     run.worker = { state: "queued", attempt: 0, jobId: synthesisJob.id, workerId: null, lastHeartbeatAt: queuedAt };
@@ -806,7 +1026,7 @@ export class CreatorResearchJobProcessor {
       : `${batch.readyPosts}/${batch.requestedPosts} 条全部完成单轮分析；质量提醒继续保留。`;
     stage(run, "synthesis").status = "pending";
     stage(run, "synthesis").message = "等待从规范比较集、可用视频与显式未知边界生成研究归纳。";
-    this.repository.appendEvent({ runId: run.id, jobId: synthesisJob.id, type: "job.queued", createdAt: queuedAt,
+    await this.repository.appendEvent({ runId: run.id, jobId: synthesisJob.id, type: "job.queued", createdAt: queuedAt,
       message: mode === "provisional" ? "DOSSIER_READY 单博主报告已进入持久队列。"
         : coverage.boundedMediaGap ? "带媒体不可得边界的博主级研究归纳已进入持久队列。" : "博主级研究归纳已进入持久队列。",
       payload: { nodeKey: synthesisJob.nodeKey, mode, boundedMediaGap: coverage.boundedMediaGap,
@@ -814,7 +1034,7 @@ export class CreatorResearchJobProcessor {
     return true;
   }
 
-  private failRun(run: CreatorResearchRun, job: ResearchJob, workerId: string, message: string, code = "worker_failed"): void {
+  private async failRun(run: CreatorResearchRun, job: ResearchJob, workerId: string, message: string, code = "worker_failed"): Promise<void> {
     const timestamp = now();
     run.status = "failed";
     run.updatedAt = timestamp;
@@ -826,11 +1046,12 @@ export class CreatorResearchJobProcessor {
         : job.nodeKey === "creator.synthesize" ? "synthesis" : "preflight";
     stage(run, failedStage).status = "failed";
     stage(run, failedStage).message = message;
-    this.repository.save(run);
-    this.repository.updateJobStatus({ jobId: job.id, status: "failed", updatedAt: timestamp, lastError: message });
-    this.repository.appendEvent({
+    await this.repository.save(run);
+
+    await this.repository.appendEvent({
       runId: run.id, jobId: job.id, type: "run.failed", createdAt: timestamp,
       message, payload: { code }
     });
+    await this.repository.updateJobStatus({ jobId: job.id, status: "failed", updatedAt: timestamp, lastError: message });
   }
 }

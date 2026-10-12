@@ -1,7 +1,5 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -54,53 +52,5 @@ describe("report overview projection", () => {
   });
   it("does not accept relative source paths", async () => {
     expect(await loadReportOverview("reconstruction.json")).toEqual({ state: "invalid", overview: null });
-  });
-});
-
-
-describe("overview generator with a fake model process", () => {
-  async function generate(file: string, output: unknown, changeSource = false, configuredModel?: string) {
-    const expectedModel = configuredModel ?? "gpt-5.6-luna";
-    const fakeBinary = path.join(path.dirname(file), "fake-codex.cjs");
-    await writeFile(fakeBinary, `#!/usr/bin/env node
-const fs = require("node:fs");
-const args = process.argv.slice(2);
-if (args[args.indexOf("-m") + 1] !== ${JSON.stringify(expectedModel)} || !args.includes('model_reasoning_effort="medium"') || !args.includes("read-only")) process.exit(9);
-if (${JSON.stringify(changeSource)}) fs.appendFileSync(${JSON.stringify(file)}, " ");
-process.stdin.resume();
-process.stdin.on("end", () => fs.writeFileSync(args[args.indexOf("-o") + 1], ${JSON.stringify(JSON.stringify(output))}));
-`, { mode: 0o700 });
-    return promisify(execFile)(process.execPath, [path.resolve("node_modules/tsx/dist/cli.mjs"),
-      path.resolve("scripts/generate-report-overview.ts"), "--reconstruction", file], {
-      env: { ...process.env, SELF_MEDIA_CODEX_BIN: fakeBinary,
-        ...(configuredModel ? { SELF_MEDIA_REPORT_OVERVIEW_MODEL: configuredModel } : { SELF_MEDIA_REPORT_OVERVIEW_MODEL: undefined }),
-        SELF_MEDIA_REPORT_OVERVIEW_REASONING_EFFORT: "medium" }
-    });
-  }
-  it("publishes validated model output while preserving the source bytes", async () => {
-    const file = await fixture();
-    await generate(file, { status: "ready", error: null, paragraphs: overview.paragraphs });
-    expect(await readFile(file, "utf8")).toBe(source);
-    expect(loadReportOverview(file).overview?.paragraphs).toEqual(overview.paragraphs);
-  });
-  it("uses Luna when no overview model is configured", async () => {
-    const file = await fixture();
-    await generate(file, { status: "ready", error: null, paragraphs: overview.paragraphs });
-    expect(loadReportOverview(file).overview?.model).toBe("gpt-5.6-luna");
-  });
-  it("honors an explicitly configured overview model", async () => {
-    const file = await fixture();
-    await generate(file, { status: "ready", error: null, paragraphs: overview.paragraphs }, false, "gpt-5.6-terra");
-    expect(loadReportOverview(file).overview?.model).toBe("gpt-5.6-terra");
-  });
-  it("refuses to publish when the source changes while generation runs", async () => {
-    const file = await fixture();
-    await expect(generate(file, { status: "ready", error: null, paragraphs: overview.paragraphs }, true)).rejects.toThrow("Source reconstruction changed");
-    expect(loadReportOverview(file).state).toBe("missing");
-  });
-  it("records a failed result when the model invents a source pointer", async () => {
-    const file = await fixture();
-    await expect(generate(file, { status: "ready", error: null, paragraphs: [{ text: "失实", sourcePaths: ["/builderLenses/missing"] }] })).rejects.toThrow();
-    expect(loadReportOverview(file).overview?.status).toBe("failed");
   });
 });

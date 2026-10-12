@@ -11,9 +11,9 @@ program.name("selfmedia").description("小红书 / X 内容证据分析工作台
 program.command("serve")
   .description("启动本地 API")
   .option("--port <number>", "端口")
-  .action((options: { port?: string }) => {
+  .action(async (options: { port?: string }) => {
     const port = Number(options.port ?? apiPort());
-    const composition = createSignalRoomComposition();
+    const composition = await createSignalRoomComposition();
     startSignalRoomServer(composition, port);
   });
 

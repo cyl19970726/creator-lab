@@ -26,9 +26,14 @@ async function download(url: string, target: string, limit: number): Promise<Buf
 }
 
 export class LocalDeepMediaResolver implements DeepMediaResolver {
+  constructor(private readonly relativeRoot = "deep-media") {
+    if (!relativeRoot || path.isAbsolute(relativeRoot) || relativeRoot.split(/[\\/]+/).includes(".."))
+      throw new Error("MEDIA_OUTPUT_ROOT_INVALID");
+  }
+
   async resolve(input: { runId: string; posts: Array<{ externalId: string; videoCandidateUrl: string | null;
     coverCandidateUrl: string | null; imageCandidateUrls?: string[]; downloadVideo: boolean; downloadImages?: boolean }> }): Promise<DeepMediaManifest> {
-    const root = path.join(runArtifactDir(input.runId), "deep-media");
+    const root = path.join(runArtifactDir(input.runId), this.relativeRoot);
     fs.mkdirSync(root, { recursive: true });
     const items: DeepMediaManifest["items"] = [];
     for (const post of input.posts) {
@@ -40,7 +45,7 @@ export class LocalDeepMediaResolver implements DeepMediaResolver {
       if (post.coverCandidateUrl) {
         try {
           await download(post.coverCandidateUrl, path.join(directory, "cover.webp"), 20 * 1024 * 1024);
-          coverArtifactRef = artifactRef(input.runId, `deep-media/${post.externalId}/cover.webp`);
+          coverArtifactRef = artifactRef(input.runId, `${this.relativeRoot}/${post.externalId}/cover.webp`);
           coverState = "ready";
           coverMessage = "封面已下载到本地证据仓。";
         } catch (error) { coverArtifactRef = null; coverMessage = error instanceof Error ? error.message : "封面下载失败"; }
@@ -54,7 +59,7 @@ export class LocalDeepMediaResolver implements DeepMediaResolver {
         try {
           await download(requestedImages[index]!, target, 25 * 1024 * 1024);
           imageArtifactRefs.push(artifactRef(input.runId,
-            `deep-media/${post.externalId}/image-${String(index + 1).padStart(2, "0")}.webp`));
+            `${this.relativeRoot}/${post.externalId}/image-${String(index + 1).padStart(2, "0")}.webp`));
         } catch {
           // Keep successful gallery pages and expose partial coverage in the manifest.
         }
@@ -99,8 +104,8 @@ export class LocalDeepMediaResolver implements DeepMediaResolver {
         const stream = verification.container.streams.find((entry) => entry.codecType === "video");
         if (!stream) throw new Error("媒体完整性报告未确认视频流");
         items.push({ externalId: post.externalId, videoRequested: true, state: "verified_complete", coverState, coverMessage,
-          ...imageFields, videoArtifactRef: artifactRef(input.runId, `deep-media/${post.externalId}/source-video.mp4`), coverArtifactRef,
-          verificationArtifactRef: artifactRef(input.runId, `deep-media/${post.externalId}/media-verification.json`),
+          ...imageFields, videoArtifactRef: artifactRef(input.runId, `${this.relativeRoot}/${post.externalId}/source-video.mp4`), coverArtifactRef,
+          verificationArtifactRef: artifactRef(input.runId, `${this.relativeRoot}/${post.externalId}/media-verification.json`),
           sha256: verification.transport.sha256, bytes: verification.transport.bytes,
           durationSeconds: verification.container.durationSec, width: stream.width, height: stream.height,
           hasAudio: verification.container.streams.some((entry) => entry.codecType === "audio"),

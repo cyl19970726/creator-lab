@@ -1,23 +1,26 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import type {
   CreatorSynthesisWorkflowStartInput, PostWorkflowStartInput,
 } from "../../../research/index.js";
 import { runWorkflow, workflow, type ArtifactRef, type RunStore } from "@signal-room/workflow";
 import { artifactPath } from "../core/artifacts.js";
 import { projectRoot } from "../core/config.js";
-import { snapshotSkill } from "./codex-sdk-runner.js";
+import { snapshotSkill } from "@signal-room/workflow-skill-snapshot";
 
 export type PinnedResearchInput = {
   kind: "post" | "creator";
+  executor?: "codex" | "responses";
   source: PostWorkflowStartInput | CreatorSynthesisWorkflowStartInput;
   files: Array<{ ref: string; sha256: string }>;
   methods: Array<{ path: string; sha256: string }>;
   skillPackages?: Array<{ path: string; sha256: string }>;
   researchScope?: { complete: boolean; posts: Array<{ postExternalId: string; candidate: ArtifactRef;
     review?: ArtifactRef; reviewStatus: string; candidateStatus: string }> };
-  reuseCandidate?: { artifactRef: string; sha256: string };
+  reuseCandidate?: { artifactRef: string; sha256: string;
+    candidate?: { id: string; revision: string; sha256: string } };
   reuseEvaluation?: { artifactRef: string; sha256: string; candidateSha256: string };
 };
 export const fileDigest = (file: string): string => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -54,51 +57,60 @@ function evaluationCandidateReference(value: Record<string, unknown>): string | 
 }
 
 export function methodSnapshot(kind: "post" | "creator") {
-  const files = kind === "post" ? [
-    ".agents/skills/video-content-reconstruction/SKILL.md",
-    ".agents/skills/video-content-reconstruction/references/builder-operator.md",
-    ".agents/skills/video-content-reconstruction/references/evaluator-operator.md",
-    ".agents/skills/video-content-reconstruction/references/single-post-depth.md",
-    ".agents/skills/video-content-reconstruction/references/source-consistency.md",
-    ".agents/skills/video-content-reconstruction/schemas/reconstruction.schema.json",
-    ".agents/skills/video-content-reconstruction/schemas/evaluation.schema.json",
-    ".agents/skills/video-content-reconstruction/schemas/capture-protocol.schema.json",
-    ".agents/skills/video-content-reconstruction/scripts/validate-reconstruction.mjs",
-    ".agents/skills/video-content-reconstruction/scripts/build-evaluator-overview.mjs",
-    "packages/adapters/src/platform/video/codex-video-reconstruction-executor.ts",
-    "packages/adapters/src/platform/video/video-ocr-host-recovery.ts",
-    "packages/adapters/src/platform/video/video-ocr-builder-continuation.ts",
-    "packages/adapters/src/platform/video/video-builder-integrity.ts",
-    "packages/adapters/src/platform/video/video-depth-integrity.ts",
-    "packages/adapters/src/platform/video/video-reconstruction-host-assembler.ts",
-    "packages/adapters/src/platform/video/video-integrity-repair-receipt.ts",
-    "packages/adapters/src/platform/video/video-codex-execution.ts",
-    "packages/adapters/src/workflow/post-evaluation-repair.ts",
-    "packages/adapters/src/workflow/source-consistency-checker.ts",
-    "packages/research/src/video-analysis/runtime-three-lens-contracts.ts",
-  ] : [
-    ".agents/skills/creator-synthesis/SKILL.md",
-    ".agents/skills/creator-synthesis/references/method.md",
-    "packages/adapters/src/platform/synthesis/codex-creator-synthesis-executor.ts",
-    "packages/adapters/src/platform/synthesis/creator-synthesis-reuse.ts",
-    "packages/research/src/creator-synthesis/contracts.ts",
-    "packages/research/src/creator-synthesis/cross-post-specificity.ts",
-    "packages/research/src/creator-synthesis/validate.ts",
+  const files = [
+      ...fs.readdirSync(path.join(projectRoot, "prompts")).filter((name) => name.startsWith("responses-") && name.endsWith(".md")).sort().map((name) => `prompts/${name}`),
+      "packages/adapters/src/workflow/responses-research-runner.ts",
+      "packages/adapters/src/workflow/validated-draft-store.ts",
+      "packages/adapters/src/workflow/reconstruction-patch.ts",
+      "packages/adapters/src/workflow/opening-frame-diagnostics.ts",
+      "packages/adapters/src/workflow/creator-evidence.ts",
+      "packages/adapters/src/workflow/responses-tools.ts",
+      "packages/adapters/src/workflow/persist-agent-attempt.ts",
+      "packages/adapters/src/workflow/responses-pipeline-executors.ts",
+      "packages/adapters/src/workflow/research-workflow-executor.ts",
+      "packages/adapters/src/workflow/postgres-research-workflow-executor.ts",
+      "../../vendor/agent-workflow/packages/agent-sdk/src/responses.ts",
+      "../../vendor/agent-workflow/packages/agent-sdk/package.json",
+      "../../pnpm-lock.yaml",
+      "packages/adapters/src/platform/video/video-builder-integrity.ts",
+      "packages/adapters/src/platform/video/video-depth-integrity.ts",
+      "packages/adapters/src/platform/video/video-reconstruction-media-preparer.ts",
+      "packages/adapters/src/platform/video/video-reconstruction-host-assembler.ts",
+      "packages/adapters/src/platform/video/video-post-source-input.ts",
+      "packages/adapters/src/platform/artifacts/report-source-revision.ts",
+      "packages/adapters/src/platform/synthesis/creator-synthesis-inputs.ts",
+      "packages/research/src/workflows/simple-review-contract.ts",
+      "packages/research/src/workflows/simple-review.ts",
+      ...(kind === "post" ? [
+        ".agents/skills/video-content-reconstruction/schemas/reconstruction.schema.json",
+        ".agents/skills/video-content-reconstruction/schemas/capture-protocol.schema.json",
+        ".agents/skills/video-content-reconstruction/schemas/evaluation.schema.json",
+        ".agents/skills/video-content-reconstruction/schemas/probe.schema.json",
+        ".agents/skills/video-content-reconstruction/scripts/capture-protocol-evidence.mjs",
+        ".agents/skills/video-content-reconstruction/scripts/validate-schemas.py",
+        ".agents/skills/video-content-reconstruction/scripts/run-ocr.mjs",
+        "packages/research/src/video-analysis/runtime-three-lens-contracts.ts",
+        ".agents/skills/video-content-reconstruction/scripts/validate-reconstruction.mjs",
+      ] : ["packages/research/src/creator-synthesis/contracts.ts", "packages/research/src/creator-synthesis/validate.ts",
+        "packages/adapters/src/workflow/creator-candidate-reuse.ts",
+        "packages/research/src/workflows/creator-synthesis.ts",
+        "packages/contracts/src/cross-post-research.ts",
+        "packages/research/src/creator-synthesis/cross-post-specificity.ts",
+        "packages/research/src/creator-synthesis/portfolio-classification.ts",
+        "packages/adapters/src/platform/synthesis/creator-synthesis-reuse.ts"]),
   ];
-  return [...files,
-    `.agents/skills/${kind === "post" ? "video-content-reconstruction" : "creator-synthesis"}/references/reviewer-operator.md`,
-    "packages/research/src/workflows/simple-review-contract.ts",
-    "packages/adapters/src/workflow/simple-review-runner.ts",
-    "packages/adapters/src/workflow/codex-sdk-runner.ts",
-    "vendor/agent-workflow/packages/codex/src/runner.ts",
-    "vendor/agent-workflow/packages/codex/src/skill-bundle.ts"]
-    .map((relative) => {
-      // Shared execution lives once at the monorepo root. Local fixture roots
-      // may provide their own snapshot files for deterministic input tests.
-      const methodPath = relative.startsWith("vendor/") && !fs.existsSync(path.join(projectRoot, relative))
-        ? `../../${relative}` : relative;
-      return { path: methodPath, sha256: fileDigest(path.join(projectRoot, methodPath)) };
-    });
+  return files.map((relative) => ({ path: relative, sha256: fileDigest(projectFile(relative)) }));
+}
+
+function projectFile(relative: string): string {
+  const local = path.join(projectRoot, relative);
+  if (fs.existsSync(local)) return local;
+  const workspaceRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
+  const workspaceRelative = relative.replace(/^(?:\.\.\/){2}/u, "");
+  if (relative.startsWith("../../vendor/") || relative === "../../pnpm-lock.yaml" || relative.startsWith("vendor/")) {
+    return path.join(workspaceRoot, workspaceRelative);
+  }
+  return local;
 }
 
 export function skillPackageSnapshot(kind: "post" | "creator"): { path: string; sha256: string } {
@@ -169,17 +181,17 @@ export function pinResearchInput(kind: "post" | "creator", source: PinnedResearc
       reuseEvaluation = { artifactRef: evaluationRef, sha256: found.get(evaluationRef)!, candidateSha256 };
     }
   }
-  return { kind, source, files: [...found].map(([ref, sha256]) => ({ ref, sha256 })), methods: methodSnapshot(kind),
-    skillPackages: [skillPackageSnapshot(kind)],
+  return { kind, executor: "responses", source, files: [...found].map(([ref, sha256]) => ({ ref, sha256 })), methods: methodSnapshot(kind),
     ...(reuseCandidate ? { reuseCandidate } : {}), ...(reuseEvaluation ? { reuseEvaluation } : {}) };
 }
 
 export function assertPinnedResearchInput(input: PinnedResearchInput): void {
+  if (input.executor !== "responses") throw new Error("LEGACY_CODEX_INPUT_NOT_EXECUTABLE");
   for (const file of input.files) {
     if (fileDigest(artifactPath(file.ref)) !== file.sha256) throw new Error(`FROZEN_SOURCE_CHANGED: ${file.ref}`);
   }
   for (const file of input.methods) {
-    if (fileDigest(path.join(projectRoot, file.path)) !== file.sha256) throw new Error(`FROZEN_METHOD_CHANGED: ${file.path}`);
+    if (fileDigest(projectFile(file.path)) !== file.sha256) throw new Error(`FROZEN_METHOD_CHANGED: ${file.path}`);
   }
   for (const skill of input.skillPackages ?? []) {
     if (snapshotSkill(path.join(projectRoot, skill.path)).sha256 !== skill.sha256) throw new Error(`FROZEN_SKILL_PACKAGE_CHANGED: ${skill.path}`);
@@ -188,7 +200,9 @@ export function assertPinnedResearchInput(input: PinnedResearchInput): void {
 
 export async function registerResearchInput(store: RunStore, pinned: PinnedResearchInput): Promise<ArtifactRef> {
   const definition = workflow<PinnedResearchInput, ArtifactRef>(`${pinned.kind}.prepare`, { revision: "1" }, async (ctx, input) =>
-    ctx.publish("frozen-input", `${input.kind}-evidence`, input, { schemaVersion: "research-input@1", validation: "valid", review: "not_applicable" }));
+    ctx.publish("frozen-input", `${input.kind}-evidence`, input, { schemaVersion: "research-input@1", validation: "valid", review: "not_applicable",
+      ...(input.reuseCandidate?.candidate ? { dependsOn: [{ artifactId: input.reuseCandidate.candidate.id,
+        revision: input.reuseCandidate.candidate.revision, sha256: input.reuseCandidate.candidate.sha256 }] } : {}) }));
   const result = await runWorkflow({ workflow: definition, input: pinned, store,
     agentRunner: { async run() { throw new Error("Input preparation cannot invoke an agent"); } },
     metadata: { creatorRunId: pinned.source.creatorRunId, ...(pinned.kind === "post" ? { postId: (pinned.source as PostWorkflowStartInput).postExternalId } : {}) } });

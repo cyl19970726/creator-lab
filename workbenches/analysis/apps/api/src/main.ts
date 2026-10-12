@@ -4,7 +4,7 @@ import { apiPort } from "../../../packages/adapters/index.js";
 import { createSignalRoomComposition } from "../../../src/server/composition-root.js";
 
 const port = apiPort();
-const composition = createSignalRoomComposition();
+const composition = await createSignalRoomComposition();
 if (process.env.SELF_MEDIA_EMBED_WORKERS !== "false") composition.startWorkers();
 
 startSignalRoomServer(composition, port);

@@ -3,8 +3,9 @@ import {
   type CreatorResearchEvent,
   type CreatorResearchRun
 } from "../../../contracts/index.js";
-import type { CreatorResearchRepository } from "./repository.js";
+import type { AppendEventInput, CreatorResearchRepository } from "./repository.js";
 import type { CreatorArtifactStore } from "./artifact-store.js";
+import { startLeaseHeartbeat } from "./lease-heartbeat.js";
 import {
   creatorPortfolioAnalysisSchema,
   buildCreatorPortfolioAnnotations,
@@ -128,6 +129,9 @@ export function dossierReadyNextAction(states: readonly string[]): string {
   return "DOSSIER_READY：单博主完整报告可审阅；正式进入 Wiki 和跨博主结论前仍需满足正式性 gate。";
 }
 export class CreatorResearchVideoSynthesisProcessor {
+  private withRunTransaction<T>(runId: string, operation: () => Promise<T>): Promise<T> {
+    return this.repository.withRunTransaction?.(runId, operation) ?? operation();
+  }
   constructor(
     private readonly repository: CreatorResearchRepository,
     private readonly artifacts: CreatorArtifactStore,
@@ -135,23 +139,26 @@ export class CreatorResearchVideoSynthesisProcessor {
     private readonly synthesisExecutor: CreatorSynthesisExecutor,
     private readonly videoConcurrencyLimit: number,
     private readonly completionPort?: CreatorResearchCompletionPort,
-    private readonly imagePostReconstructor?: ImagePostReconstructionExecutor
+    private readonly imagePostReconstructor?: ImagePostReconstructionExecutor,
+    private readonly automaticVersionedWorkflows = false
   ) {}
 
-  private queueSynthesis(
+  private async queueSynthesis(
     run: CreatorResearchRun,
     batchRef: string,
     batch: ReturnType<typeof videoReconstructionBatchSchema.parse>,
     selection: ReturnType<typeof creatorSelectionSchema.parse>,
     queuedAt: string
-  ): boolean {
+  ): Promise<boolean> {
     const coverage = creatorSynthesisCoverage(selection, batch);
     if (!coverage.provisionalAllowed && !coverage.formalAllowed) return false;
     const mode = coverage.formalAllowed ? "formal" : "provisional";
-    const synthesisJob = this.repository.enqueue({ id: randomUUID(), runId: run.id, nodeKey: "creator.synthesize", status: "queued",
+    const synthesisJob = await this.repository.enqueue({ id: randomUUID(), runId: run.id, nodeKey: "creator.synthesize", status: "queued",
       idempotencyKey: `${run.id}:creator.synthesize:${mode}:${batchRef}`, attempts: 0, maxAttempts: 2, availableAt: queuedAt,
-      leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null, payload: { reconstructionBatchArtifactRef: batchRef, mode },
+      leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null, payload: { reconstructionBatchArtifactRef: batchRef, mode,
+        automaticVersioned: this.automaticVersionedWorkflows },
       lastError: null, createdAt: queuedAt, updatedAt: queuedAt });
+    if (["succeeded", "failed", "canceled"].includes(synthesisJob.status)) return false;
     run.status = "collecting";
     run.currentStage = "synthesis";
     run.worker = { state: "queued", attempt: 0, jobId: synthesisJob.id, workerId: null, lastHeartbeatAt: queuedAt };
@@ -169,7 +176,7 @@ export class CreatorResearchVideoSynthesisProcessor {
       : `${batch.readyPosts}/${batch.requestedPosts} 条全部完成单轮分析；质量提醒继续保留。`;
     stage(run, "synthesis").status = "pending";
     stage(run, "synthesis").message = "等待从规范比较集、可用视频与显式未知边界生成研究归纳。";
-    this.repository.appendEvent({ runId: run.id, jobId: synthesisJob.id, type: "job.queued", createdAt: queuedAt,
+    await this.repository.appendEvent({ runId: run.id, jobId: synthesisJob.id, type: "job.queued", createdAt: queuedAt,
       message: mode === "provisional" ? "DOSSIER_READY 单博主报告已进入持久队列。"
         : coverage.boundedMediaGap ? "带媒体不可得边界的博主级研究归纳已进入持久队列。" : "博主级研究归纳已进入持久队列。",
       payload: { nodeKey: synthesisJob.nodeKey, mode, boundedMediaGap: coverage.boundedMediaGap,
@@ -179,9 +186,9 @@ export class CreatorResearchVideoSynthesisProcessor {
 
   async processVideoReconstruction(run: CreatorResearchRun, job: ResearchJob, workerId: string): Promise<void> {
     const startedAt = now();
-    run = this.repository.get(run.id) ?? run;
-    if (!run.reconstructionBatchArtifactRef) return this.failRun(run, job, workerId, "视频节点缺少批次 artifact");
-    const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(run.reconstructionBatchArtifactRef));
+    run = await this.repository.get(run.id) ?? run;
+    if (!run.reconstructionBatchArtifactRef) return await this.failRun(run, job, workerId, "视频节点缺少批次 artifact");
+    const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(run.reconstructionBatchArtifactRef));
     refreshBatchCounts(batch);
     const postExternalId = typeof job.payload.postExternalId === "string" ? job.payload.postExternalId : null;
     const sourceUrl = typeof job.payload.sourceUrl === "string" ? job.payload.sourceUrl : null;
@@ -190,15 +197,16 @@ export class CreatorResearchVideoSynthesisProcessor {
     const evaluationPolicy = job.payload.evaluationPolicy === "single_pass" ? "single_pass" : "skip";
     const item = batch.items.find((candidate) => candidate.postExternalId === postExternalId);
     if (!postExternalId || !sourceUrl || !item) {
-      return this.failRun(run, job, workerId, "视频节点 payload 与批次不一致");
+      return await this.failRun(run, job, workerId, "视频节点 payload 与批次不一致");
     }
     if (!sourceMediaArtifactRef) {
-      if (item.sourceMediaArtifactRef) return this.failRun(run, job, workerId, "视频节点 payload 与批次不一致");
-      this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: startedAt,
-        lastError: "superseded_by_media_refresh" });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: startedAt,
+      if (item.sourceMediaArtifactRef) return await this.failRun(run, job, workerId, "视频节点 payload 与批次不一致");
+
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: startedAt,
         message: "缺少媒体的旧视频任务已由定向媒体补取替代。",
         payload: { postExternalId, state: "superseded", idempotent: true } });
+      await this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: startedAt,
+        lastError: "superseded_by_media_refresh" });
       return;
     }
     if (isBuiltVideoState(item.state) && !evaluationOnly) {
@@ -206,10 +214,11 @@ export class CreatorResearchVideoSynthesisProcessor {
         activePostExternalIds: run.videoWork.activePostExternalIds.filter((id) => id !== postExternalId),
         analyzedPosts: batch.builtPosts, failedPosts: batch.failedPosts,
         queuedPosts: Math.max(0, batch.pendingPosts - run.videoWork.activePostExternalIds.filter((id) => id !== postExternalId).length) };
-      this.repository.save(run);
-      this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: startedAt });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: startedAt,
+      await this.repository.save(run);
+
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: startedAt,
         message: "视频 Builder 结果已存在，跳过重复执行。", payload: { postExternalId, state: item.state, idempotent: true } });
+      await this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: startedAt });
       return;
     }
     run.status = "collecting";
@@ -223,38 +232,49 @@ export class CreatorResearchVideoSynthesisProcessor {
     stage(run, "deep_capture").message = `已构建 ${batch.builtPosts}/${batch.requestedPosts}；正在处理 ${postExternalId}。`;
     item.state = "running";
     item.updatedAt = startedAt;
-    run.videoWork = {
-      concurrencyLimit: this.videoConcurrencyLimit,
-      activePostExternalIds: [...new Set([...run.videoWork.activePostExternalIds, postExternalId])],
-      queuedPosts: Math.max(0, batch.pendingPosts - new Set([...run.videoWork.activePostExternalIds, postExternalId]).size),
-      analyzedPosts: batch.builtPosts,
-      failedPosts: batch.failedPosts
-    };
-    this.repository.save(run);
-    this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: startedAt });
-    this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.started", createdAt: startedAt,
+    await this.withRunTransaction(run.id, async () => {
+      const current = await this.repository.get(run.id);
+      if (!current) throw new Error("CREATOR_RESEARCH_RUN_NOT_FOUND");
+      const activePostExternalIds = [...new Set([...current.videoWork.activePostExternalIds, postExternalId])];
+      current.status = run.status;
+      current.currentStage = run.currentStage;
+      current.updatedAt = startedAt;
+      current.worker = run.worker;
+      current.nextAction = run.nextAction;
+      stage(current, "deep_capture").status = "running";
+      stage(current, "deep_capture").message = stage(run, "deep_capture").message;
+      current.videoWork = { concurrencyLimit: this.videoConcurrencyLimit, activePostExternalIds,
+        queuedPosts: Math.max(0, batch.pendingPosts - activePostExternalIds.length),
+        analyzedPosts: batch.builtPosts, failedPosts: batch.failedPosts };
+      await this.repository.save(current);
+      run = current;
+    });
+    await this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: startedAt });
+    await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.started", createdAt: startedAt,
       message: `开始单${item.evidenceKind === "image_post" ? "图文" : "视频"} Builder 内容还原。`, payload: { postExternalId } });
     let lastSubstage = "runner_start";
-    const heartbeat = setInterval(() => {
+    const heartbeat = startLeaseHeartbeat(async () => {
       const at = now();
-      this.repository.heartbeat(job.id, workerId, at, leaseUntil(180));
-      const substage = this.artifacts.reconstructionProgress(run.id, postExternalId);
+      if (!await this.repository.heartbeat(job.id, workerId, at, leaseUntil(180))) throw new Error("STALE_RESEARCH_LEASE");
+      const substage = await this.artifacts.reconstructionProgress(run.id, postExternalId);
       if (substage !== lastSubstage) {
         lastSubstage = substage;
-        this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.progress", createdAt: at,
+        await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.progress", createdAt: at,
           message: `${item.evidenceKind === "image_post" ? "图文" : "视频"}重建进入 ${substage}。`, payload: { postExternalId, substage } });
       }
-      const latest = this.repository.get(run.id);
+      const latest = await this.repository.get(run.id);
       if (latest?.worker.jobId === job.id) {
         latest.worker.lastHeartbeatAt = at; latest.updatedAt = at;
         stage(latest, "deep_capture").message = `${postExternalId} · ${substage} · 已通过 ${latest.coverage.reconstructedPosts}/${batch.requestedPosts}`;
-        this.repository.save(latest);
+        await this.repository.save(latest);
       }
-    }, 20_000);
+    });
     try {
+      let observed = Promise.resolve();
       const observeChild = (event: VideoReconstructionLifecycleEvent) => {
+        observed = observed.then(async () => {
         const eventType = `child.${event.status}` as CreatorResearchEvent["type"];
-        this.repository.appendEvent({
+        await this.repository.appendEvent({
           runId: run.id,
           jobId: job.id,
           type: eventType,
@@ -272,19 +292,20 @@ export class CreatorResearchVideoSynthesisProcessor {
             errorCode: event.errorCode
           }
         });
-        const latest = this.repository.get(run.id);
+        const latest = await this.repository.get(run.id);
         if (latest?.worker.jobId === job.id) {
           latest.updatedAt = event.lastProgressAt;
           stage(latest, "deep_capture").message = `${postExternalId} · ${videoChildRoleLabel[event.role]}${videoChildStatusLabel[event.status]} · 已通过 ${latest.coverage.reconstructedPosts}/${batch.requestedPosts}`;
-          this.repository.save(latest);
+          await this.repository.save(latest);
         }
+        });
       };
       let rawOutcome: VideoReconstructionOutcome;
       if (item.evidenceKind === "image_post") {
         if (!this.imagePostReconstructor || !run.detailArtifactRef || !run.mediaManifestArtifactRef) {
           throw new Error("图文 Builder 或固定输入尚未配置");
         }
-        const manifest = deepMediaManifestSchema.parse(this.artifacts.read(run.mediaManifestArtifactRef));
+        const manifest = deepMediaManifestSchema.parse(await this.artifacts.read(run.mediaManifestArtifactRef));
         const media = manifest.items.find((candidate) => candidate.externalId === postExternalId);
         if (!media || (media.imageArtifactRefs?.length ?? 0) === 0) throw new Error("图文节点缺少本地图片证据");
         rawOutcome = await this.imagePostReconstructor.reconstruct({ runId: job.id, creatorRunId: run.id,
@@ -298,13 +319,16 @@ export class CreatorResearchVideoSynthesisProcessor {
           evaluationPolicy, contractVersion: "video-content-reconstruction@2" });
         rawOutcome = await this.videoReconstructor.reconstruct(request, observeChild);
       }
+      await observed;
+      await heartbeat.stop();
       const outcome = videoReconstructionOutcomeSchema.parse(rawOutcome);
       const completedAt = now();
-      const latestRun = this.repository.get(run.id);
+      await this.withRunTransaction(run.id, async () => {
+      const latestRun = await this.repository.get(run.id);
       if (!latestRun?.reconstructionBatchArtifactRef) throw new Error("视频批次在执行期间丢失注册指针");
       run = latestRun;
       const previousBatchRef = latestRun.reconstructionBatchArtifactRef;
-      const latestBatch = videoReconstructionBatchSchema.parse(this.artifacts.read(previousBatchRef));
+      const latestBatch = videoReconstructionBatchSchema.parse(await this.artifacts.read(previousBatchRef));
       for (const item of latestBatch.items) {
         if (item.message.startsWith("已完成单轮还原与评估")) item.evaluationPolicy = "single_pass@37a03aae";
       }
@@ -358,7 +382,7 @@ export class CreatorResearchVideoSynthesisProcessor {
         item.reconstructionArtifactRef, item.builderValidationArtifactRef, item.evaluationArtifactRef, item.gateReportArtifactRef,
         item.threeLensEvaluationArtifactRef, item.threeLensGateReportArtifactRef
       ])].filter((ref): ref is string => Boolean(ref));
-      const batchRef = this.artifacts.write(run.id, `video-reconstruction-batch-r${latestBatch.revision}.json`, latestBatch,
+      const batchRef = await this.artifacts.write(run.id, `video-reconstruction-batch-r${latestBatch.revision}.json`, latestBatch,
         batchDependencies);
       run.reconstructionBatchArtifactRef = batchRef;
       run.coverage.reconstructedPosts = latestBatch.builtPosts;
@@ -372,13 +396,12 @@ export class CreatorResearchVideoSynthesisProcessor {
         failedPosts: latestBatch.failedPosts
       };
       const outcomeError = outcome.state === "not_ready" || outcome.state === "blocked" ? outcome.message : null;
-      this.repository.updateJobStatus({ jobId: job.id, status: outcome.state === "blocked" && outcome.userActionRequired ? "needs_user" : "succeeded",
-        updatedAt: completedAt, lastError: outcomeError });
+
       if (outcome.state === "blocked" && outcome.userActionRequired) {
         run.status = "needs_user";
         run.worker = { state: "needs_user", attempt: job.attempts, jobId: job.id, workerId: null, lastHeartbeatAt: completedAt };
         run.blockers = [{ code: outcome.code, message: outcome.message, userActionRequired: true }];
-        run.nextAction = "请恢复本地 Codex Runner 后点击继续；已完成的视频不会重跑。";
+        run.nextAction = "请恢复模型服务或重新完成 ChatGPT 授权 后点击继续；已完成的视频不会重跑。";
         stage(run, "deep_capture").status = "blocked";
       } else if (latestBatch.pendingPosts > 0) {
         run.status = "collecting";
@@ -390,9 +413,9 @@ export class CreatorResearchVideoSynthesisProcessor {
         run.status = "reviewable";
         run.worker = { state: "succeeded", attempt: job.attempts, jobId: job.id, workerId, lastHeartbeatAt: completedAt };
         const selection = run.selectionArtifactRef
-          ? creatorSelectionSchema.parse(this.artifacts.read(run.selectionArtifactRef))
+          ? creatorSelectionSchema.parse(await this.artifacts.read(run.selectionArtifactRef))
           : null;
-        if (!selection || !this.queueSynthesis(run, batchRef, latestBatch, selection, completedAt)) {
+        if (!selection || !await this.queueSynthesis(run, batchRef, latestBatch, selection, completedAt)) {
           run.blockers = [{ code: "video_reconstruction_incomplete",
             message: `${latestBatch.builtPosts}/${latestBatch.requestedPosts} 条已构建，其中 ${latestBatch.verifiedPosts} 条已验证；正式 Wiki 仍要求 Evaluator。`, userActionRequired: false }];
           run.nextAction = latestBatch.builtPosts > 0
@@ -402,81 +425,89 @@ export class CreatorResearchVideoSynthesisProcessor {
           stage(run, "deep_capture").message = run.blockers[0]?.message ?? null;
         }
       }
-      this.repository.save(run);
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
+      await this.repository.save(run);
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
         message: "视频重建批次 revision 已更新。", payload: { artifactRef: batchRef, postExternalId, state: outcome.state } });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: completedAt,
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: completedAt,
         message: outcome.state === "built_unevaluated"
           ? outcome.evaluationMode === "failed"
             ? `视频 Builder 已完成，但独立 Evaluator 未完成：${outcome.message ?? "未提供失败原因"}`
             : "视频 Builder 已完成，独立 Evaluator 已跳过。"
           : evaluatedOutcome ? "视频已形成可用还原并完成独立评估。" : "视频未进入下游机制归纳。",
         payload: { postExternalId, state: outcome.state } });
+      await this.repository.updateJobStatus({ jobId: job.id, status: outcome.state === "blocked" && outcome.userActionRequired ? "needs_user" : "succeeded",
+        updatedAt: completedAt, lastError: outcomeError });
+      });
     } catch (error) {
-      this.recordVideoExecutionFailure(run.id, job, workerId, postExternalId,
+      await heartbeat.stop();
+      if (error instanceof Error && error.message.includes("STALE_RESEARCH_LEASE")) return;
+      await this.recordVideoExecutionFailure(run.id, job, workerId, postExternalId,
         error instanceof Error ? error.message : "视频重建节点失败");
-    } finally { clearInterval(heartbeat); }
+    } finally { await heartbeat.stop(); }
   }
 
-  private recordVideoExecutionFailure(runId: string, job: ResearchJob, workerId: string, postExternalId: string, message: string): void {
-    const timestamp = now();
-    const run = this.repository.get(runId);
-    if (!run?.reconstructionBatchArtifactRef) return this.failRun(run ?? this.repository.get(job.runId)!, job, workerId, message);
-    const previousBatchRef = run.reconstructionBatchArtifactRef;
-    const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(previousBatchRef));
-    const item = batch.items.find((candidate) => candidate.postExternalId === postExternalId);
-    if (!item) return this.failRun(run, job, workerId, message);
-    Object.assign(item, { state: "not_ready", failedGateIds: ["video_execution_failed"],
-      message: `视频执行基础设施失败：${message}`, updatedAt: timestamp });
-    batch.revision += 1;
-    batch.generatedAt = timestamp;
-    refreshBatchCounts(batch);
-    const dependencies = [previousBatchRef, ...batch.items.flatMap((candidate) => [
-      candidate.reconstructionArtifactRef, candidate.builderValidationArtifactRef, candidate.evaluationArtifactRef, candidate.gateReportArtifactRef,
-      candidate.threeLensEvaluationArtifactRef, candidate.threeLensGateReportArtifactRef
-    ])].filter((ref): ref is string => Boolean(ref));
-    const batchRef = this.artifacts.write(run.id, `video-reconstruction-batch-r${batch.revision}.json`, batch, dependencies);
-    const activePostExternalIds = run.videoWork.activePostExternalIds.filter((id) => id !== postExternalId);
-    run.reconstructionBatchArtifactRef = batchRef;
-    run.coverage.reconstructedPosts = batch.builtPosts;
-    run.updatedAt = timestamp;
-    run.videoWork = { concurrencyLimit: this.videoConcurrencyLimit, activePostExternalIds,
-      queuedPosts: Math.max(0, batch.pendingPosts - activePostExternalIds.length), analyzedPosts: batch.builtPosts, failedPosts: batch.failedPosts };
-    run.blockers = [{ code: "video_reconstruction_incomplete",
-      message: `${batch.readyPosts}/${batch.requestedPosts} 条完成；${batch.failedPosts} 条基础设施失败。`, userActionRequired: false }];
-    if (batch.pendingPosts > 0) {
-      run.status = "collecting";
-      run.worker = { state: "queued", attempt: 0, jobId: null, workerId: null, lastHeartbeatAt: timestamp };
-      run.nextAction = `${batch.readyPosts} 条完成，${batch.pendingPosts} 条继续执行；失败项稍后可单独重试。`;
-      stage(run, "deep_capture").status = "running";
-    } else {
-      run.status = "reviewable";
-      run.worker = { state: "failed", attempt: job.attempts, jobId: job.id, workerId: null, lastHeartbeatAt: timestamp };
-      run.nextAction = "仅重试失败视频；已完成视频不会重跑。";
-      stage(run, "deep_capture").status = "blocked";
-    }
-    stage(run, "deep_capture").message = run.blockers[0]?.message ?? message;
-    this.repository.save(run);
-    this.repository.updateJobStatus({ jobId: job.id, status: "failed", updatedAt: timestamp, lastError: message });
-    this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: timestamp,
-      message: "视频失败状态已原子合并到新批次 revision。", payload: { artifactRef: batchRef, postExternalId, state: "not_ready" } });
-    this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: timestamp,
-      message: "视频执行失败；其他视频继续，当前项可独立重试。", payload: { postExternalId, state: "not_ready" } });
+  private async recordVideoExecutionFailure(runId: string, job: ResearchJob, workerId: string, postExternalId: string, message: string): Promise<void> {
+    await this.withRunTransaction(runId, async () => {
+      const timestamp = now();
+      const run = await this.repository.get(runId);
+      if (!run?.reconstructionBatchArtifactRef) return await this.failRun(run ?? (await this.repository.get(job.runId))!, job, workerId, message);
+      const previousBatchRef = run.reconstructionBatchArtifactRef;
+      const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(previousBatchRef));
+      const item = batch.items.find((candidate) => candidate.postExternalId === postExternalId);
+      if (!item) return await this.failRun(run, job, workerId, message);
+      Object.assign(item, { state: "not_ready", failedGateIds: ["video_execution_failed"],
+        message: `视频执行基础设施失败：${message}`, updatedAt: timestamp });
+      batch.revision += 1;
+      batch.generatedAt = timestamp;
+      refreshBatchCounts(batch);
+      const dependencies = [previousBatchRef, ...batch.items.flatMap((candidate) => [
+        candidate.reconstructionArtifactRef, candidate.builderValidationArtifactRef, candidate.evaluationArtifactRef, candidate.gateReportArtifactRef,
+        candidate.threeLensEvaluationArtifactRef, candidate.threeLensGateReportArtifactRef
+      ])].filter((ref): ref is string => Boolean(ref));
+      const batchRef = await this.artifacts.write(run.id, `video-reconstruction-batch-r${batch.revision}.json`, batch, dependencies);
+      const activePostExternalIds = run.videoWork.activePostExternalIds.filter((id) => id !== postExternalId);
+      run.reconstructionBatchArtifactRef = batchRef;
+      run.coverage.reconstructedPosts = batch.builtPosts;
+      run.updatedAt = timestamp;
+      run.videoWork = { concurrencyLimit: this.videoConcurrencyLimit, activePostExternalIds,
+        queuedPosts: Math.max(0, batch.pendingPosts - activePostExternalIds.length), analyzedPosts: batch.builtPosts, failedPosts: batch.failedPosts };
+      run.blockers = [{ code: "video_reconstruction_incomplete",
+        message: `${batch.readyPosts}/${batch.requestedPosts} 条完成；${batch.failedPosts} 条基础设施失败。`, userActionRequired: false }];
+      if (batch.pendingPosts > 0) {
+        run.status = "collecting";
+        run.worker = { state: "queued", attempt: 0, jobId: null, workerId: null, lastHeartbeatAt: timestamp };
+        run.nextAction = `${batch.readyPosts} 条完成，${batch.pendingPosts} 条继续执行；失败项稍后可单独重试。`;
+        stage(run, "deep_capture").status = "running";
+      } else {
+        run.status = "reviewable";
+        run.worker = { state: "failed", attempt: job.attempts, jobId: job.id, workerId: null, lastHeartbeatAt: timestamp };
+        run.nextAction = "仅重试失败视频；已完成视频不会重跑。";
+        stage(run, "deep_capture").status = "blocked";
+      }
+      stage(run, "deep_capture").message = run.blockers[0]?.message ?? message;
+      await this.repository.save(run);
+
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: timestamp,
+        message: "视频失败状态已原子合并到新批次 revision。", payload: { artifactRef: batchRef, postExternalId, state: "not_ready" } });
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: timestamp,
+        message: "视频执行失败；其他视频继续，当前项可独立重试。", payload: { postExternalId, state: "not_ready" } });
+      await this.repository.updateJobStatus({ jobId: job.id, status: "failed", updatedAt: timestamp, lastError: message });
+    });
   }
 
   async processSynthesis(run: CreatorResearchRun, job: ResearchJob, workerId: string): Promise<void> {
     const startedAt = now();
     if (!run.portfolioAnnotationsArtifactRef && run.portfolioArtifactRef) {
-      const analysis = creatorPortfolioAnalysisSchema.parse(this.artifacts.read(run.portfolioArtifactRef));
+      const analysis = creatorPortfolioAnalysisSchema.parse(await this.artifacts.read(run.portfolioArtifactRef));
       const annotations = buildCreatorPortfolioAnnotations(
-        this.artifacts.read(analysis.corpusArtifactRef), analysis.corpusArtifactRef, startedAt
+        await this.artifacts.read(analysis.corpusArtifactRef), analysis.corpusArtifactRef, startedAt
       );
-      run.portfolioAnnotationsArtifactRef = this.artifacts.write(
+      run.portfolioAnnotationsArtifactRef = await this.artifacts.write(
         run.id, "portfolio-annotations.json", annotations, [analysis.corpusArtifactRef]
       );
       run.updatedAt = startedAt;
-      this.repository.save(run);
-      this.repository.appendEvent({
+      await this.repository.save(run);
+      await this.repository.appendEvent({
         runId: run.id,
         jobId: job.id,
         type: "artifact.produced",
@@ -491,9 +522,9 @@ export class CreatorResearchVideoSynthesisProcessor {
     }
     if (!run.portfolioArtifactRef || !run.portfolioAnnotationsArtifactRef || !run.selectionArtifactRef
       || !run.detailArtifactRef || !run.reconstructionBatchArtifactRef) {
-      return this.failRun(run, job, workerId, "博主归纳缺少固定输入 artifact");
+      return await this.failRun(run, job, workerId, "博主归纳缺少固定输入 artifact");
     }
-    const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(run.reconstructionBatchArtifactRef));
+    const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(run.reconstructionBatchArtifactRef));
     run.status = "collecting";
     run.currentStage = "synthesis";
     run.updatedAt = startedAt;
@@ -502,25 +533,27 @@ export class CreatorResearchVideoSynthesisProcessor {
     run.nextAction = "正在归纳账号定位、用户价值、内容系统与 High / Base / Low 表现差异。";
     stage(run, "synthesis").status = "running";
     stage(run, "synthesis").message = "研究区不会生成我们的发帖建议。";
-    this.repository.save(run);
-    this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: startedAt });
-    this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.started", createdAt: startedAt,
+    await this.repository.save(run);
+    await this.repository.updateJobStatus({ jobId: job.id, status: "running", updatedAt: startedAt });
+    await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.started", createdAt: startedAt,
       message: "开始博主级证据归纳。", payload: { nodeKey: job.nodeKey } });
-    const heartbeat = setInterval(() => {
+    const heartbeat = startLeaseHeartbeat(async () => {
       const at = now();
-      this.repository.heartbeat(job.id, workerId, at, leaseUntil(180));
-      const latest = this.repository.get(run.id);
-      if (latest?.worker.jobId === job.id) { latest.worker.lastHeartbeatAt = at; latest.updatedAt = at; this.repository.save(latest); }
-    }, 20_000);
+      if (!await this.repository.heartbeat(job.id, workerId, at, leaseUntil(180))) throw new Error("STALE_RESEARCH_LEASE");
+      const latest = await this.repository.get(run.id);
+      if (latest?.worker.jobId === job.id) { latest.worker.lastHeartbeatAt = at; latest.updatedAt = at; await this.repository.save(latest); }
+    });
     try {
       const mode = job.payload.mode === "formal" ? "formal" : "provisional";
+      let observed = Promise.resolve();
       const outcome = await this.synthesisExecutor.synthesize({ creatorRunId: run.id, creatorName: run.creatorName,
         portfolioArtifactRef: run.portfolioArtifactRef, selectionArtifactRef: run.selectionArtifactRef,
         portfolioAnnotationsArtifactRef: run.portfolioAnnotationsArtifactRef,
         detailArtifactRef: run.detailArtifactRef, reconstructionBatchArtifactRef: run.reconstructionBatchArtifactRef,
         mode }, (event) => {
+        observed = observed.then(async () => {
         const eventType = `child.${event.status}` as CreatorResearchEvent["type"];
-        this.repository.appendEvent({
+        await this.repository.appendEvent({
           runId: run.id,
           jobId: job.id,
           type: eventType,
@@ -537,15 +570,21 @@ export class CreatorResearchVideoSynthesisProcessor {
             errorCode: event.errorCode
           }
         });
-        const latest = this.repository.get(run.id);
+        const latest = await this.repository.get(run.id);
         if (latest?.worker.jobId === job.id) {
           latest.updatedAt = event.lastProgressAt;
           stage(latest, "synthesis").message = `${synthesisChildRoleLabel[event.role]}${videoChildStatusLabel[event.status]}。`;
-          this.repository.save(latest);
+          await this.repository.save(latest);
         }
+        });
       });
+      await observed;
+      await heartbeat.stop();
       const completedAt = now();
       run.updatedAt = completedAt;
+      let terminalStatus: "succeeded" | "needs_user" | "failed" = "succeeded";
+      let terminalError: string | undefined;
+      const terminalEvents: AppendEventInput[] = [];
       if (outcome.state === "provisional") {
         run.status = "reviewable";
         run.synthesisArtifactRef = outcome.synthesisArtifactRef;
@@ -558,12 +597,12 @@ export class CreatorResearchVideoSynthesisProcessor {
         stage(run, "synthesis").message = "单博主报告已生成；未验证的深度结论均标为 provisional。";
         stage(run, "dashboard").status = "complete";
         stage(run, "dashboard").message = "Dashboard 已可读取 DOSSIER_READY 报告。";
-        this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: completedAt });
-        this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
+
+        terminalEvents.push({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
           message: "DOSSIER_READY 单博主报告与正式性 gate 已写入证据仓。",
           payload: { synthesisArtifactRef: outcome.synthesisArtifactRef, gateArtifactRef: outcome.gateArtifactRef,
             failedFormalGateIds: outcome.failedGateIds } });
-        this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "run.reviewable", createdAt: completedAt,
+        terminalEvents.push({ runId: run.id, jobId: job.id, type: "run.reviewable", createdAt: completedAt,
           message: "单博主完整报告可审阅，但尚未进入正式 Wiki。", payload: {} });
       } else if (outcome.state === "ready") {
         run.status = "ready";
@@ -577,19 +616,21 @@ export class CreatorResearchVideoSynthesisProcessor {
         stage(run, "synthesis").message = "21 条逐条分析与账号级归纳通过研究硬闸。";
         stage(run, "dashboard").status = "complete";
         stage(run, "dashboard").message = "动态 Dashboard projection 已可读取。";
-        this.repository.updateJobStatus({ jobId: job.id, status: "succeeded", updatedAt: completedAt });
-        this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
+
+        terminalEvents.push({ runId: run.id, jobId: job.id, type: "artifact.produced", createdAt: completedAt,
           message: "博主级归纳与 gate 已写入证据仓。", payload: { synthesisArtifactRef: outcome.synthesisArtifactRef, gateArtifactRef: outcome.gateArtifactRef } });
-        this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "run.reviewable", createdAt: completedAt,
+        terminalEvents.push({ runId: run.id, jobId: job.id, type: "run.reviewable", createdAt: completedAt,
           message: "单博主研究闭环已通过并发布。", payload: {} });
       } else if (outcome.state === "blocked" && outcome.userActionRequired) {
         run.status = "needs_user";
         run.worker = { state: "needs_user", attempt: job.attempts, jobId: job.id, workerId: null, lastHeartbeatAt: completedAt };
         run.blockers = [{ code: "synthesis_runner_unavailable", message: outcome.message, userActionRequired: true }];
-        run.nextAction = "请恢复本地 Codex Runner 后继续；视频重建与媒体不会重跑。";
+        run.nextAction = "请恢复模型服务或重新完成 ChatGPT 授权 后继续；视频重建与媒体不会重跑。";
         stage(run, "synthesis").status = "blocked";
         stage(run, "synthesis").message = outcome.message;
-        this.repository.updateJobStatus({ jobId: job.id, status: "needs_user", updatedAt: completedAt, lastError: outcome.message });
+
+        terminalStatus = "needs_user";
+        terminalError = outcome.message;
       } else {
         const failed = outcome.state === "not_ready" ? outcome.failedGateIds : ["synthesis_blocked"];
         const message = outcome.state === "not_ready" ? outcome.message : outcome.message;
@@ -605,9 +646,12 @@ export class CreatorResearchVideoSynthesisProcessor {
         run.nextAction = "博主归纳没有发布；请按 failedGateIds 修复证据或研究边界。";
         stage(run, "synthesis").status = "failed";
         stage(run, "synthesis").message = message;
-        this.repository.updateJobStatus({ jobId: job.id, status: "failed", updatedAt: completedAt, lastError: message });
+
+        terminalStatus = "failed";
+        terminalError = message;
       }
-      this.repository.save(run);
+      await this.repository.save(run);
+      for (const event of terminalEvents) await this.repository.appendEvent(event);
       if (outcome.state === "ready" && run.creatorId) {
         try {
           await this.completionPort?.publish({
@@ -616,25 +660,30 @@ export class CreatorResearchVideoSynthesisProcessor {
             creatorName: run.creatorName,
             synthesisArtifactRef: outcome.synthesisArtifactRef,
             gateArtifactRef: outcome.gateArtifactRef,
-            synthesis: creatorSynthesisSchema.parse(this.artifacts.read(outcome.synthesisArtifactRef)),
-            gate: creatorSynthesisGateSchema.parse(this.artifacts.read(outcome.gateArtifactRef))
+            synthesis: creatorSynthesisSchema.parse(await this.artifacts.read(outcome.synthesisArtifactRef)),
+            gate: creatorSynthesisGateSchema.parse(await this.artifacts.read(outcome.gateArtifactRef))
           });
         } catch (error) {
-          this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "child.failed", createdAt: completedAt,
+          if (error instanceof Error && error.message.includes("STALE_RESEARCH_LEASE")) throw error;
+          await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "child.failed", createdAt: completedAt,
             message: "知识编译失败；已发布的博主研究保持有效。",
             payload: { role: "knowledge_compiler", error: error instanceof Error ? error.message : String(error) } });
         }
       }
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: completedAt,
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "node.completed", createdAt: completedAt,
         message: outcome.state === "ready" ? "博主级归纳通过硬闸。"
           : outcome.state === "provisional" ? "单博主报告已生成，正式 Wiki gate 保持未通过。" : "博主级归纳未发布。",
         payload: { state: outcome.state } });
+      await this.repository.updateJobStatus({ jobId: job.id, status: terminalStatus, updatedAt: completedAt,
+        ...(terminalError ? { lastError: terminalError } : {}) });
     } catch (error) {
-      this.failRun(run, job, workerId, error instanceof Error ? error.message : "博主归纳节点失败");
-    } finally { clearInterval(heartbeat); }
+      await heartbeat.stop();
+      if (error instanceof Error && error.message.includes("STALE_RESEARCH_LEASE")) return;
+      await this.failRun(run, job, workerId, error instanceof Error ? error.message : "博主归纳节点失败");
+    } finally { await heartbeat.stop(); }
   }
 
-  private failRun(run: CreatorResearchRun, job: ResearchJob, workerId: string, message: string, code = "worker_failed"): void {
+  private async failRun(run: CreatorResearchRun, job: ResearchJob, workerId: string, message: string, code = "worker_failed"): Promise<void> {
     const timestamp = now();
     run.status = "failed";
     run.updatedAt = timestamp;
@@ -646,12 +695,13 @@ export class CreatorResearchVideoSynthesisProcessor {
         : job.nodeKey === "creator.synthesize" ? "synthesis" : "preflight";
     stage(run, failedStage).status = "failed";
     stage(run, failedStage).message = message;
-    this.repository.save(run);
-    this.repository.updateJobStatus({ jobId: job.id, status: "failed", updatedAt: timestamp, lastError: message });
-    this.repository.appendEvent({
+    await this.repository.save(run);
+
+    await this.repository.appendEvent({
       runId: run.id, jobId: job.id, type: "run.failed", createdAt: timestamp,
       message, payload: { code }
     });
+    await this.repository.updateJobStatus({ jobId: job.id, status: "failed", updatedAt: timestamp, lastError: message });
   }
 
 }

@@ -72,19 +72,19 @@ function fixture() {
   return { run, repository, service };
 }
 
-it("queues a source-bound rebuild while preserving last-good refs and deduplicates an active request", () => {
+it("queues a source-bound rebuild while preserving last-good refs and deduplicates an active request", async () => {
   const { run, repository, service } = fixture();
-  const first = service.resynthesize(run.id);
+  const first = await service.resynthesize(run.id);
   expect(first).toMatchObject({ synthesisArtifactRef: "/old/synthesis.json", synthesisGateArtifactRef: "/old/gate.json",
     currentStage: "synthesis", worker: { state: "queued" } });
   expect(repository.jobs).toHaveLength(1);
   expect(repository.jobs[0]?.payload).toMatchObject({ previousSynthesisArtifactRef: "/old/synthesis.json",
     previousSynthesisGateArtifactRef: "/old/gate.json" });
-  expect(service.resynthesize(run.id)).toBe(first);
+  expect(await service.resynthesize(run.id)).toBe(first);
   expect(repository.jobs).toHaveLength(1);
 });
 
-it("clears creator review metadata when selection rebuild invalidates the synthesis", () => {
+it("clears creator review metadata when selection rebuild invalidates the synthesis", async () => {
   const { run, service } = fixture();
   run.inventoryArtifactRef = "/inventory.json";
   run.coverage = { discoveredPosts: 4, enrichedPosts: 4, comparisonPosts: 4, reconstructedPosts: 4 };
@@ -97,6 +97,6 @@ it("clears creator review metadata when selection rebuild invalidates the synthe
   run.researchReview = { schemaVersion: "research-review-state@1", reviewStatus: "completed_no_findings",
     candidateStatus: "original_reviewed", reviewArtifactRef: "/review.json", revisionRecordArtifactRef: null,
     candidateReportSha256: "a".repeat(64) };
-  service.rebuildSelection(run.id);
+  await service.rebuildSelection(run.id);
   expect(run).toMatchObject({ synthesisArtifactRef: null, synthesisGateArtifactRef: null, researchReview: null });
 });

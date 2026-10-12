@@ -3,13 +3,13 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { defineAgent } from '@signal-room/workflow';
-import { snapshotSkill } from '@signal-room/workflow-codex';
+import { snapshotSkill } from '@signal-room/workflow-skill-snapshot';
 
 export const defaultProjectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 // Research now lives under Creator Lab's workspace root. Shared workflow packages
 // and the lockfile belong to that root; research methods stay project-local.
 const workspaceRootFor = projectRoot => resolve(projectRoot, '../..');
-export const researchModel = 'gpt-5.6-luna';
+export const researchModel = 'gpt-6-luna';
 export const researchReasoningEffort = 'medium';
 export const sha256 = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 
@@ -48,6 +48,8 @@ const methods = {
   reader: ['research-reader-questioner'],
   fact: ['research-report-review'],
 };
+const toolNamesForRole = role => role === 'reader' ? [] : role === 'synthesizer' || role === 'author'
+  ? ['read_frozen_source'] : ['read_frozen_source', 'search_public_web', 'open_public_page'];
 
 async function filesUnder(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -72,19 +74,23 @@ export async function createResearchAgents({ model = researchModel, reasoningEff
       id: `research-${role}`, revision: '1', model, reasoningEffort,
       promptRevision: sha256(prompts[role]),
       skillsRevision: sha256(skills.map(skill => ({ name: skill.name, sha256: skill.sha256 }))),
-      permissionsRevision: 'isolated-read-only-v1',
+      permissionsRevision: 'research-host-tools-v2',
       config: { prompt: prompts[role], skills, outputSchema: schemas[role], timeoutMs: 20 * 60_000,
-        threadOptions: { sandboxMode: 'read-only', approvalPolicy: 'never' } },
+        toolNames: toolNamesForRole(role) },
     });
   }
   return result;
 }
 
 export async function implementationRevision(root = defaultProjectRoot) {
-  const paths = ['config.mjs', 'workflow.mjs', 'contracts.mjs'].map(name => resolve(root, 'packages/workflows', name));
+  const paths = [
+    resolve(root, 'packages/workflows/config.mjs'), resolve(root, 'packages/workflows/workflow.mjs'),
+    resolve(root, 'packages/workflows/contracts.mjs'), resolve(root, 'packages/workflows/research-runner.mjs'),
+    resolve(root, 'packages/storage/research-service.mjs'), resolve(root, 'packages/domain/collaboration.ts'),
+  ];
   const workspaceRoot = workspaceRootFor(root);
   paths.push(resolve(workspaceRoot, 'pnpm-lock.yaml'));
-  for (const name of ['core', 'codex', 'sqlite']) {
+  for (const name of ['core', 'agent-sdk', 'skill-snapshot', 'postgres', 'read-model']) {
     const dist = await filesUnder(resolve(workspaceRoot, 'vendor/agent-workflow/packages', name, 'dist')).catch(error => {
       if (error?.code === 'ENOENT') throw new Error('Build pinned workflow runtime before preparing a research snapshot', { cause: error });
       throw error;

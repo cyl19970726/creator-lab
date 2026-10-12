@@ -2,7 +2,8 @@ import { loadConfig } from '../../packages/config.ts';
 import { createResearchService } from '../../packages/storage/research-service.mjs';
 
 const config = loadConfig();
-const service = createResearchService({
+const service = await createResearchService({
+  databaseUrl: config.databaseUrl,
   directory: config.stateRoot,
   artifactRoot: config.artifactRoot,
   projectRoot: config.projectRoot,

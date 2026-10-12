@@ -229,7 +229,7 @@ function StartForm({
       <div className="form-grid">
         <label>
           执行模型
-          <input value="gpt-5.6-luna" readOnly aria-label="执行模型" />
+          <input value="gpt-6-luna" readOnly aria-label="执行模型" />
         </label>
         <label>
           推理设置
@@ -880,7 +880,7 @@ function App() {
         topicId: topic.id,
         ...payload,
         idempotencyKey: uid(),
-        model: 'gpt-5.6-luna',
+        model: 'gpt-6-luna',
         reasoningEffort: 'medium',
       });
       const list = await read<{ runs: Run[] }>(`/topics/${encodeURIComponent(topic.id)}/runs`);
@@ -1069,7 +1069,7 @@ function App() {
                   <span className="overline">研究运行</span>
                   <h2>{runs.find((run) => run.id === runId)?.title || runId}</h2>
                 </div>
-                <div className="toolbar-actions">
+                {!currentRun?.readOnly && <div className="toolbar-actions">
                   <button
                     className="action subtle"
                     disabled={busy}
@@ -1084,7 +1084,7 @@ function App() {
                   >
                     取消
                   </button>
-                </div>
+                </div>}
               </div>
               <FrozenInputs run={currentRun} />
               {snapshot ? (
@@ -1202,15 +1202,16 @@ function App() {
                       </div>
                       <Reader runId={runId} artifact={artifact} title={artifactTitle} />
                     </div>
-                    <Collaboration
-                      runId={runId}
-                      artifact={artifact}
-                      title={artifactTitle}
-                      onChanged={refresh}
-                      onEvents={onEvents}
-                      onRepairRun={(id) => void repairRun(id)}
-                      onInteract={pinOnDraft}
-                    />
+                    {currentRun?.readOnly ? <aside className="muted">历史研究为只读记录；原始来源、报告、协作记录和 traces 均保留在归档中。</aside> :
+                      <Collaboration
+                        runId={runId}
+                        artifact={artifact}
+                        title={artifactTitle}
+                        onChanged={refresh}
+                        onEvents={onEvents}
+                        onRepairRun={(id) => void repairRun(id)}
+                        onInteract={pinOnDraft}
+                      />}
                   </div>
                 </>
               ) : (

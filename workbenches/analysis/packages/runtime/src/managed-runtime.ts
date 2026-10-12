@@ -5,7 +5,7 @@ export interface ManagedWorker {
 }
 
 export interface ManagedResource {
-  close(): void;
+  close(): unknown | Promise<unknown>;
 }
 
 export class ManagedRuntime {
@@ -31,7 +31,7 @@ export class ManagedRuntime {
       const workerResults = await Promise.allSettled(this.workers.map((worker) => worker.stopAndWait()));
       const errors = workerResults.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
       for (const resource of [...this.resources].reverse()) {
-        try { resource.close(); }
+        try { await resource.close(); }
         catch (error) { errors.push(error); }
       }
       if (errors.length > 0) throw new AggregateError(errors, "Signal Room runtime shutdown failed");

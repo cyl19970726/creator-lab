@@ -73,6 +73,21 @@ it("projects simple research findings and strips private review fields", () => {
   expect(JSON.stringify(result)).not.toContain("secret-token");
 });
 
+it("shows a review finding that cites a frozen report JSON Pointer while rejecting unsafe fragments", () => {
+  const evidence = "/artifacts/ae713242-656f-48bf-8f2b-42aa16201e3d/workflow-responses/d02b6531-be1c-48bb-accc-087b0d9629d0/08881914-b479-4016-938b-598f350c082c/reconstruction.2ff479cd5121.json#/builderLenses/contentRestoration/blocks/1";
+  const payload = { schemaVersion: "research-review@1", kind: "post", candidate: {
+    id: "candidate", revision: "1", sha256 }, candidateReportSha256: sha256, summary: "有一处证据缺口。",
+    findings: [{ id: "finding-1", location: "/builderLenses/contentRestoration/blocks/1",
+      issue: "结论缺少细节。", evidenceRefs: ["TARGET-0003", evidence], suggestedChange: "补全证据。",
+      priority: "major", kind: "missing_evidence" }] };
+  const review = { id: "post-review", type: "post-review", schemaVersion: "research-review@1" } as never;
+  expect(projectArtifactPayload(review, payload)).toMatchObject({ kind: "research-review",
+    findings: [{ evidenceRefs: ["TARGET-0003", evidence] }] });
+  expect(projectArtifactPayload(review, { ...payload, findings: [{ ...payload.findings[0],
+    evidenceRefs: ["/artifacts/creator/reconstruction.json#/../private"] }] }))
+    .toEqual({ kind: "research-review", message: "研究复核载荷未通过公开业务合同校验。" });
+});
+
 it("projects only the public disposition fields from research revisions", () => {
   const ref = (id: string) => ({ id, type: "post-candidate", schemaVersion: "candidate@1", revision: "1", sha256,
     uri: "/Users/private/report.json", producedBy: { workflowRunId: "run", stepRunId: "step", attemptId: "attempt" },

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { type AgentRunRequest, type AgentRunner } from '@signal-room/workflow';
-import { SiwcResponsesRunner, type SiwcAuth } from '@signal-room/workflow-agent-sdk';
+import { OpenAIAgentsSdkRunner, type SiwcAuth } from '@signal-room/workflow-agent-sdk';
 import { nodeReadTools, type WorkflowSpaceService } from '@signal-room/workflow-spaces';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -25,7 +25,7 @@ export function contentSiwcExecutorManifest(options: Pick<ContentSiwcOptions, 'm
 export function createContentSiwcRunner(options: ContentSiwcOptions): AgentRunner {
   const manifest = contentSiwcExecutorManifest(options);
   const { maxTurns, maxToolCalls } = manifest;
-  const runner = new SiwcResponsesRunner({
+  const runner = new OpenAIAgentsSdkRunner({
     auth: options.auth,
     maxTurns,
     maxToolCalls,

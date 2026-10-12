@@ -15,17 +15,17 @@ export type WorkflowAdvanceRequest = {
 export class CreatorResearchWorkflowScheduler {
   constructor(private readonly repository: CreatorResearchRepository) {}
 
-  enqueue(input: WorkflowAdvanceRequest): ResearchJob {
+  async enqueue(input: WorkflowAdvanceRequest): Promise<ResearchJob> {
     const queuedAt = new Date().toISOString();
     const proposedId = randomUUID();
-    const job = this.repository.enqueue({ id: proposedId, runId: input.creatorRunId,
+    const job = await this.repository.enqueue({ id: proposedId, runId: input.creatorRunId,
       nodeKey: "workflow.advance", status: "queued", idempotencyKey: input.idempotencyKey,
       attempts: 0, maxAttempts: 2, availableAt: queuedAt, leaseOwner: null, leaseExpiresAt: null,
       heartbeatAt: null, payload: { workflowRunId: input.workflowRunId, workflowId: input.workflowId,
         workflowRevision: input.workflowRevision, generation: input.generation },
       lastError: null, createdAt: queuedAt, updatedAt: queuedAt });
     if (job.id === proposedId) {
-      this.repository.appendEvent({ runId: input.creatorRunId, jobId: job.id, type: "job.queued", createdAt: queuedAt,
+      await this.repository.appendEvent({ runId: input.creatorRunId, jobId: job.id, type: "job.queued", createdAt: queuedAt,
         message: "Workflow 已进入现有持久任务队列。",
         payload: { workflowRunId: input.workflowRunId, workflowId: input.workflowId, workflowRevision: input.workflowRevision,
           generation: input.generation, nodeKey: job.nodeKey,

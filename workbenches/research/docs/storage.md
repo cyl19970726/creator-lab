@@ -1,60 +1,44 @@
-# 存储现状与新协议边界
+# 研究工作台的存储边界
 
-2026-09-23，按实际代码核对。用户明确取消旧报告兼容要求；新工作台不维护旧 HTML 阅读器、旧报告目录协议或旧接受状态。已导入文本只是来源快照，不是旧报告对象。不删除已存在的数据。
+新研究运行只写入 `WORKFLOW_DATABASE_URL` 指向的 PostgreSQL 数据库。启动缺少该变量时会失败；运行时不会打开 SQLite，也不会在 SQLite 与 PostgreSQL 之间静默回退。
 
-## 当前物理布局
+| 数据 | 新运行的正本或用途 |
+| --- | --- |
+| 运行、步骤、尝试、事件与产物 payload | shared `PostgresWorkflowRunStore`；`aw_*` 表由上游迁移管理 |
+| 冻结输入、模型/方法指纹、排队状态、取消、恢复与幂等命令 | `research_host_*` PostgreSQL 表 |
+| worker 单主租约 | PostgreSQL 行锁和有期限租约；API 与 worker 可各自重启并共享同一数据库 |
+| 用户反馈、接受/退回决定 | `research_collaboration_events`，追加写入并绑定确切产物身份 |
+| Markdown 阅读器导出 | `.local/artifacts/` 下的派生文件；正文仍以不可变 artifact payload 为准 |
+| 选题清单、来源原文件 | `.local/content/manifest.json` 与清单引用的本地文件，读取时校验 SHA-256 |
 
-```text
-.local/
-  content/
-    manifest.json                  选题与来源登记
-    sources/<sha256>.<ext>          来源文件
-  state/
-    research.sqlite                Workflow 账本 + 宿主持久任务
-    collaboration.sqlite           用户意见与接受/退回事件
-    private-traces/<run>/...        私有模型输入、输出、方法和调用日志
-  artifacts/
-    <file_key>.md                   从 artifact payload 导出的 Markdown
+入队事务同时创建 shared ledger run 和宿主冻结记录。worker 在 PostgreSQL 中领取租约；取消标记持久化，活动 runner 收到 abort signal。重启后过期作业成为 `interrupted`，只有显式 resume 才能重新排队。方法、输入及运行模型指纹不匹配时拒绝用新定义恢复旧运行。
+
+shared ledger 的物理 workspace 与研究输入的逻辑 workspace 分开保存。任务列表、历史产物复用和 repair 引用按逻辑 workspace 与 topic 一起校验；同一物理数据库中的其他逻辑工作区不能混入当前选题。
+
+模型执行由官方 `@openai/agents` SDK `Runner` 驱动；SIWC 只提供已有的 Continue with ChatGPT 授权和 Responses transport。每个 attempt 只获 host 绑定的 `read_frozen_source`、`search_public_web`、`open_public_page` 工具：来源只从该次冻结输入读取；网页搜索使用不需新账户的 DuckDuckGo HTML endpoint；页面读取限制 HTTPS、拒绝私网/本地地址、逐跳复核重定向、只接受 HTML/plain text 并限制读取字节。网页检索/读取失败会让实际研究尝试失败，模型不会被提示把未检索到的内容伪装成来源。共享 SDK tracing 关闭，调用事件和安全元数据由 PostgreSQL ledger 保存；原有本机私有 traces 不会被启动代码删除或覆盖。
+
+## 历史研究数据
+
+原工作台位于 `/absolute/path/to/legacy-research/.local`。SQLite 原件、已导出的报告、来源和私有 traces 留在原路径；本工作台的忽略目录 `.local/content` 是原 `manifest.json` 与 116 个来源文件的字节一致副本，因此选题和来源仍能在现有 UI 中浏览。历史报告正文与账本记录导入 PostgreSQL 后由现有阅读 API 提供；读取历史报告会在本工作台 `.local/artifacts/` 生成派生副本。旧 traces 不导入或重放，原目录不变。
+
+本机配置位于 Git 忽略的 `workbenches/research/.env`，API 和 worker 从该文件加载研究数据库 URL。已确认导入源为：
+
+- `.local/state/research.sqlite`：4 次历史运行、283 个步骤、283 个尝试、1,729 个事件、90 个产物和 90 个 host asset 映射。
+- `.local/state/collaboration.sqlite`：0 条协作事件。
+- `.local/backups/20260923-storage-native/research.sqlite`：同样 4/283/283/1,729/90 条 ledger 记录；run、step、attempt、event、artifact payload 与当前库逐 ID 相同，但 host asset 路径映射是旧版本。
+
+显式导入命令：
+
+```sh
+node workbenches/research/scripts/import-sqlite-archive.mjs /absolute/path/to/legacy-research/.local/state/research.sqlite
+node workbenches/research/scripts/import-sqlite-archive.mjs /absolute/path/to/legacy-research/.local/state/collaboration.sqlite
+node workbenches/research/scripts/import-sqlite-archive.mjs --archive-only /absolute/path/to/legacy-research/.local/backups/20260923-storage-native/research.sqlite
 ```
 
-所有根目录可配置，私有数据不提交到 Git。
+脚本用 Node `node:sqlite` 的 `readOnly` 连接和 `PRAGMA query_only=ON`；源 SQLite 永不写入。主文件与 WAL sidecar 的组合 SHA-256、表名、每行 JSON 和行数进入 `research_legacy_imports` / `research_legacy_rows`，按相同字节组合幂等。主 research 库投影到 shared `aw_*` 表，以保留旧 ID、state、payload、来源和模型标签，让既有阅读器继续显示报告；投影 host rows 标为只读，恢复、取消、意见、决策和修订操作会被拒绝。备份库的 workflow 账本逐 ID 与主库一致，因此使用 `--archive-only` 只保留其原始表/行及不同的旧路径映射，避免重复投影覆盖当前阅读视图。旧模型标签按历史原值保留，绝不重标成新 Agents SDK 运行。原 SQLite、导出报告、来源和 traces 都仍留在旧路径。导入前停止旧 API/worker，并完整保留主文件及其 `-wal` sidecar。
 
-| 内容 | 当前正本与用途 |
-| --- | --- |
-| 选题、读者定位、来源归属 | `content/manifest.json`；由 Zod 校验，当前没有原生增删改 API |
-| 原始来源 | 来源文件；登记 SHA-256，读取时校验路径范围、大小、哈希 |
-| 当次研究输入与方法 | `host_runs` 中的冻结 JSON；包含实际来源文本、模型、方法及实现指纹 |
-| 运行、步骤、尝试、事件与产物 | `workflow_runs/steps/attempts/events/artifacts`；由 Agent Workflow RunStore 维护，产物记录包含完整正文 payload |
-| 排队、领取与取消 | `host_runs` 的作业字段、`host_worker_lease`、幂等 `host_commands`；不另造研究进度正本 |
-| 派生 Markdown | `host_assets` 保存文件键、路径和文件哈希；正文来自 Workflow payload，文件可由正本重建 |
-| 用户意见与决定 | `collaboration_events` 追加事件；绑定 run 和确切产物身份，不由模型结果自动生成 |
+新系统备份需同时覆盖 PostgreSQL 数据库、选题/来源目录和派生文件。恢复 PostgreSQL 后核对研究状态及 payload；派生 Markdown 文件可由 artifact payload 重建。不要把旧 SQLite 数据库直接配置成新 runtime 的存储。
 
-两个数据库使用 WAL 与事务。宿主在同一 research.sqlite 中入队并创建 Workflow run，保证该步骤的原子性。协作库与执行库不是跨库事务；修订命令读取已有不可变反馈后，以幂等命令创建新运行。
+归档与阅读视图投影分别记录完成状态：先执行 `--archive-only`，之后仍可用普通导入补齐投影。同一历史 ID 已存在但 payload 或宿主映射不同会使事务失败；同一来源已投影到其他目标 workspace 时也会拒绝重新投影，不覆盖既有 PostgreSQL 数据。
 
-## 从保存到显示
-
-1. 用户选择来源，宿主校验文件并把真实字节冻结到这次运行的输入中。
-2. worker 执行 Workflow，记录调用和不可变 artifact payload。文件导出不会覆盖正文正本。
-3. API 从 RunStore 读模型查询阶段和资产；阅读器从确切 payload 渲染 Markdown/Mermaid，不读取旧报告 HTML。
-4. 评论、接受、退回绑定 `{id, revision, sha256}`。新稿是新产物并记录依赖，不自动继承接受。
-
-这也是两种哈希并存的原因：payload 哈希覆盖结构化产物；导出文件哈希覆盖 Markdown 文件字节。两者不能互换。
-
-## 本轮清理
-
-- 移除旧目录适配接口 `catalogAssets` 和公开字段 `legacyAssetId`。
-- 内部派生文件键改名 `file_key`，不再作为另一套报告身份；本产品原有数据表的列名升级保留所有运行、路径与文件内容。
-- 移除旧仓库专用导入脚本及启动要求。此前的导入事实仍保留在历史迁移记录中。
-- 没有重写已有研究结果、反馈、来源或旧仓库文件。
-
-## 仍需完善，尚未实现
-
-当前不是完整的通用内容存储系统：选题与来源目录仍是 JSON 文件，资料录入界面/API 未实现；API 的 workspace 命名空间还有最初验证项目的固定值。它不读取旧仓库，但应该随原生选题模型一起消除这项硬编码。
-
-下一步应建立原生选题、来源及来源版本的事务化写入，并把新材料作为普通文件/URL 输入，不再围绕旧报告格式设计。报告仍是 Workflow 产物类型，无需为兼容旧页面维护第二套报告目录。
-
-来源字节与每次运行的冻结输入、正文 payload 与 Markdown 导出目前有重复，这是首版的明确成本。更大的附件适合改为内容寻址文件对象与确切引用；在实现验证、备份与保留策略前，不声称已经有对象存储抽象。当前没有对象存储服务、向量数据库或自动网页归档。
-
-数据模型升级与旧报告兼容是两件事：取消后者，不代表可以删除新工作台已产生的运行数据。备份和恢复要求见 development.md。
-
-本轮验证：构建、类型检查及 35 项测试通过；升级前用 SQLite 备份接口保存本地研究数据库，升级后逐表比较记录一致，4 次运行、90 个产物保留，90 个导出文件哈希匹配。读取实际运行投影确认不再含旧资产 ID 字段。本次没有启动新的模型研究。
+网页连接使用一次校验后的 IPv4 DNS 结果，并将结果绑定到本次连接，禁止再次解析或自动回退到未校验的 IPv6 地址；重定向每跳重新校验。当前不支持仅有 IPv6 地址的来源站点。本机既有托管出口使用的合成 IPv4 地址仍遵循原出口配置，工具不修改代理设置。

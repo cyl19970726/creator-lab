@@ -1,5 +1,7 @@
 # 创作接入共享底座实施计划
 
+> **历史实施记录。** 本计划记录旧本地原型与阶段性 Space 接入，不是当前状态清单。2026-10-12 当前状态：创作已退役旧 Codex/SQLite 可写 runtime；CONTENT 与真实 B3 使用 PostgreSQL workflow ledger 和官方 Agents SDK；历史 reports、media、traces、SIWC auth 与数据库保留、不自动迁移。当前入口与边界见[运行说明](03-architecture/business-workbench.md)。下文的阶段测试数字和“尚未迁移/尚未完成”结论只适用于其记录日期。
+
 本页记录 2026-10-03 本地工作台原型的已做工作，以及尚未完成的共享目标。目标与职责以共享 [产品](../../../vendor/agent-workflow/docs/product.md)、[架构](../../../vendor/agent-workflow/docs/architecture.md)和[路线图](../../../vendor/agent-workflow/docs/harness-roadmap.md)为准。创作保留业务流程、角色、标准、作品档案和展示扩展；通用执行、评价、历史和工作台由 agent-workflow 提供。当前阶段不建设临时 VM。
 
 ## 已有本地原型

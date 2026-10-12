@@ -18,6 +18,7 @@ export type ResearchAgentDefinitions = {
 
 type AgentConfig = {
   model?: string;
+  reasoningEffort?: string;
   prompt: string;
   promptRevision: string;
   skillSnapshotsRevision: string;
@@ -30,7 +31,7 @@ export type ResearchAgentConfig = Record<keyof ResearchAgentDefinitions, AgentCo
 /** Requires complete validated prompts, skill snapshots and output schemas from composition. */
 export function createResearchAgentDefinitions(values: ResearchAgentConfig): ResearchAgentDefinitions {
   const make = <Input, Output>(id: string, value: AgentConfig) => defineAgent<Input, Output>({
-    id, revision: "v1", model: value.model ?? "gpt-5.6-luna", reasoningEffort: "medium", promptRevision: value.promptRevision,
+    id, revision: "v1", model: value.model ?? "gpt-6-luna", reasoningEffort: value.reasoningEffort ?? "medium", promptRevision: value.promptRevision,
     skillsRevision: value.skillSnapshotsRevision, permissionsRevision: value.permissionsRevision,
     config: { ...value.config, prompt: value.prompt },
   });

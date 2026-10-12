@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MemoryRunStore, runWorkflow, type AgentRunRequest, type AgentRunner } from '@signal-room/workflow';
 import type { WorkflowSpaceService, WorkflowVersion, WorkflowVersionDraft } from '@signal-room/workflow-spaces';
 import { publishProcessContract } from '@signal-room/workflow-spaces';
@@ -55,6 +55,29 @@ function fixture(withSiwc = false) {
 }
 
 describe('CONTENT method publication', () => {
+  it('reuses validated schema snapshots while returning isolated candidate copies', async () => {
+    const f = fixture();
+    const deployment = createContentDeployment({ models: f.models, runner: f.runner });
+    const registerSchema = vi.spyOn(SchemaRegistry.prototype, 'registerSchema');
+    try {
+      const first = deployment.candidate();
+      await deployment.frozenDefinition();
+      const registrations = registerSchema.mock.calls.length;
+      expect(registrations).toBeGreaterThan(0);
+
+      (first.version.config as Record<string, unknown>).callerMutation = true;
+      first.presentation = {} as typeof first.presentation;
+      const second = deployment.candidate();
+      await deployment.frozenDefinition();
+
+      expect(registerSchema).toHaveBeenCalledTimes(registrations);
+      expect(second.version.config).not.toHaveProperty('callerMutation');
+      expect(second.presentation).not.toEqual({});
+    } finally {
+      registerSchema.mockRestore();
+    }
+  });
+
   it('changes only the author instructions when two deployments share models and runner', async () => {
     const f = fixture();
     const prompt = '作者实验版：先解释观众会误解的因果关系。';

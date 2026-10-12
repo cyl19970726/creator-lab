@@ -21,7 +21,21 @@ describe("single-post depth integrity", () => {
   it("rejects fabricated ten seconds for a short video", () => expect(() => check(fixture(), 1.2)).toThrow("DURATION"));
   it("rejects an uncovered opening", () => { const input = fixture(); input.builderLenses.visualEditing.openingAnalysis.segments[0]!.timeRange.start = 0.3; expect(() => check(input)).toThrow("COVERAGE"); });
   it("rejects a frame outside the segment", () => expect(() => validateVideoDepth(fixture(), 83, ids, new Map([["FRAME-1",20]]), source)).toThrow("FRAME_"));
+  it("locates an out-of-segment frame without changing the frame boundary rule", () => {
+    const shifted = new Map(frames);
+    shifted.set("FRAME-20", 10.2);
+    expect(() => validateVideoDepth(fixture(), 83, ids, shifted, source)).toThrow(
+      "BUILDER_INTEGRITY_DEPTH_FRAME_RANGE:segments[0](a):FRAME-20@10.2 outside [0,10]"
+    );
+  });
   it("rejects a midpoint masquerading as a continuous strip", () => { const input=fixture(); input.builderLenses.visualEditing.openingAnalysis.segments[0]!.frameRefs=["FRAME-10"]; expect(() => check(input)).toThrow("FRAME_STRIP_COVERAGE"); });
+  it("locates a frame-strip gap within the affected segment", () => {
+    const input = fixture();
+    input.builderLenses.visualEditing.openingAnalysis.segments[0]!.frameRefs = ["FRAME-0", "FRAME-3", "FRAME-6", "FRAME-8", "FRAME-10", "FRAME-12", "FRAME-14", "FRAME-16", "FRAME-18", "FRAME-20"];
+    expect(() => check(input)).toThrow(
+      "BUILDER_INTEGRITY_DEPTH_FRAME_STRIP_COVERAGE:segments[0](a) range=[0,10] internal gap=1.5 at 0..1.5"
+    );
+  });
   it("rejects missing source with generated conclusions", () => { const input = fixture(); Object.assign(input.builderLenses.directingLogic.packagingAnalysis.cover,{promise:"带你省钱"}); expect(() => check(input)).toThrow("MISSING_SOURCE_CLAIM"); });
   it("rejects using the first video frame as independent cover", () => { const input = fixture(); Object.assign(input.builderLenses.directingLogic.packagingAnalysis.cover,{state:"available",sourceRef:"FRAME-1",evidenceRefs:["FRAME-1"]}); expect(() => check(input)).toThrow("INDEPENDENT_COVER"); });
   it("reports the precise fulfillment evidence field and every invalid ID", () => {

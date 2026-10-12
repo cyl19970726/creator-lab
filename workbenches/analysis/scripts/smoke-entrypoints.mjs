@@ -1,9 +1,20 @@
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
+import { Pool } from "pg";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
+const databaseUrl = process.env.ANALYSIS_TEST_DATABASE_URL;
+if (!databaseUrl) throw new Error("ANALYSIS_TEST_DATABASE_URL is required for isolated PostgreSQL entrypoint checks");
+const schema = `entrypoint_test_${randomUUID().replaceAll("-", "")}`;
+const admin = new Pool({ connectionString: databaseUrl });
+await admin.query(`CREATE SCHEMA ${schema}`);
+const isolated = new URL(databaseUrl);
+isolated.searchParams.set("options", `-c search_path=${schema}`);
+const smokeEnvironment = { ...process.env, SELF_MEDIA_STORAGE: "postgres", SELF_MEDIA_DATABASE_URL: isolated.toString(), SELF_MEDIA_READ_ONLY: "false" };
+const children = [];
 const root = process.cwd();
 const runtime = fs.mkdtempSync(path.join(os.tmpdir(), "signal-room-entrypoint-smoke-"));
 
@@ -58,7 +69,7 @@ function stop(child, label, timeoutMs = 10_000) {
 try {
   const cli = spawnSync(process.execPath, ["dist-server/apps/cli/src/main.js", "--help"], {
     cwd: root,
-    env: { ...process.env, SELF_MEDIA_RUNTIME_DIR: runtime },
+    env: { ...smokeEnvironment, SELF_MEDIA_RUNTIME_DIR: runtime },
     encoding: "utf8"
   });
   if (cli.status !== 0 || !cli.stdout.includes("Commands:")) {
@@ -69,13 +80,14 @@ try {
   const api = spawn(process.execPath, ["dist-server/apps/api/src/main.js"], {
     cwd: root,
     env: {
-      ...process.env,
+      ...smokeEnvironment,
       SELF_MEDIA_RUNTIME_DIR: runtime,
       SELF_MEDIA_PORT: String(port),
       SELF_MEDIA_EMBED_WORKERS: "false"
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
+  children.push(api);
   await waitForOutput(api, /Self Media Intelligence API:/u, "Compiled API");
   const health = await fetch(`http://127.0.0.1:${port}/api/health`);
   if (!health.ok || (await health.json()).ok !== true) throw new Error("Compiled API health check failed");
@@ -85,13 +97,17 @@ try {
 
   const worker = spawn(process.execPath, ["dist-server/apps/worker/src/main.js"], {
     cwd: root,
-    env: { ...process.env, SELF_MEDIA_RUNTIME_DIR: runtime },
+    env: { ...smokeEnvironment, SELF_MEDIA_RUNTIME_DIR: runtime },
     stdio: ["ignore", "pipe", "pipe"]
   });
+  children.push(worker);
   await waitForOutput(worker, /background workers started/u, "Compiled Worker");
   await stop(worker, "Compiled Worker");
 
   console.log("Compiled Web, API, Worker, and CLI entrypoints are operational.");
 } finally {
+  for (const child of children) if (child.exitCode === null && !child.killed) await stop(child, "Smoke child");
+  await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+  await admin.end();
   fs.rmSync(runtime, { recursive: true, force: true });
 }

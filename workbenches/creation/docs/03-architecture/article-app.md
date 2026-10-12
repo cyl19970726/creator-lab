@@ -1,6 +1,6 @@
-# 产物、复核与 API 合同
+# 已退役文章应用合同（历史）
 
-本合同描述当前文章首版的实现，以 [`src/contracts/index.ts`](../../src/contracts/index.ts)、[`apps/api/app.ts`](../../apps/api/app.ts)、[`src/infrastructure/store.ts`](../../src/infrastructure/store.ts) 和 [`apps/worker/worker.ts`](../../apps/worker/worker.ts) 为准。工作区、作品、执行、产物和决定各有独立身份；页面只是这些记录的投影。B3 视频、交付、发布与反馈不在本接口中。
+本页保留旧文章应用的接口与行为记录。其 API、worker、合同和存储实现已退役删除；这些说明不代表可运行入口，也不承诺兼容。创作当前入口见[运行与历史数据边界](business-workbench.md)。工作区、作品、执行、产物和决定曾有独立身份；B3 视频、交付、发布与反馈不属于该旧接口。
 
 ## 身份和产物
 
@@ -33,6 +33,6 @@
 
 ## 执行与存储边界
 
-API 仅创建和读取持久任务；独立 worker 持有同一 `CREATION_STATE_ROOT` 的 OS 锁，调用共享 `agent-workflow` 的 `runWorkflow` 和真实 Codex runner，并将原生 run/step/attempt 与业务产物协调保存。worker 崩溃后可重领 `running` 任务并按原生记录恢复；不会靠超时夺取锁。API 展示的执行详情来自原生账本，`queued` 本身不表示 Agent 已运行。模型调用轨迹、原生账本和业务产物属于私有运行数据，不入仓。
+旧 API 仅创建和读取持久任务；独立 worker 持有状态目录的 OS 锁，调用共享 `agent-workflow` 的 `runWorkflow` 和 Codex runner，并将原生 run/step/attempt 与业务产物协调保存。worker 崩溃后可重领运行任务并按原生记录恢复。模型调用轨迹、原生账本和业务产物属于私有运行数据，不入仓。
 
 默认状态根目录为 `workbenches/creation/data/local/platform-v1`，可用 `CREATION_STATE_ROOT` 同时覆盖 API 与 worker。API 默认只监听 `127.0.0.1:4337`（`CREATION_PORT` 可改），并限制本机连接、Host、Origin 和跨站请求；这不是用户认证或公网安全边界。决定 API 在本机把操作者记录为 `user`，不能据此证明远程身份。旧清单、历史数据库及视频/发布助手没有自动导入接口；需要迁移时应另做有来源、可核验的迁移方案。

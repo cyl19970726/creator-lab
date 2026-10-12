@@ -181,7 +181,18 @@ export function projectArtifactPayload(_artifact: ArtifactRef, raw: unknown) {
 function safeEvidenceRef(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 500
     && !value.startsWith("/") && !value.includes("..") && /^[\p{L}\p{N}._:@/#-]+$/u.test(value)
-    || safePublicArtifactPath(value);
+    || safePublicArtifactEvidenceRef(value);
+}
+
+function safePublicArtifactEvidenceRef(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 500) return false;
+  const fragmentStart = value.indexOf("#");
+  if (fragmentStart < 0) return safePublicArtifactPath(value);
+  if (!safePublicArtifactPath(value.slice(0, fragmentStart))) return false;
+  const pointer = value.slice(fragmentStart + 1);
+  return pointer.startsWith("/") && pointer.split("/").slice(1).every((segment) =>
+    segment.length > 0 && segment !== "." && segment !== ".."
+    && /^[\p{L}\p{N}._:@~-]+$/u.test(segment) && !/~(?![01])/u.test(segment));
 }
 
 function projectResearchReview(raw: unknown, artifactType: "post-review" | "creator-review") {

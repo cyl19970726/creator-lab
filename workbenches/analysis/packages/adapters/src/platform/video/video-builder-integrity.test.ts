@@ -236,6 +236,19 @@ describe("Builder deterministic integrity gate", () => {
     }
   });
 
+  it("locates missing cue accountability rows without weakening the gate", () => {
+    const item = createFixture();
+    try {
+      const file = path.join(item.root, "reconstruction.json");
+      const reconstruction = JSON.parse(fs.readFileSync(file, "utf8"));
+      reconstruction.coverageMatrix.cueAccountability = [];
+      fs.writeFileSync(file, JSON.stringify(reconstruction));
+      expect(() => validateBuilderIntegrity(item.root, item.videoPath)).toThrow(
+        "BUILDER_INTEGRITY_CUE_ACCOUNTABILITY:expected=2 actual=0 missing=CUE-001,CUE-002"
+      );
+    } finally { fs.rmSync(item.root, { recursive: true, force: true }); }
+  });
+
   it("rejects knowledge or context cues that claim semantic use without a unit link", () => {
     const item = createFixture();
     try {

@@ -2,6 +2,23 @@ import { validateVideoDepth } from "./video-depth-integrity.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { projectRoot } from "../../core/config.js";
+
+const skillDir = process.env.SELF_MEDIA_VIDEO_RECONSTRUCTION_SKILL_DIR ??
+  path.join(projectRoot, ".agents", "skills", "video-content-reconstruction");
+const builderIntegrityContractVersion = "builder-integrity-v7-host-cue-candidates";
+
+export function builderIntegrityContractRevision(): string {
+  const contractFiles = [
+    path.join(skillDir, "references/builder-operator.md"),
+    path.join(skillDir, "references/single-post-depth.md"),
+    path.join(skillDir, "schemas/capture-protocol.schema.json"),
+    path.join(skillDir, "schemas/reconstruction.schema.json")
+  ];
+  const hash = crypto.createHash("sha256").update(builderIntegrityContractVersion);
+  for (const file of contractFiles) hash.update(fs.readFileSync(file));
+  return hash.digest("hex");
+}
 
 type EvidenceRef = { refType?: string; ref?: string };
 type Carrier = {
@@ -213,7 +230,14 @@ export function validateBuilderIntegrity(outputDir: string, videoPath: string): 
   const accountability = reconstruction.coverageMatrix?.cueAccountability ?? [];
   const accountedIds = accountability.map((row) => row.cueId).filter((id): id is string => Boolean(id));
   if (accountedIds.length !== sourceCueIds.size || new Set(accountedIds).size !== sourceCueIds.size ||
-      accountedIds.some((id) => !sourceCueIds.has(id))) problem("CUE_ACCOUNTABILITY");
+      accountedIds.some((id) => !sourceCueIds.has(id))) {
+    const missing = [...sourceCueIds].filter(id => !accountedIds.includes(id));
+    const duplicates = [...new Set(accountedIds.filter((id, index) => accountedIds.indexOf(id) !== index))];
+    const unknown = [...new Set(accountedIds.filter(id => !sourceCueIds.has(id)))];
+    const preview = (values: string[]) => `${values.slice(0, 8).join(",")}${values.length > 8 ? ` (+${values.length - 8} more)` : ""}`;
+    problem("CUE_ACCOUNTABILITY", `expected=${sourceCueIds.size} actual=${accountedIds.length}` +
+      ` missing=${preview(missing)} duplicates=${preview(duplicates)} unknown=${preview(unknown)}`);
+  }
   for (const row of accountability) {
     if ((row.unitIds ?? []).some((id) => !unitIds.has(id))) problem("CUE_UNIT_REFERENCE", row.cueId);
     if ((row.disposition === "knowledge" || row.disposition === "context") && !(row.unitIds ?? []).length) {

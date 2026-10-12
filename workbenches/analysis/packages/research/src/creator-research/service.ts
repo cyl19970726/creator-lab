@@ -124,7 +124,8 @@ export class CreatorResearchService {
     private readonly videoConcurrencyLimit: number,
     completionPort?: CreatorResearchCompletionPort,
     imagePostReconstructor?: ImagePostReconstructionExecutor,
-    private readonly workflowExecutor?: ResearchWorkflowExecutor
+    private readonly workflowExecutor?: ResearchWorkflowExecutor,
+    private readonly automaticVersionedWorkflows = false
   ) {
     this.workflowScheduler = new CreatorResearchWorkflowScheduler(repository);
     this.jobProcessor = new CreatorResearchJobProcessor(
@@ -136,24 +137,25 @@ export class CreatorResearchService {
       videoConcurrencyLimit,
       completionPort,
       imagePostReconstructor,
-      workflowExecutor
+      workflowExecutor,
+      automaticVersionedWorkflows
     );
-    this.recoverLocalWorkerProjection();
+
   }
 
   async startPostWorkflow(id: string, postExternalId: string,
     options: { evaluationMode?: "fresh" | "repair_existing_invalid"; importedEvaluationArtifactRef?: string;
       candidateMode?: "rebuild" | "reuse" } = {}): Promise<WorkflowQueueReceipt> {
-    const run = this.workflowOwner(id);
+    const run = await this.workflowOwner(id);
     this.assertWorkflowStartAllowed(run);
     if (!run.detailArtifactRef || !run.mediaManifestArtifactRef || !run.selectionArtifactRef || !run.reconstructionBatchArtifactRef) {
       throw new Error("博主任务尚未冻结单帖 Workflow 输入");
     }
-    const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(run.reconstructionBatchArtifactRef));
+    const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(run.reconstructionBatchArtifactRef));
     const item = batch.items.find((candidate) => candidate.postExternalId === postExternalId);
     if (!item?.sourceMediaArtifactRef) throw new Error("单帖不存在或尚无可用媒体证据");
     const evidenceKind = resolveWorkflowEvidenceKind(item.evidenceKind, item.sourceMediaArtifactRef,
-      deepMediaManifestSchema.parse(this.artifacts.read(run.mediaManifestArtifactRef)), postExternalId);
+      deepMediaManifestSchema.parse(await this.artifacts.read(run.mediaManifestArtifactRef)), postExternalId);
     const receipt = await this.requireWorkflowExecutor().createPost({ creatorRunId: run.id, postExternalId,
       evidenceKind,
       ...(options.candidateMode ? { candidateMode: options.candidateMode } : {}),
@@ -166,20 +168,29 @@ export class CreatorResearchService {
     return this.enqueueWorkflowAdvance(run, receipt);
   }
 
-  async startCreatorSynthesisWorkflow(id: string): Promise<WorkflowQueueReceipt> {
-    const run = this.workflowOwner(id);
+  async startCreatorSynthesisWorkflow(id: string, options: { candidateMode?: "rebuild" | "reuse";
+    reuseCandidateArtifactId?: string } = {}): Promise<WorkflowQueueReceipt> {
+    const run = await this.workflowOwner(id);
     this.assertWorkflowStartAllowed(run);
+    if (options.candidateMode === "reuse" && !options.reuseCandidateArtifactId) {
+      throw new Error("CREATOR_REUSE_CANDIDATE_ID_REQUIRED");
+    }
+    if (options.candidateMode !== "reuse" && options.reuseCandidateArtifactId) {
+      throw new Error("CREATOR_REUSE_CANDIDATE_MODE_REQUIRED");
+    }
     if (!run.portfolioArtifactRef || !run.portfolioAnnotationsArtifactRef || !run.selectionArtifactRef
       || !run.detailArtifactRef || !run.reconstructionBatchArtifactRef) {
       throw new Error("博主任务尚未冻结综合 Workflow 输入");
     }
-    const selection = creatorSelectionSchema.parse(this.artifacts.read(run.selectionArtifactRef));
-    const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(run.reconstructionBatchArtifactRef));
+    const selection = creatorSelectionSchema.parse(await this.artifacts.read(run.selectionArtifactRef));
+    const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(run.reconstructionBatchArtifactRef));
     const readiness = creatorSynthesisCoverage(selection, batch);
     if (!readiness.provisionalAllowed && !readiness.formalAllowed) {
       throw new Error("当前单帖子任务尚未达到综合输入门槛");
     }
     const receipt = await this.requireWorkflowExecutor().createSynthesis({ creatorRunId: run.id,
+      ...(options.candidateMode ? { candidateMode: options.candidateMode } : {}),
+      ...(options.reuseCandidateArtifactId ? { reuseCandidateArtifactId: options.reuseCandidateArtifactId } : {}),
       portfolioArtifactRef: run.portfolioArtifactRef, portfolioAnnotationsArtifactRef: run.portfolioAnnotationsArtifactRef,
       selectionArtifactRef: run.selectionArtifactRef, detailArtifactRef: run.detailArtifactRef,
       reconstructionBatchArtifactRef: run.reconstructionBatchArtifactRef,
@@ -189,17 +200,17 @@ export class CreatorResearchService {
 
   async startCreatorAnalysisWorkflow(id: string,
     options: CreatorAnalysisStartOptions = {}): Promise<WorkflowQueueReceipt> {
-    const run = this.workflowOwner(id);
+    const run = await this.workflowOwner(id);
     this.assertWorkflowStartAllowed(run);
     if (!run.portfolioArtifactRef || !run.portfolioAnnotationsArtifactRef || !run.selectionArtifactRef
       || !run.detailArtifactRef || !run.mediaManifestArtifactRef || !run.reconstructionBatchArtifactRef) {
       throw new Error("博主任务尚未冻结完整 Workflow 输入");
     }
-    const selection = creatorSelectionSchema.parse(this.artifacts.read(run.selectionArtifactRef));
-    const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(run.reconstructionBatchArtifactRef));
+    const selection = creatorSelectionSchema.parse(await this.artifacts.read(run.selectionArtifactRef));
+    const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(run.reconstructionBatchArtifactRef));
+    const manifest = deepMediaManifestSchema.parse(await this.artifacts.read(run.mediaManifestArtifactRef));
     const posts = creatorAnalysisItems(selection, batch, options.scope).map((item) => {
       if (!item.sourceMediaArtifactRef) throw new Error(`单帖 ${item.postExternalId} 缺少可冻结的媒体来源`);
-      const manifest = deepMediaManifestSchema.parse(this.artifacts.read(run.mediaManifestArtifactRef!));
       const evidenceKind = resolveWorkflowEvidenceKind(item.evidenceKind, item.sourceMediaArtifactRef, manifest, item.postExternalId);
       return { creatorRunId: run.id, postExternalId: item.postExternalId,
         evidenceKind,
@@ -218,14 +229,14 @@ export class CreatorResearchService {
   }
 
   async retryWorkflowStep(id: string, workflowRunId: string, stepKey: string): Promise<WorkflowQueueReceipt> {
-    const run = this.workflowOwner(id);
+    const run = await this.workflowOwner(id);
     this.assertWorkflowStartAllowed(run);
     const receipt = await this.requireWorkflowExecutor().prepareRetry({ creatorRunId: run.id, workflowRunId, stepKey });
     return this.enqueueWorkflowAdvance(run, receipt);
   }
 
-  recordSourceIdentityConflict(id: string, conflict: SourceIdentityConflict): CreatorResearchRun {
-    const run = this.workflowOwner(id);
+  async recordSourceIdentityConflict(id: string, conflict: SourceIdentityConflict): Promise<CreatorResearchRun> {
+    const run = await this.workflowOwner(id);
     const timestamp = now();
     const blockerMessage = `帖子 ${conflict.postExternalId} 的来源身份冲突：${conflict.message}`;
     const existing = run.blockers.some((blocker) => blocker.code === sourceIdentityConflictCode && blocker.message === blockerMessage);
@@ -241,8 +252,8 @@ export class CreatorResearchService {
     stage(run, "deep_capture").message = sourceIdentityConflictNextAction;
     run.nextAction = sourceIdentityConflictNextAction;
     run.updatedAt = timestamp;
-    this.repository.save(run);
-    this.repository.appendEvent({
+    await this.repository.save(run);
+    await this.repository.appendEvent({
       runId: run.id,
       jobId: null,
       type: "handoff.required",
@@ -259,22 +270,22 @@ export class CreatorResearchService {
   }
 
   async cancelWorkflow(id: string, workflowRunId: string): Promise<WorkflowQueueReceipt> {
-    const run = this.workflowOwner(id);
+    const run = await this.workflowOwner(id);
     const executor = this.requireWorkflowExecutor();
     const snapshot = await executor.snapshot(run.id, workflowRunId);
     if (!snapshot) throw new Error("Workflow 运行不存在");
-    this.repository.cancelWorkflowJobs?.(run.id, workflowRunId, now());
+    await this.repository.cancelWorkflowJobs?.(run.id, workflowRunId, now());
     await executor.cancel(workflowRunId);
     return await executor.snapshot(run.id, workflowRunId) ?? { ...snapshot, state: "cancel_requested" };
   }
 
   async getWorkflowQueue(id: string, workflowRunId: string): Promise<WorkflowQueueReceipt | null> {
-    const run = this.workflowOwner(id);
+    const run = await this.workflowOwner(id);
     return this.requireWorkflowExecutor().snapshot(run.id, workflowRunId);
   }
 
-  private workflowOwner(id: string): CreatorResearchRun {
-    const run = this.repository.get(id);
+  private async workflowOwner(id: string): Promise<CreatorResearchRun> {
+    const run = await this.repository.get(id);
     if (!run) throw new Error("博主分析任务不存在");
     return run;
   }
@@ -290,23 +301,23 @@ export class CreatorResearchService {
     return this.workflowExecutor;
   }
 
-  private enqueueWorkflowAdvance(run: CreatorResearchRun, receipt: WorkflowQueueReceipt): WorkflowQueueReceipt {
-    this.workflowScheduler.enqueue({ creatorRunId: run.id, workflowRunId: receipt.workflowRunId,
+  private async enqueueWorkflowAdvance(run: CreatorResearchRun, receipt: WorkflowQueueReceipt): Promise<WorkflowQueueReceipt> {
+    await this.workflowScheduler.enqueue({ creatorRunId: run.id, workflowRunId: receipt.workflowRunId,
       workflowId: receipt.workflowId, workflowRevision: receipt.workflowRevision, generation: receipt.generation,
       idempotencyKey: `${run.id}:workflow.advance:${receipt.workflowRunId}:${receipt.generation}` });
     return { ...receipt, state: "queued" };
   }
 
-  private recoverLocalWorkerProjection(): void {
+  async initialize(): Promise<void> {
     const recoveredAt = now();
-    for (const run of this.repository.list(100)) {
+    for (const run of await this.repository.list(100)) {
       if (run.videoWork.activePostExternalIds.length === 0) continue;
       const recoveredActivePostExternalIds = [...run.videoWork.activePostExternalIds];
-      const liveActivePostExternalIds = this.repository.activeVideoPostExternalIds(run.id, recoveredAt);
+      const liveActivePostExternalIds = await this.repository.activeVideoPostExternalIds(run.id, recoveredAt);
       let batch: ReturnType<typeof videoReconstructionBatchSchema.parse> | null = null;
       if (run.reconstructionBatchArtifactRef) {
         try {
-          batch = videoReconstructionBatchSchema.parse(this.artifacts.read(run.reconstructionBatchArtifactRef));
+          batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(run.reconstructionBatchArtifactRef));
         } catch {
           // Keep the durable projection counts when an old batch cannot be read during startup recovery.
         }
@@ -317,8 +328,8 @@ export class CreatorResearchService {
           workerId: null, lastHeartbeatAt: run.worker.lastHeartbeatAt };
       }
       run.updatedAt = recoveredAt;
-      this.repository.save(run);
-      this.repository.appendEvent({
+      await this.repository.save(run);
+      await this.repository.appendEvent({
         runId: run.id,
         jobId: run.worker.jobId,
         type: "run.resumed",
@@ -331,9 +342,9 @@ export class CreatorResearchService {
     }
   }
 
-  create(profileUrl: string, adapter: CreatorAcquisitionAdapter = "ego-browser"): CreatorResearchRun {
+  async create(profileUrl: string, adapter: CreatorAcquisitionAdapter = "ego-browser"): Promise<CreatorResearchRun> {
     const input = createCreatorResearchRunInputSchema.parse({ profileUrl, adapter });
-    const existing = this.repository.findLatestByProfileUrlAndAdapter(input.profileUrl, input.adapter);
+    const existing = await this.repository.findLatestByProfileUrlAndAdapter(input.profileUrl, input.adapter);
     if (existing) {
       const active = ["queued", "preflight", "collecting", "needs_user", "backoff"].includes(existing.status);
       const snapshotTime = existing.lastSnapshotAt ? Date.parse(existing.lastSnapshotAt) : Number.NaN;
@@ -384,35 +395,35 @@ export class CreatorResearchService {
       synthesisGateArtifactRef: null,
       browserTaskSpaceId: null
     });
-    this.repository.save(run);
-    this.repository.appendEvent({
+    await this.repository.save(run);
+    await this.repository.appendEvent({
       runId: run.id, jobId: null, type: "run.created", createdAt: timestamp,
       message: "博主研究任务已创建。", payload: { profileUrl: run.profileUrl }
     });
-    const job = this.repository.enqueue({
+    const job = await this.repository.enqueue({
       id: randomUUID(), runId: run.id, nodeKey: "creator.acquire", status: "queued",
       idempotencyKey: `${run.id}:creator.acquire:${input.adapter}:v2`, attempts: 0, maxAttempts: 3,
       availableAt: timestamp, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null,
       payload: { profileUrl: run.profileUrl }, lastError: null, createdAt: timestamp, updatedAt: timestamp
     });
     run.worker.jobId = job.id;
-    this.repository.save(run);
-    this.repository.appendEvent({
+    await this.repository.save(run);
+    await this.repository.appendEvent({
       runId: run.id, jobId: job.id, type: "job.queued", createdAt: timestamp,
       message: `${input.adapter} 采集任务已进入持久队列。`, payload: { nodeKey: job.nodeKey, adapter: input.adapter }
     });
     return run;
   }
 
-  importSnapshot(input: ImportedCreatorSnapshot): CreatorResearchRun {
+  async importSnapshot(input: ImportedCreatorSnapshot): Promise<CreatorResearchRun> {
     const profileUrl = createCreatorResearchRunInputSchema.parse({ profileUrl: input.profileUrl }).profileUrl;
     const posts = input.posts.map((post) => creatorInventoryPostSchema.parse(post));
-    const existing = this.repository.findLatestByProfileUrl(profileUrl);
+    const existing = await this.repository.findLatestByProfileUrl(profileUrl);
     if (existing?.inventoryArtifactRef) {
       if (input.canonicalSlug && existing.canonicalSlug !== input.canonicalSlug) {
         existing.canonicalSlug = input.canonicalSlug;
         existing.updatedAt = now();
-        this.repository.save(existing);
+        await this.repository.save(existing);
       }
       return existing;
     }
@@ -448,13 +459,13 @@ export class CreatorResearchService {
       mediaManifestArtifactRef: null, reconstructionBatchArtifactRef: null, synthesisArtifactRef: null,
       synthesisGateArtifactRef: null, browserTaskSpaceId: input.taskSpaceId
     });
-    this.repository.save(run);
-    const inventoryRef = this.artifacts.write(run.id, "creator-inventory.json", {
+    await this.repository.save(run);
+    const inventoryRef = await this.artifacts.write(run.id, "creator-inventory.json", {
       schemaVersion: "1.1.0", runId: run.id, capturedAt: input.capturedAt, sourceUrl: profileUrl,
       finalUrl: profileUrl, creatorId: input.creatorId, creatorName: input.creatorName,
       stopReason: input.stopReason, crawlDiagnostics: [], posts, warnings: input.warnings
     }, input.sourceRefs);
-    const job = this.repository.enqueue({
+    const job = await this.repository.enqueue({
       id: randomUUID(), runId: run.id, nodeKey: "creator.portfolio", status: "queued",
       idempotencyKey: `${run.id}:creator.portfolio:ranked-7x3-v1`, attempts: 0, maxAttempts: 3,
       availableAt: timestamp, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null,
@@ -468,50 +479,50 @@ export class CreatorResearchService {
     stage(run, "inventory").message = `导入 ${posts.length} 条公开作品；原始缺口与阻塞保持可见。`;
     stage(run, "tiering").status = "pending";
     stage(run, "tiering").message = "等待从版本化清单复算统计和选择集。";
-    this.repository.save(run);
-    this.repository.appendEvent({ runId: run.id, jobId: null, type: "run.created", createdAt: timestamp,
+    await this.repository.save(run);
+    await this.repository.appendEvent({ runId: run.id, jobId: null, type: "run.created", createdAt: timestamp,
       message: "既有赛博鸭公开快照已迁入正式运行控制面。", payload: { sourceRefs: input.sourceRefs } });
-    this.repository.appendEvent({ runId: run.id, jobId: null, type: "artifact.produced", createdAt: timestamp,
+    await this.repository.appendEvent({ runId: run.id, jobId: null, type: "artifact.produced", createdAt: timestamp,
       message: "版本化作品清单已登记。", payload: { artifactRef: inventoryRef, dependencies: input.sourceRefs, postCount: posts.length } });
-    this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "job.queued", createdAt: timestamp,
+    await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "job.queued", createdAt: timestamp,
       message: "Portfolio 分析节点已进入持久队列。", payload: { nodeKey: job.nodeKey } });
     return run;
   }
 
-  get(id: string): CreatorResearchRun | null { return this.projectRun(this.repository.get(id)); }
-  list(limit?: number): CreatorResearchRun[] { return this.repository.list(limit).map((run) => this.projectRun(run)!); }
-  events(id: string, afterSequence = 0): CreatorResearchEvent[] {
-    return this.repository.listEvents(id, afterSequence);
+  async get(id: string): Promise<CreatorResearchRun | null> { return await this.projectRun(await this.repository.get(id)); }
+  async list(limit?: number): Promise<CreatorResearchRun[]> { return Promise.all((await this.repository.list(limit)).map(async (run) => (await this.projectRun(run))!)); }
+  async events(id: string, afterSequence = 0): Promise<CreatorResearchEvent[]> {
+    return await this.repository.listEvents(id, afterSequence);
   }
 
-  portfolio(id: string) {
-    const run = this.projectRun(this.repository.get(id));
+  async portfolio(id: string) {
+    const run = await this.projectRun(await this.repository.get(id));
     if (!run) return null;
     if (!run.portfolioArtifactRef || !run.selectionArtifactRef) return { run, pipeline: buildCreatorResearchPipeline(run), analysis: null, annotations: null, selection: null, details: null,
       mediaManifest: null, reconstructionBatch: null, synthesis: null, synthesisGate: null };
     const reconstructionBatch = run.reconstructionBatchArtifactRef
-      ? videoReconstructionBatchSchema.parse(this.artifacts.read(run.reconstructionBatchArtifactRef)) : null;
+      ? videoReconstructionBatchSchema.parse(await this.artifacts.read(run.reconstructionBatchArtifactRef)) : null;
     return {
       run,
       pipeline: buildCreatorResearchPipeline(run, undefined, reconstructionBatch),
-      analysis: creatorPortfolioAnalysisSchema.parse(this.artifacts.read(run.portfolioArtifactRef)),
+      analysis: creatorPortfolioAnalysisSchema.parse(await this.artifacts.read(run.portfolioArtifactRef)),
       annotations: run.portfolioAnnotationsArtifactRef
-        ? creatorPortfolioAnnotationsSchema.parse(this.artifacts.read(run.portfolioAnnotationsArtifactRef)) : null,
-      selection: creatorSelectionSchema.parse(this.artifacts.read(run.selectionArtifactRef)),
-      details: run.detailArtifactRef ? creatorDetailCollectionSchema.parse(this.artifacts.read(run.detailArtifactRef)) : null,
-      mediaManifest: run.mediaManifestArtifactRef ? deepMediaManifestSchema.parse(this.artifacts.read(run.mediaManifestArtifactRef)) : null,
+        ? creatorPortfolioAnnotationsSchema.parse(await this.artifacts.read(run.portfolioAnnotationsArtifactRef)) : null,
+      selection: creatorSelectionSchema.parse(await this.artifacts.read(run.selectionArtifactRef)),
+      details: run.detailArtifactRef ? creatorDetailCollectionSchema.parse(await this.artifacts.read(run.detailArtifactRef)) : null,
+      mediaManifest: run.mediaManifestArtifactRef ? deepMediaManifestSchema.parse(await this.artifacts.read(run.mediaManifestArtifactRef)) : null,
       reconstructionBatch,
-      synthesis: run.synthesisArtifactRef ? creatorSynthesisSchema.parse(this.artifacts.read(run.synthesisArtifactRef)) : null,
-      synthesisGate: run.synthesisGateArtifactRef ? creatorSynthesisGateSchema.parse(this.artifacts.read(run.synthesisGateArtifactRef)) : null
+      synthesis: run.synthesisArtifactRef ? creatorSynthesisSchema.parse(await this.artifacts.read(run.synthesisArtifactRef)) : null,
+      synthesisGate: run.synthesisGateArtifactRef ? creatorSynthesisGateSchema.parse(await this.artifacts.read(run.synthesisGateArtifactRef)) : null
     };
   }
 
-  private projectRun(run: CreatorResearchRun | null): CreatorResearchRun | null {
+  private async projectRun(run: CreatorResearchRun | null): Promise<CreatorResearchRun | null> {
     if (!run) return null;
     run.videoWork.concurrencyLimit = this.videoConcurrencyLimit;
     if (!run.reconstructionBatchArtifactRef) return run;
     try {
-      const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(run.reconstructionBatchArtifactRef));
+      const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(run.reconstructionBatchArtifactRef));
       run.videoWork.analyzedPosts = Math.max(
         batch.builtPosts,
         batch.items.filter((item) => ["built_unevaluated", "evaluated_with_findings", "verified", "ready"].includes(item.state)).length
@@ -524,15 +535,15 @@ export class CreatorResearchService {
     return run;
   }
 
-  resume(id: string): CreatorResearchRun {
-    const run = this.repository.get(id);
+  async resume(id: string): Promise<CreatorResearchRun> {
+    const run = await this.repository.get(id);
     if (!run) throw new Error("博主分析任务不存在");
     this.assertWorkflowStartAllowed(run);
     const retryableSynthesis = run.status === "reviewable"
       && run.blockers.some((blocker) => blocker.code === "creator_synthesis_not_ready");
     if (!["needs_user", "backoff", "failed"].includes(run.status) && !retryableSynthesis) return run;
     const timestamp = now();
-    const job = this.repository.requeueRun(run.id, timestamp);
+    const job = await this.repository.requeueRun(run.id, timestamp);
     if (!job) throw new Error("任务缺少可恢复的工作节点");
     const resumedStage = job.nodeKey === "creator.portfolio" ? "tiering"
       : ["creator.enrich", "video.reconstruct"].includes(job.nodeKey) ? "deep_capture"
@@ -550,16 +561,16 @@ export class CreatorResearchService {
     run.worker = { state: "queued", attempt: job.attempts, jobId: job.id, workerId: null, lastHeartbeatAt: null };
     stage(run, resumedStage).status = "pending";
     stage(run, resumedStage).message = null;
-    this.repository.save(run);
-    this.repository.appendEvent({
+    await this.repository.save(run);
+    await this.repository.appendEvent({
       runId: run.id, jobId: job.id, type: "run.resumed", createdAt: timestamp,
       message: "用户已确认继续，任务重新进入队列。", payload: {}
     });
     return run;
   }
 
-  rebuildSelection(id: string): CreatorResearchRun {
-    const run = this.repository.get(id);
+  async rebuildSelection(id: string): Promise<CreatorResearchRun> {
+    const run = await this.repository.get(id);
     if (!run) throw new Error("博主分析任务不存在");
     this.assertWorkflowStartAllowed(run);
     if (!run.inventoryArtifactRef) throw new Error("任务缺少可复算的版本化清单");
@@ -567,7 +578,7 @@ export class CreatorResearchService {
     const invalidated = [run.portfolioArtifactRef, run.portfolioAnnotationsArtifactRef, run.selectionArtifactRef, run.detailArtifactRef,
       run.mediaManifestArtifactRef, run.reconstructionBatchArtifactRef, run.synthesisArtifactRef,
       run.synthesisGateArtifactRef].filter((ref): ref is string => Boolean(ref));
-    const job = this.repository.enqueue({
+    const job = await this.repository.enqueue({
       id: randomUUID(), runId: run.id, nodeKey: "creator.portfolio", status: "queued",
       idempotencyKey: `${run.id}:creator.portfolio:four-groups-3-each-v2:${timestamp}`, attempts: 0, maxAttempts: 3,
       availableAt: timestamp, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null,
@@ -593,21 +604,21 @@ export class CreatorResearchService {
       stage(run, stageId).status = "pending";
       stage(run, stageId).message = stageId === "tiering" ? "等待四组深度选样 v2。" : null;
     }
-    this.repository.save(run);
-    this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "run.resumed", createdAt: timestamp,
+    await this.repository.save(run);
+    await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "run.resumed", createdAt: timestamp,
       message: "上游选样合同变化，已失效旧下游引用并从版本化清单重算。", payload: { invalidated, ruleVersion: "four-groups-3-each-v2" } });
-    this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "job.queued", createdAt: timestamp,
+    await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "job.queued", createdAt: timestamp,
       message: "四组深度选样重算已进入持久队列。", payload: { nodeKey: job.nodeKey } });
     return run;
   }
 
-  retryFailedReconstructions(id: string, builderContractRevision: string | null = null): CreatorResearchRun {
-    const run = this.repository.get(id);
+  async retryFailedReconstructions(id: string, builderContractRevision: string | null = null): Promise<CreatorResearchRun> {
+    const run = await this.repository.get(id);
     if (!run) throw new Error("博主分析任务不存在");
     this.assertWorkflowStartAllowed(run);
     if (!run.reconstructionBatchArtifactRef) throw new Error("任务缺少视频重建批次");
     const previousBatchRef = run.reconstructionBatchArtifactRef;
-    const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(previousBatchRef));
+    const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(previousBatchRef));
     const orphanedMediaItems = run.status === "failed"
       ? batch.items.filter((item) => ["queued", "running"].includes(item.state) && !item.sourceMediaArtifactRef)
       : [];
@@ -629,7 +640,7 @@ export class CreatorResearchService {
     const reconstructionRetryItems = failedItems.filter((item) => !mediaRefreshItems.includes(item));
     const timestamp = now();
     for (const item of failedItems) {
-      this.artifacts.archiveReconstructionEvaluations(
+      await this.artifacts.archiveReconstructionEvaluations(
         run.id, item.postExternalId, batch.revision + 1, randomUUID()
       );
       const needsMediaRefresh = mediaRefreshItems.includes(item);
@@ -656,31 +667,33 @@ export class CreatorResearchService {
     batch.readyPosts = batch.verifiedPosts;
     batch.pendingPosts = reconstructionRetryItems.length;
     batch.failedPosts = mediaRefreshItems.length;
-    const batchRef = this.artifacts.write(run.id, `video-reconstruction-batch-r${batch.revision}.json`, batch, [previousBatchRef]);
+    const batchRef = await this.artifacts.write(run.id, `video-reconstruction-batch-r${batch.revision}.json`, batch, [previousBatchRef]);
     run.reconstructionBatchArtifactRef = batchRef;
     if (mediaRefreshItems.length > 0) {
       const mediaIds = mediaRefreshItems.map((item) => item.postExternalId);
       const firstBatch = mediaIds.slice(0, 3);
       const remainingMediaIds = mediaIds.slice(3);
-      const job = this.repository.enqueue({ id: randomUUID(), runId: run.id, nodeKey: "creator.enrich", status: "queued",
+      const job = await this.repository.enqueue({ id: randomUUID(), runId: run.id, nodeKey: "creator.enrich", status: "queued",
         idempotencyKey: `${run.id}:creator.enrich:media-refresh:retry:${batch.revision}:0`,
         attempts: 0, maxAttempts: 3, availableAt: timestamp, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null,
         payload: { mode: "media_refresh", mediaIds: firstBatch, remainingMediaIds, batchIndex: 0 },
         lastError: null, createdAt: timestamp, updatedAt: timestamp });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "job.queued", createdAt: timestamp,
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "job.queued", createdAt: timestamp,
         message: "媒体核验失败项已进入一次定向补取。", payload: { nodeKey: job.nodeKey, postExternalIds: mediaIds } });
     }
     for (const item of reconstructionRetryItems) {
-      const job = this.repository.enqueue({ id: randomUUID(), runId: run.id, nodeKey: "video.reconstruct", status: "queued",
+      const job = await this.repository.enqueue({ id: randomUUID(), runId: run.id, nodeKey: "video.reconstruct", status: "queued",
         idempotencyKey: `${run.id}:video.reconstruct:retry:${batch.revision}:${item.postExternalId}:${item.sourceMediaArtifactRef}`,
         attempts: 0, maxAttempts: 2, availableAt: timestamp, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null,
         payload: { postExternalId: item.postExternalId, sourceUrl: `https://www.xiaohongshu.com/explore/${item.postExternalId}`,
           sourceMediaArtifactRef: item.sourceMediaArtifactRef,
+          sourceItemUpdatedAt: item.updatedAt,
           evidenceKind: item.evidenceKind,
+          automaticVersioned: this.automaticVersionedWorkflows && item.evidenceKind === "video",
           evaluationOnly: item.evaluationPolicy === "single_pass@37a03aae",
           evaluationPolicy: item.evaluationPolicy === "single_pass@37a03aae" ? "single_pass" : "skip" },
         lastError: null, createdAt: timestamp, updatedAt: timestamp });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "job.queued", createdAt: timestamp,
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "job.queued", createdAt: timestamp,
         message: "未通过视频已保留证据并重新进入持久队列。", payload: { nodeKey: job.nodeKey, postExternalId: item.postExternalId } });
     }
     run.status = "collecting";
@@ -694,16 +707,16 @@ export class CreatorResearchService {
     run.nextAction = `仅重试 ${failedItems.length} 条未通过视频（媒体补取 ${mediaRefreshItems.length}，视频重试 ${reconstructionRetryItems.length}）；其余 ${batch.builtPosts} 条 Builder 结果不会重跑。`;
     stage(run, "deep_capture").status = "running";
     stage(run, "deep_capture").message = run.nextAction;
-    this.repository.save(run);
-    this.repository.appendEvent({ runId: run.id, jobId: null, type: "run.resumed", createdAt: timestamp,
+    await this.repository.save(run);
+    await this.repository.appendEvent({ runId: run.id, jobId: null, type: "run.resumed", createdAt: timestamp,
       message: "视频基础设施修复后，仅重新排队未通过项。", payload: {
         previousBatchRef, batchRef, retriedPosts: failedItems.map((item) => item.postExternalId), builderContractRevision
       } });
     return run;
   }
 
-  evaluateBuiltVideos(id: string, postExternalIds: string[]): CreatorResearchRun {
-    const run = this.repository.get(id);
+  async evaluateBuiltVideos(id: string, postExternalIds: string[]): Promise<CreatorResearchRun> {
+    const run = await this.repository.get(id);
     if (!run) throw new Error("博主分析任务不存在");
     this.assertWorkflowStartAllowed(run);
     if (!run.reconstructionBatchArtifactRef) throw new Error("任务缺少视频重建批次");
@@ -711,7 +724,7 @@ export class CreatorResearchService {
     if (requestedIds.length === 0) throw new Error("至少选择一条 Builder 已完成的视频");
     if (requestedIds.length > 12) throw new Error("单次最多补做 12 条视频评估");
     const previousBatchRef = run.reconstructionBatchArtifactRef;
-    const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(previousBatchRef));
+    const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(previousBatchRef));
     if (batch.items.some((item) => ["queued", "running"].includes(item.state))) {
       throw new Error("视频批次仍在运行，暂不能补做独立评估");
     }
@@ -748,16 +761,18 @@ export class CreatorResearchService {
       item.builderValidationArtifactRef, item.evaluationArtifactRef, item.gateReportArtifactRef,
       item.threeLensEvaluationArtifactRef, item.threeLensGateReportArtifactRef
     ])].filter((ref): ref is string => Boolean(ref));
-    const batchRef = this.artifacts.write(run.id, `video-reconstruction-batch-r${batch.revision}.json`, batch, dependencies);
+    const batchRef = await this.artifacts.write(run.id, `video-reconstruction-batch-r${batch.revision}.json`, batch, dependencies);
     run.reconstructionBatchArtifactRef = batchRef;
     for (const item of selectedItems) {
-      const job = this.repository.enqueue({ id: randomUUID(), runId: run.id, nodeKey: "video.reconstruct", status: "queued",
+      const job = await this.repository.enqueue({ id: randomUUID(), runId: run.id, nodeKey: "video.reconstruct", status: "queued",
         idempotencyKey: `${run.id}:video.evaluate:${batch.revision}:${item.postExternalId}:${item.reconstructionArtifactRef}`,
         attempts: 0, maxAttempts: 2, availableAt: timestamp, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null,
         payload: { postExternalId: item.postExternalId, sourceUrl: `https://www.xiaohongshu.com/explore/${item.postExternalId}`,
-          sourceMediaArtifactRef: item.sourceMediaArtifactRef, evaluationOnly: true, evaluationPolicy: "single_pass" },
+          sourceMediaArtifactRef: item.sourceMediaArtifactRef, sourceItemUpdatedAt: item.updatedAt,
+          evidenceKind: item.evidenceKind, automaticVersioned: this.automaticVersionedWorkflows && item.evidenceKind === "video",
+          evaluationOnly: true, evaluationPolicy: "single_pass" },
         lastError: null, createdAt: timestamp, updatedAt: timestamp });
-      this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "job.queued", createdAt: timestamp,
+      await this.repository.appendEvent({ runId: run.id, jobId: job.id, type: "job.queued", createdAt: timestamp,
         message: "Builder 结果已保留，Host 契约重验与独立 Evaluator 进入持久队列。",
         payload: { nodeKey: job.nodeKey, postExternalId: item.postExternalId, evaluationOnly: true } });
     }
@@ -771,17 +786,17 @@ export class CreatorResearchService {
     run.nextAction = `正在为 ${selectedItems.length} 条代表性视频重验 Host 契约并补做独立 Evaluator；不会重跑 Builder。`;
     stage(run, "deep_capture").status = "running";
     stage(run, "deep_capture").message = run.nextAction;
-    this.repository.save(run);
+    await this.repository.save(run);
     return run;
   }
 
-  continueWithBoundedMediaGaps(id: string): CreatorResearchRun {
-    const run = this.repository.get(id);
+  async continueWithBoundedMediaGaps(id: string): Promise<CreatorResearchRun> {
+    const run = await this.repository.get(id);
     if (!run) throw new Error("博主分析任务不存在");
     this.assertWorkflowStartAllowed(run);
     if (!run.reconstructionBatchArtifactRef || !run.selectionArtifactRef) throw new Error("任务缺少视频批次或选择集");
     const previousBatchRef = run.reconstructionBatchArtifactRef;
-    const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(previousBatchRef));
+    const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(previousBatchRef));
     if (batch.pendingPosts > 0 || batch.items.some((item) => ["queued", "running"].includes(item.state))) {
       throw new Error("视频重建批次仍在运行，不能提前接受媒体缺口");
     }
@@ -790,7 +805,7 @@ export class CreatorResearchService {
       item.state !== "blocked" || !item.failedGateIds.includes("media_verification"))) {
       throw new Error("当前批次不存在可接受的纯媒体不可得缺口");
     }
-    const retriedIds = new Set(this.repository.listEvents(run.id).flatMap((event) => {
+    const retriedIds = new Set((await this.repository.listEvents(run.id)).flatMap((event) => {
       const ids = event.type === "job.queued" && event.message === "媒体核验失败项已进入一次定向补取。"
         ? event.payload.postExternalIds : null;
       return Array.isArray(ids) ? ids.filter((value): value is string => typeof value === "string") : [];
@@ -806,47 +821,47 @@ export class CreatorResearchService {
       `bounded_media_retry_once:${unavailable.map((item) => item.postExternalId).join(",")}`,
       `${unavailable.length} 条注册深度样本经一次定向补取仍无可核验媒体；只保留 surface_only，帖子内容保持未知。`
     ])];
-    const batchRef = this.artifacts.write(run.id, `video-reconstruction-batch-r${batch.revision}.json`, batch, [previousBatchRef]);
+    const batchRef = await this.artifacts.write(run.id, `video-reconstruction-batch-r${batch.revision}.json`, batch, [previousBatchRef]);
     run.reconstructionBatchArtifactRef = batchRef;
     run.updatedAt = timestamp;
     run.coverage.reconstructedPosts = batch.readyPosts;
     run.videoWork = { concurrencyLimit: this.videoConcurrencyLimit, activePostExternalIds: [], queuedPosts: 0,
       analyzedPosts: batch.readyPosts, failedPosts: batch.failedPosts };
-    const selection = creatorSelectionSchema.parse(this.artifacts.read(run.selectionArtifactRef));
-    if (!this.queueSynthesis(run, batchRef, batch, selection, timestamp)) {
+    const selection = creatorSelectionSchema.parse(await this.artifacts.read(run.selectionArtifactRef));
+    if (!await this.queueSynthesis(run, batchRef, batch, selection, timestamp)) {
       throw new Error("可用视频尚未覆盖高、中位、均值和低表现四组，不能进入博主综合");
     }
-    this.repository.save(run);
-    this.repository.appendEvent({ runId: run.id, jobId: null, type: "run.resumed", createdAt: timestamp,
+    await this.repository.save(run);
+    await this.repository.appendEvent({ runId: run.id, jobId: null, type: "run.resumed", createdAt: timestamp,
       message: "一次媒体补取仍不可得的样本已固化为未知边界；博主综合继续。",
       payload: { previousBatchRef, batchRef, unavailablePostExternalIds: unavailable.map((item) => item.postExternalId) } });
     return run;
   }
 
-  revalidateSynthesis(id: string): CreatorResearchRun {
-    const run = this.repository.get(id);
+  async revalidateSynthesis(id: string): Promise<CreatorResearchRun> {
+    const run = await this.repository.get(id);
     if (!run) throw new Error("博主分析任务不存在");
     this.assertWorkflowStartAllowed(run);
     if (!run.portfolioArtifactRef || !run.selectionArtifactRef || !run.detailArtifactRef
       || !run.reconstructionBatchArtifactRef || !run.synthesisArtifactRef || !run.synthesisGateArtifactRef) {
       throw new Error("任务缺少可重验的博主综合 artifact");
     }
-    const previousGate = creatorSynthesisGateSchema.parse(this.artifacts.read(run.synthesisGateArtifactRef));
+    const previousGate = creatorSynthesisGateSchema.parse(await this.artifacts.read(run.synthesisGateArtifactRef));
     if (!previousGate.candidateRevisionFingerprint || !previousGate.independentEvaluationArtifactRef) {
       throw new Error("旧 gate 未绑定独立评估 revision，不能只做确定性重验");
     }
     const checkedAt = now();
     const deterministicGate = validateCreatorSynthesis({ creatorRunId: run.id,
-      selection: this.artifacts.read(run.selectionArtifactRef),
-      batch: this.artifacts.read(run.reconstructionBatchArtifactRef),
-      synthesis: this.artifacts.read(run.synthesisArtifactRef), checkedAt });
+      selection: await this.artifacts.read(run.selectionArtifactRef),
+      batch: await this.artifacts.read(run.reconstructionBatchArtifactRef),
+      synthesis: await this.artifacts.read(run.synthesisArtifactRef), checkedAt });
     const independentEvaluation = creatorSynthesisIndependentEvaluationSchema.parse(
-      this.artifacts.read(previousGate.independentEvaluationArtifactRef));
+      await this.artifacts.read(previousGate.independentEvaluationArtifactRef));
     const gate = combineCreatorSynthesisGates({ deterministicGate, independentEvaluation,
       candidateRevisionFingerprint: previousGate.candidateRevisionFingerprint,
       independentEvaluationArtifactRef: previousGate.independentEvaluationArtifactRef, checkedAt });
     const previousGateRef = run.synthesisGateArtifactRef;
-    const gateRef = this.artifacts.write(run.id, "creator-synthesis-gate.json", gate,
+    const gateRef = await this.artifacts.write(run.id, "creator-synthesis-gate.json", gate,
       [run.synthesisArtifactRef, previousGate.independentEvaluationArtifactRef, previousGateRef]);
     run.synthesisGateArtifactRef = gateRef;
     run.updatedAt = checkedAt;
@@ -868,69 +883,69 @@ export class CreatorResearchService {
       stage(run, "dashboard").status = "complete";
       stage(run, "dashboard").message = "动态 Dashboard projection 已可读取。";
     }
-    this.repository.save(run);
-    this.repository.appendEvent({ runId: run.id, jobId: null, type: "artifact.produced", createdAt: checkedAt,
+    await this.repository.save(run);
+    await this.repository.appendEvent({ runId: run.id, jobId: null, type: "artifact.produced", createdAt: checkedAt,
       message: "博主综合 gate 已在不重跑候选或 evaluator 的情况下重验。",
       payload: { previousGateRef, gateRef, candidateRevisionFingerprint: previousGate.candidateRevisionFingerprint,
         ready: gate.ready, failedGateIds: gate.failedGateIds } });
-    this.repository.appendEvent({ runId: run.id, jobId: null, type: "node.completed", createdAt: checkedAt,
+    await this.repository.appendEvent({ runId: run.id, jobId: null, type: "node.completed", createdAt: checkedAt,
       message: gate.ready ? "博主级归纳通过修正后的确定性硬闸。" : "博主级归纳重验仍未发布。",
       payload: { state: gate.ready ? "ready" : "not_ready", reusedIndependentEvaluation: true } });
     return run;
   }
 
-  resynthesize(id: string): CreatorResearchRun {
-    const run = this.repository.get(id);
+  async resynthesize(id: string): Promise<CreatorResearchRun> {
+    const run = await this.repository.get(id);
     if (!run) throw new Error("博主分析任务不存在");
     this.assertWorkflowStartAllowed(run);
     if (run.currentStage === "synthesis" && ["queued", "running"].includes(run.worker.state)) return run;
     if (!run.selectionArtifactRef || !run.reconstructionBatchArtifactRef) {
       throw new Error("任务缺少可重新综合的固定输入 artifact");
     }
-    const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(run.reconstructionBatchArtifactRef));
-    const selection = creatorSelectionSchema.parse(this.artifacts.read(run.selectionArtifactRef));
+    const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(run.reconstructionBatchArtifactRef));
+    const selection = creatorSelectionSchema.parse(await this.artifacts.read(run.selectionArtifactRef));
     const queuedAt = now();
     const previousSynthesisArtifactRef = run.synthesisArtifactRef;
     const previousSynthesisGateArtifactRef = run.synthesisGateArtifactRef;
-    if (!this.queueSynthesis(run, run.reconstructionBatchArtifactRef, batch, selection, queuedAt,
+    if (!await this.queueSynthesis(run, run.reconstructionBatchArtifactRef, batch, selection, queuedAt,
       `source-revision-${queuedAt}`, { previousSynthesisArtifactRef, previousSynthesisGateArtifactRef })) {
       throw new Error("当前深度证据尚不足以重新生成博主报告");
     }
-    this.repository.save(run);
-    this.repository.appendEvent({ runId: run.id, jobId: run.worker.jobId, type: "run.resumed", createdAt: queuedAt,
+    await this.repository.save(run);
+    await this.repository.appendEvent({ runId: run.id, jobId: run.worker.jobId, type: "run.resumed", createdAt: queuedAt,
       message: "已保留旧综合并排队生成绑定当前报告源 revision 的新综合。",
       payload: { previousSynthesisArtifactRef, previousSynthesisGateArtifactRef,
         reconstructionBatchArtifactRef: run.reconstructionBatchArtifactRef } });
     return run;
   }
 
-  annotatePortfolio(id: string, resynthesize = true): CreatorResearchRun {
-    const run = this.repository.get(id);
+  async annotatePortfolio(id: string, resynthesize = true): Promise<CreatorResearchRun> {
+    const run = await this.repository.get(id);
     if (!run) throw new Error("博主分析任务不存在");
     this.assertWorkflowStartAllowed(run);
     if (!run.portfolioArtifactRef || !run.selectionArtifactRef) throw new Error("任务缺少冻结的作品基本盘");
-    const analysis = creatorPortfolioAnalysisSchema.parse(this.artifacts.read(run.portfolioArtifactRef));
+    const analysis = creatorPortfolioAnalysisSchema.parse(await this.artifacts.read(run.portfolioArtifactRef));
     const generatedAt = now();
     const annotations = buildCreatorPortfolioAnnotations(
-      this.artifacts.read(analysis.corpusArtifactRef), analysis.corpusArtifactRef, generatedAt
+      await this.artifacts.read(analysis.corpusArtifactRef), analysis.corpusArtifactRef, generatedAt
     );
     const previousRef = run.portfolioAnnotationsArtifactRef;
-    const annotationsRef = this.artifacts.write(run.id, "portfolio-annotations.json", annotations,
+    const annotationsRef = await this.artifacts.write(run.id, "portfolio-annotations.json", annotations,
       [analysis.corpusArtifactRef, ...(previousRef ? [previousRef] : [])]);
     run.portfolioAnnotationsArtifactRef = annotationsRef;
     run.updatedAt = generatedAt;
-    this.repository.appendEvent({ runId: run.id, jobId: null, type: "artifact.produced", createdAt: generatedAt,
+    await this.repository.appendEvent({ runId: run.id, jobId: null, type: "artifact.produced", createdAt: generatedAt,
       message: `${annotations.denominator.annotatedPosts} 条可见作品已形成一帖一行的表层标注 Artifact。`,
       payload: { artifactRef: annotationsRef, previousRef, denominator: annotations.denominator } });
     if (resynthesize && run.reconstructionBatchArtifactRef) {
-      const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(run.reconstructionBatchArtifactRef));
-      const selection = creatorSelectionSchema.parse(this.artifacts.read(run.selectionArtifactRef));
+      const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(run.reconstructionBatchArtifactRef));
+      const selection = creatorSelectionSchema.parse(await this.artifacts.read(run.selectionArtifactRef));
       clearSynthesisVersion(run);
-      if (!this.queueSynthesis(run, run.reconstructionBatchArtifactRef, batch, selection, generatedAt)) {
+      if (!await this.queueSynthesis(run, run.reconstructionBatchArtifactRef, batch, selection, generatedAt)) {
         throw new Error("当前深度证据尚不足以重新生成博主报告");
       }
     }
-    this.repository.save(run);
+    await this.repository.save(run);
     return run;
   }
 
@@ -939,7 +954,7 @@ export class CreatorResearchService {
     return this.jobProcessor.processNext(workerId, executor, lane === "serial" ? "any" : lane, runId);
   }
 
-  private queueSynthesis(
+  private async queueSynthesis(
     run: CreatorResearchRun,
     batchRef: string,
     batch: ReturnType<typeof videoReconstructionBatchSchema.parse>,
@@ -947,13 +962,14 @@ export class CreatorResearchService {
     queuedAt: string,
     idempotencyRevision?: string,
     previous?: { previousSynthesisArtifactRef: string | null; previousSynthesisGateArtifactRef: string | null }
-  ): boolean {
+  ): Promise<boolean> {
     const coverage = creatorSynthesisCoverage(selection, batch);
     if (!coverage.provisionalAllowed && !coverage.formalAllowed) return false;
     const mode = coverage.formalAllowed ? "formal" : "provisional";
-    const synthesisJob = this.repository.enqueue({ id: randomUUID(), runId: run.id, nodeKey: "creator.synthesize", status: "queued",
+    const synthesisJob = await this.repository.enqueue({ id: randomUUID(), runId: run.id, nodeKey: "creator.synthesize", status: "queued",
       idempotencyKey: `${run.id}:creator.synthesize:${mode}:${batchRef}:${run.portfolioAnnotationsArtifactRef ?? "no-annotations"}${idempotencyRevision ? `:${idempotencyRevision}` : ""}`, attempts: 0, maxAttempts: 2, availableAt: queuedAt,
-      leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null, payload: { reconstructionBatchArtifactRef: batchRef, mode, ...previous },
+      leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null, payload: { reconstructionBatchArtifactRef: batchRef, mode,
+        automaticVersioned: this.automaticVersionedWorkflows, ...previous },
       lastError: null, createdAt: queuedAt, updatedAt: queuedAt });
     run.status = "collecting";
     run.currentStage = "synthesis";
@@ -972,7 +988,7 @@ export class CreatorResearchService {
       : `${batch.readyPosts}/${batch.requestedPosts} 条全部完成单轮分析；质量提醒继续保留。`;
     stage(run, "synthesis").status = "pending";
     stage(run, "synthesis").message = "等待从规范比较集、可用视频与显式未知边界生成研究归纳。";
-    this.repository.appendEvent({ runId: run.id, jobId: synthesisJob.id, type: "job.queued", createdAt: queuedAt,
+    await this.repository.appendEvent({ runId: run.id, jobId: synthesisJob.id, type: "job.queued", createdAt: queuedAt,
       message: mode === "provisional" ? "DOSSIER_READY 单博主报告已进入持久队列。"
         : coverage.boundedMediaGap ? "带媒体不可得边界的博主级研究归纳已进入持久队列。" : "博主级研究归纳已进入持久队列。",
       payload: { nodeKey: synthesisJob.nodeKey, mode, boundedMediaGap: coverage.boundedMediaGap,
@@ -980,7 +996,7 @@ export class CreatorResearchService {
     return true;
   }
 
-  close(): void { this.repository.close(); }
+  async close(): Promise<void> { await this.repository.close(); }
 }
 
 function resolveWorkflowEvidenceKind(

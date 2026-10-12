@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { CreatorResearchRun, ResearchReviewState } from "../../../contracts/index.js";
 import type { CreatorArtifactStore } from "../creator-research/artifact-store.js";
 import type { CreatorResearchRepository } from "../creator-research/repository.js";
+import type { Awaitable } from "../creator-research/awaitable.js";
 import { dossierReadyNextAction, projectBuiltUnevaluatedOutcome } from "../creator-research/video-synthesis-processor.js";
 import type { CreatorSynthesisOutcome } from "../creator-synthesis/contracts.js";
 import { videoReconstructionBatchSchema, type VideoReconstructionBatch } from "../video-analysis/batch-contracts.js";
@@ -63,7 +64,7 @@ export type CreatorVersionRegistrationResult = {
 
 /** The callback must lock the creator row and use the same database transaction as repository get/save. */
 export interface ResearchVersionRegistrationTransaction {
-  run<T>(creatorRunId: string, operation: () => T): T;
+  run<T>(creatorRunId: string, operation: () => Awaitable<T>): Awaitable<T>;
 }
 
 function stage(run: CreatorResearchRun, id: CreatorResearchRun["stages"][number]["id"]) {
@@ -129,12 +130,12 @@ export class RepositoryResearchVersionRegistrar {
   ) {}
 
   async registerPostVersion(input: PostVersionRegistrationInput): Promise<PostVersionRegistrationResult> {
-    return this.transaction.run(input.creatorRunId, () => {
-      const run = this.requireRun(input.creatorRunId);
+    return this.transaction.run(input.creatorRunId, async () => {
+      const run = await this.requireRun(input.creatorRunId);
       this.assertPostRunSources(run, input.source);
       if (!run.reconstructionBatchArtifactRef) throw new Error("POST_VERSION_BATCH_MISSING");
-      const sourceBatch = videoReconstructionBatchSchema.parse(this.artifacts.read(input.source.reconstructionBatchArtifactRef));
-      const batch = videoReconstructionBatchSchema.parse(this.artifacts.read(run.reconstructionBatchArtifactRef));
+      const sourceBatch = videoReconstructionBatchSchema.parse(await this.artifacts.read(input.source.reconstructionBatchArtifactRef));
+      const batch = videoReconstructionBatchSchema.parse(await this.artifacts.read(run.reconstructionBatchArtifactRef));
       const sourceItem = sourceBatch.items.find((item) => item.postExternalId === input.postExternalId);
       const item = batch.items.find((entry) => entry.postExternalId === input.postExternalId);
       if (!sourceItem || !item || sourceItem.sourceMediaArtifactRef !== input.source.sourceMediaArtifactRef) {
@@ -159,15 +160,15 @@ export class RepositoryResearchVersionRegistrar {
         entry.gateReportArtifactRef, entry.threeLensEvaluationArtifactRef, entry.threeLensGateReportArtifactRef,
         entry.researchReview?.reviewArtifactRef, entry.researchReview?.revisionRecordArtifactRef,
       ])].filter((ref): ref is string => Boolean(ref));
-      const nextRef = this.artifacts.write(run.id, `video-reconstruction-batch-r${batch.revision}.json`,
+      const nextRef = await this.artifacts.write(run.id, `video-reconstruction-batch-r${batch.revision}.json`,
         videoReconstructionBatchSchema.parse(batch), dependencies);
       run.reconstructionBatchArtifactRef = nextRef;
       run.coverage.reconstructedPosts = batch.builtPosts;
       run.updatedAt = projected.updatedAt;
       run.videoWork = { ...run.videoWork, analyzedPosts: batch.builtPosts, failedPosts: batch.failedPosts,
         queuedPosts: Math.max(0, batch.pendingPosts - run.videoWork.activePostExternalIds.length) };
-      this.repository.save(run);
-      this.repository.appendEvent({ runId: run.id, jobId: null, type: "artifact.produced", createdAt: projected.updatedAt,
+      await this.repository.save(run);
+      await this.repository.appendEvent({ runId: run.id, jobId: null, type: "artifact.produced", createdAt: projected.updatedAt,
         message: "Workflow 单帖版本已原子登记到主研究批次。", payload: { postExternalId: input.postExternalId,
           artifactRef: nextRef, state: item.state, registeredBy: input.registeredBy } });
       return { state: "registered", reconstructionBatchArtifactRef: nextRef, postState: item.state };
@@ -175,8 +176,8 @@ export class RepositoryResearchVersionRegistrar {
   }
 
   async registerCreatorVersion(input: CreatorVersionRegistrationInput): Promise<CreatorVersionRegistrationResult> {
-    return this.transaction.run(input.creatorRunId, () => {
-      const run = this.requireRun(input.creatorRunId);
+    return this.transaction.run(input.creatorRunId, async () => {
+      const run = await this.requireRun(input.creatorRunId);
       const outcome = input.researchReview ? input.candidate : input.review ?? input.candidate;
       const readableSimpleReview = Boolean(input.researchReview && "synthesisArtifactRef" in outcome && outcome.synthesisArtifactRef);
       if ("synthesisArtifactRef" in outcome && outcome.synthesisArtifactRef
@@ -214,7 +215,7 @@ export class RepositoryResearchVersionRegistrar {
       run.blockers = [];
       run.nextAction = verified
         ? "单博主研究已发布到同一个 Dashboard；创作建议仍属于独立工作区。"
-        : dossierReadyNextAction(videoReconstructionBatchSchema.parse(this.artifacts.read(run.reconstructionBatchArtifactRef!)).items.map((item) => item.state));
+        : dossierReadyNextAction(videoReconstructionBatchSchema.parse(await this.artifacts.read(run.reconstructionBatchArtifactRef!)).items.map((item) => item.state));
       run.dashboardPath = `/creators/${encodeURIComponent(run.creatorId ?? run.id)}`;
       stage(run, "synthesis").status = "complete";
       stage(run, "synthesis").message = verified
@@ -225,8 +226,8 @@ export class RepositoryResearchVersionRegistrar {
       stage(run, "dashboard").status = "complete";
       stage(run, "dashboard").message = verified
         ? "动态 Dashboard projection 已可读取。" : "Dashboard 已可读取 DOSSIER_READY 报告。";
-      this.repository.save(run);
-      this.repository.appendEvent({ runId: run.id, jobId: null, type: "artifact.produced", createdAt: completedAt,
+      await this.repository.save(run);
+      await this.repository.appendEvent({ runId: run.id, jobId: null, type: "artifact.produced", createdAt: completedAt,
         message: verified ? "Workflow 博主综合正式版本已登记。" : "Workflow 博主综合暂定版本已登记。",
         payload: { synthesisArtifactRef: outcome.synthesisArtifactRef, gateArtifactRef: outcome.gateArtifactRef,
           state: outcome.state, registeredBy: input.registeredBy } });
@@ -236,8 +237,8 @@ export class RepositoryResearchVersionRegistrar {
     });
   }
 
-  private requireRun(id: string): CreatorResearchRun {
-    const run = this.repository.get(id);
+  private async requireRun(id: string): Promise<CreatorResearchRun> {
+    const run = await this.repository.get(id);
     if (!run) throw new Error("CREATOR_RESEARCH_RUN_NOT_FOUND");
     return run;
   }

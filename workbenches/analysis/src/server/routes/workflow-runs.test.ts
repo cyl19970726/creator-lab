@@ -1,27 +1,23 @@
 import express from "express";
 import crypto from "node:crypto";
 import type { Server } from "node:http";
-import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
-import { SQLiteWorkflowRunStore } from "../../../packages/adapters/index.js";
-import { artifactPayloadSha256 } from "@signal-room/workflow";
+import { MemoryRunStore, artifactPayloadSha256 } from "@signal-room/workflow";
 import { registerWorkflowRoutes } from "./workflow-runs.js";
 
 const servers: Server[] = [];
-const databases: DatabaseSync[] = [];
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
-  databases.splice(0).forEach((db) => db.close());
 });
 
 async function setup() {
-  const database = new DatabaseSync(":memory:"); databases.push(database);
-  const store = new SQLiteWorkflowRunStore(database);
+  const store = new MemoryRunStore();
   const retry = vi.fn(async () => ({ state: "queued" }));
   const cancel = vi.fn(async () => ({ state: "canceled" }));
   const artifactReader = vi.fn(async () => ({ kind: "post", data: { thesis: "exact candidate" } }));
   const app = express(); app.use(express.json());
-  registerWorkflowRoutes(app, { store, retry, cancel, artifactReader, artifactPayload: (id) => store.getArtifactPayload(id) });
+  registerWorkflowRoutes(app, { store, retry, cancel, artifactReader,
+    artifactPayload: async (id) => store.artifacts.find((artifact) => artifact.id === id)?.payload });
   const server = app.listen(0, "127.0.0.1"); servers.push(server);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const address = server.address();
@@ -48,8 +44,7 @@ it("reads persisted progress and incremental events; routes recovery through the
 });
 
 it("accepts rebuild options for post and creator analysis while rejecting invalid request schemas", async () => {
-  const database = new DatabaseSync(":memory:"); databases.push(database);
-  const store = new SQLiteWorkflowRunStore(database);
+  const store = new MemoryRunStore();
   const startPost = vi.fn(async () => ({ state: "queued" }));
   const startCreatorAnalysis = vi.fn(async () => ({ state: "queued" }));
   const app = express(); app.use(express.json());
@@ -288,7 +283,7 @@ it("projects raw failures and unknown SDK events into public-safe diagnostics", 
     failedGateIds: [], qualityWarningGateIds: ["visual-coverage"], evaluationMode: "single_pass" }, diagnostics: { rawError: "secret-token" } };
   const evaluation = await store.publishArtifact({ type: "post-evaluation", schemaVersion: "v1", revision: "1", sha256: await artifactPayloadSha256(evaluationPayload), uri: "private://evaluation", payload: evaluationPayload,
     producedBy: { workflowRunId: run.id, stepRunId: step.id, attemptId: attempt.id }, dependsOn: [], validation: "valid", review: "findings" });
-  const creatorEvaluationPayload = { kind: "creator", gate: { schemaVersion: "1.0.0", creatorRunId: run.id, ready: false,
+  const creatorEvaluationPayload = { kind: "creator", gate: { schemaVersion: "1.0.0", creatorRunId: crypto.randomUUID(), ready: false,
     gates: [{ id: "deep_9_ready", pass: false, message: "仍缺少九篇深度研究。" }], failedGateIds: ["deep_9_ready"], checkedAt: "2026-09-16T00:00:00.000Z",
     candidateRevisionFingerprint: null, independentEvaluationArtifactRef: null, evaluator: null }, diagnostics: { rawError: "secret-token" } };
   const creatorEvaluation = await store.publishArtifact({ type: "creator-synthesis-evaluation", schemaVersion: "v1", revision: "1", sha256: await artifactPayloadSha256(creatorEvaluationPayload), uri: "private://creator-evaluation", payload: creatorEvaluationPayload,

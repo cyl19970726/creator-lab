@@ -84,6 +84,8 @@ export function createContentDeployment(profile: ContentDeploymentProfile): Cont
   const executorManifest = profile.executorManifest ? structuredClone(profile.executorManifest) : undefined;
   if (executorManifest) { Object.freeze(executorManifest.tools); Object.freeze(executorManifest); }
   const runner = profile.runner;
+  let candidateSnapshot: ReturnType<ContentDeployment['candidate']> | undefined;
+  let frozenDefinitionSnapshot: Promise<WorkflowVersion['entrypoints'][string]> | undefined;
 
   function verify() {
     if (canonicalContentDefinition(methodSnapshot()) !== canonicalContentDefinition(loadedSnapshot))
@@ -94,6 +96,7 @@ export function createContentDeployment(profile: ContentDeploymentProfile): Cont
 
   function candidate() {
     verify();
+    if (candidateSnapshot) return structuredClone(candidateSnapshot);
     const refs = registerCreationSchemas(new SchemaRegistry());
     const roleModels = { researcher: models.worker, author: models.judge, reader: models.worker,
       checker: models.worker, editor: models.judge };
@@ -131,16 +134,20 @@ export function createContentDeployment(profile: ContentDeploymentProfile): Cont
     const version: WorkflowVersionDraft = { id: versionId, revision: CONTENT_REVISION, changeReason: '', config,
       entrypoints: { content: { workflowId: contentWorkflowId, codeRevision: CONTENT_REVISION,
         storageContract: storageContract!, process: buildContentProcess(refs), nodeDefinitions: structuredClone(roleNodes) } } };
-    return { version: structuredClone(version), entrypoint: contentEntrypoint as 'content', refs,
+    candidateSnapshot = { version: structuredClone(version), entrypoint: contentEntrypoint as 'content', refs,
       presentation: structuredClone(buildContentPresentation(refs)) };
+    return structuredClone(candidateSnapshot);
   }
 
   async function frozenDefinition(): Promise<WorkflowVersion['entrypoints'][string]> {
     const entry = candidate().version.entrypoints.content!;
-    const registry = new SchemaRegistry(); registerCreationSchemas(registry);
-    const storageContract = publishStorageContract(registry, entry.storageContract);
-    const process = await publishProcessContract(entry.process!, storageContract);
-    return { ...entry, storageContract, process };
+    frozenDefinitionSnapshot ??= (async () => {
+      const registry = new SchemaRegistry(); registerCreationSchemas(registry);
+      const storageContract = publishStorageContract(registry, entry.storageContract);
+      const process = await publishProcessContract(entry.process!, storageContract);
+      return structuredClone({ ...entry, storageContract, process });
+    })();
+    return structuredClone(await frozenDefinitionSnapshot);
   }
 
   return Object.freeze({ runner, models, verify, candidate, frozenDefinition,

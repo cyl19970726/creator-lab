@@ -2,9 +2,9 @@ import { formatCount } from "./creator-meta.js";
 import type { CreatorSummary } from "../shared/schema.js";
 import type { CreatorResearchService } from "../../packages/research/index.js";
 
-function versionedRunSummaries(service: CreatorResearchService): CreatorSummary[] {
-  const newestByCreator = new Map<string, ReturnType<CreatorResearchService["list"]>[number]>();
-  for (const run of service.list(100)) {
+async function versionedRunSummaries(service: CreatorResearchService): Promise<CreatorSummary[]> {
+  const newestByCreator = new Map<string, Awaited<ReturnType<CreatorResearchService["list"]>>[number]>();
+  for (const run of await service.list(100)) {
     const id = run.creatorId;
     if (!id || !run.creatorName || newestByCreator.has(id)) continue;
     newestByCreator.set(id, run);
@@ -29,6 +29,6 @@ function versionedRunSummaries(service: CreatorResearchService): CreatorSummary[
   }));
 }
 
-export function loadCreatorSummaries(service?: CreatorResearchService): CreatorSummary[] {
+export async function loadCreatorSummaries(service?: CreatorResearchService): Promise<CreatorSummary[]> {
   return service ? versionedRunSummaries(service) : [];
 }

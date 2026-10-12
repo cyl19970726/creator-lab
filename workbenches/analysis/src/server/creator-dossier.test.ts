@@ -107,38 +107,38 @@ function service(adaptive = false, reconstructionStates?: Record<string, string 
 }
 
 describe("creator dossier projection", () => {
-  it("keeps independent evaluation findings separate from Builder work that has not been evaluated", () => {
-    const dossier = loadCreatorDossier(service(false, {
+  it("keeps independent evaluation findings separate from Builder work that has not been evaluated", async () => {
+    const dossier = (await loadCreatorDossier(service(false, {
       "ready-video": "evaluated_with_findings", "missing-video": "built_unevaluated"
-    }), runId)!;
+    }), runId))!;
     expect(dossier.portfolio.items.find((item) => item.id === "ready-video")?.evidenceStatus)
       .toBe("deep_evaluated_with_findings");
     expect(dossier.portfolio.items.find((item) => item.id === "missing-video")?.evidenceStatus)
       .toBe("deep_built");
   });
 
-  it("projects current Reviewer outcomes ahead of legacy Evaluator states", () => {
-    const dossier = loadCreatorDossier(service(false, {
+  it("projects current Reviewer outcomes ahead of legacy Evaluator states", async () => {
+    const dossier = (await loadCreatorDossier(service(false, {
       "ready-video": { state: "built_unevaluated", researchReview: { reviewStatus: "completed_no_findings", candidateStatus: "original_reviewed" } },
       "missing-video": { state: "built_unevaluated", researchReview: { reviewStatus: "completed_with_findings", candidateStatus: "revised_unverified" } }
-    }), runId)!;
+    }), runId))!;
     expect(dossier.portfolio.items.find((item) => item.id === "ready-video")?.evidenceStatus).toBe("deep_reviewed_no_findings");
     expect(dossier.portfolio.items.find((item) => item.id === "missing-video")?.evidenceStatus).toBe("deep_revised_unverified");
   });
 
-  it("projects Reviewer findings and technical failures without calling either verified", () => {
-    const withFindings = loadCreatorDossier(service(false, {
+  it("projects Reviewer findings and technical failures without calling either verified", async () => {
+    const withFindings = (await loadCreatorDossier(service(false, {
       "ready-video": { state: "verified", researchReview: { reviewStatus: "completed_with_findings", candidateStatus: "original_reviewed" } }
-    }), runId)!;
-    const failed = loadCreatorDossier(service(false, {
+    }), runId))!;
+    const failed = (await loadCreatorDossier(service(false, {
       "ready-video": { state: "built_unevaluated", researchReview: { reviewStatus: "failed", candidateStatus: "review_incomplete" } }
-    }), runId)!;
+    }), runId))!;
     expect(withFindings.portfolio.items.find((item) => item.id === "ready-video")?.evidenceStatus).toBe("deep_reviewed_with_findings");
     expect(failed.portfolio.items.find((item) => item.id === "ready-video")?.evidenceStatus).toBe("deep_review_failed");
   });
 
-  it("projects deterministic corpus statistics and annotation clusters", () => {
-    const dossier = loadCreatorDossier(service(), runId)!;
+  it("projects deterministic corpus statistics and annotation clusters", async () => {
+    const dossier = (await loadCreatorDossier(service(), runId))!;
     expect(dossier.corpus).toMatchObject({ videoCount: 3, percentiles: { p25: 17.5, p75: 32.5 } });
     expect(dossier.corpus.distribution).toEqual([
       { label: "低于 P25", count: 1, share: 0.25 }, { label: "P25–P75", count: 2, share: 0.5 }, { label: "高于 P75", count: 1, share: 0.25 }
@@ -153,15 +153,15 @@ describe("creator dossier projection", () => {
       unclassifiedPosts: 0, artifactRef: `/artifacts/${runId}/annotations.json` });
   });
 
-  it("only exposes a verified, run-local source-video artifact", () => {
-    const dossier = loadCreatorDossier(service(), runId)!;
+  it("only exposes a verified, run-local source-video artifact", async () => {
+    const dossier = (await loadCreatorDossier(service(), runId))!;
     expect(dossier.portfolio.items.find((item) => item.id === "ready-video")?.localVideoHref)
       .toBe(`/artifacts/${runId}/deep-media/ready-video/source-video.mp4`);
     expect(dossier.portfolio.items.find((item) => item.id === "missing-video")?.localVideoHref).toBeNull();
   });
 
-  it("projects adaptive multi-label memberships and distinct-post corpus rollups", () => {
-    const dossier = loadCreatorDossier(service(true), runId)!;
+  it("projects adaptive multi-label memberships and distinct-post corpus rollups", async () => {
+    const dossier = (await loadCreatorDossier(service(true), runId))!;
     expect(dossier.contentSystem.topicClusters).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "AI 硬件", count: 2, share: 0.4 }),
       expect.objectContaining({ name: "智能穿戴", count: 1, share: 0.2 })

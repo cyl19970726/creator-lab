@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("video reconstruction V2 projection", () => {
-  it("keeps a resolved shot frame when an evaluator reuses the same evidence ID with a manifest ref", () => {
+  it("keeps a resolved shot frame when an evaluator reuses the same evidence ID with a manifest ref", async () => {
     const resolvedShot = { id: "SHOT-017", kind: "shot", artifactRef: "/artifacts/run/evidence/frames/shots/shot-017.jpg" };
     const evaluatorRef = { id: "SHOT-017", kind: "shot", artifactRef: "evidence/evidence-pack.json" };
 
@@ -38,7 +38,7 @@ describe("video reconstruction V2 projection", () => {
     ])).toEqual([resolvedShot]);
   });
 
-  it("projects multimodal content and direct Builder directing/editing lenses", () => {
+  it("projects multimodal content and direct Builder directing/editing lenses", async () => {
     const runId = "00000000-0000-4000-8000-000000000064";
     const videoId = "video-v2-fixture";
     runIds.push(runId);
@@ -116,19 +116,32 @@ describe("video reconstruction V2 projection", () => {
       })
     } as unknown as CreatorResearchService;
 
-    const result = loadVideoResearch(service, "fixture-creator", videoId, runId);
+    const result = await loadVideoResearch(service, "fixture-creator", videoId, runId);
     const candidateRoot = path.join(runArtifactDir(runId), "workflow-reconstructions", "workflow", "attempt", videoId);
     fs.cpSync(root, candidateRoot, { recursive: true });
     const candidateRef = `/artifacts/${runId}/workflow-reconstructions/workflow/attempt/${videoId}/reconstruction.json`;
     const candidateBytes = fs.readFileSync(path.join(candidateRoot, "reconstruction.json"));
     const candidate = { reportArtifactRef: candidateRef, reportSha256: createHash("sha256").update(candidateBytes).digest("hex"), outcome: {} };
-    const candidateReader = loadWorkflowVideoResearch(service, runId, videoId, candidate);
+    const candidateReader = await loadWorkflowVideoResearch(service, runId, videoId, candidate);
     expect(candidateReader?.quality.evaluationState).toBe("skipped");
-    expect(candidateReader?.contentBlocks[0]?.media[0]?.src).toContain("/workflow-reconstructions/workflow/attempt/");
+    expect(candidateReader?.contentBlocks[0]?.media[0]?.src).toBe(
+      `/artifacts/${runId}/workflow-reconstructions/workflow/attempt/${videoId}/targeted-evidence/frames/before.jpg`);
+    const responsesRoot = path.join(runArtifactDir(runId), "workflow-responses", "workflow", "attempt", videoId);
+    fs.cpSync(root, responsesRoot, { recursive: true });
+    const hashedRef = `/artifacts/${runId}/workflow-responses/workflow/attempt/${videoId}/reconstruction.2ff479cd5121.json`;
+    fs.copyFileSync(path.join(responsesRoot, "reconstruction.json"), path.join(responsesRoot, "reconstruction.2ff479cd5121.json"));
+    const hashedCandidate = { reportArtifactRef: hashedRef,
+      reportSha256: createHash("sha256").update(fs.readFileSync(path.join(responsesRoot, "reconstruction.2ff479cd5121.json"))).digest("hex"), outcome: {} };
+    const responsesReader = await loadWorkflowVideoResearch(service, runId, videoId, hashedCandidate);
+    expect(responsesReader?.contentBlocks[0]?.media[0]?.src).toBe(
+      `/artifacts/${runId}/workflow-responses/workflow/attempt/${videoId}/targeted-evidence/frames/before.jpg`);
+    expect(responsesReader?.evidenceIndex.find((item) => item.id === "TARGET-0001")?.artifactRef).toBe(
+      `/artifacts/${runId}/workflow-responses/workflow/attempt/${videoId}/targeted-evidence/frames/before.jpg`);
+    expect(responsesReader?.visualEditing.openingAnalysis).toEqual(opening);
     expect(candidateReader?.visualEditing.openingAnalysis).toEqual(opening);
-    expect(loadVideoResearch(service, "fixture-creator", videoId, runId)?.quality.lineage.reconstructionArtifactRef).toBe(reconstructionArtifactRef);
+    expect((await loadVideoResearch(service, "fixture-creator", videoId, runId))?.quality.lineage.reconstructionArtifactRef).toBe(reconstructionArtifactRef);
     fs.appendFileSync(path.join(candidateRoot, "reconstruction.json"), " ");
-    expect(() => loadWorkflowVideoResearch(service, runId, videoId, candidate)).toThrow("CANDIDATE_REVISION_CHANGED");
+    await expect(loadWorkflowVideoResearch(service, runId, videoId, candidate)).rejects.toThrow("CANDIDATE_REVISION_CHANGED");
     expect(result?.visualEditing.openingAnalysis).toEqual(opening);
     expect(result?.directingLogic.packagingAnalysis).toBeNull();
     expect(result?.performanceContext.observation?.metrics[0]?.median).toBeNull();
@@ -183,14 +196,14 @@ describe("video reconstruction V2 projection", () => {
     }];
     lenses.contentRestoration.blocks[1]!.steps = [{ label: "未取得画面", description: "保留步骤说明", frameRefs: ["MISSING-STEP"] }];
     fs.writeFileSync(path.join(root, "reconstruction.json"), JSON.stringify(reconstruction));
-    const missing = loadVideoResearch(service, "fixture-creator", videoId, runId);
+    const missing = await loadVideoResearch(service, "fixture-creator", videoId, runId);
     expect(missing?.contentBlocks[0]?.unresolvedVisuals).toEqual(lenses.contentRestoration.blocks[0]!.visuals);
     expect(missing?.contentBlocks[1]?.steps[0]?.unresolvedFrameRefs).toEqual(["MISSING-STEP"]);
     const originalCarriers = rawLenses.visualEditing!.carriers;
     rawLenses.visualEditing!.carriers = [];
     rawLenses.visualEditing!.notes = ["部分字段尚缺，原始说明仍应可读"];
     fs.writeFileSync(path.join(root, "reconstruction.json"), JSON.stringify(reconstruction));
-    const partial = loadVideoResearch(service, "fixture-creator", videoId, runId);
+    const partial = await loadVideoResearch(service, "fixture-creator", videoId, runId);
     expect(partial).toBeNull();
     rawLenses.visualEditing!.carriers = originalCarriers;
     const original = fs.readFileSync(path.join(root, "reconstruction.json"));
@@ -203,7 +216,7 @@ describe("video reconstruction V2 projection", () => {
       schemaVersion: "report-source-revision@1", originalSha256: sourceDigest(original),
       revisedSha256: sourceDigest(revised), revisionId: "review-1", reason: "核对证据"
     }));
-    const corrected = loadVideoResearch(service, "fixture-creator", videoId, runId);
+    const corrected = await loadVideoResearch(service, "fixture-creator", videoId, runId);
     expect(corrected?.sourceRevision).toBe("review-1：核对证据");
     expect(corrected?.visualEditing.notes).toEqual(["源报告已明确修订"]);
     expect(corrected?.overview).toMatchObject({ state: "stale", overview: null });
@@ -213,7 +226,7 @@ describe("video reconstruction V2 projection", () => {
   });
 });
 
-it("rejects a legacy reconstruction instead of projecting its article or evidence", () => {
+it("rejects a legacy reconstruction instead of projecting its article or evidence", async () => {
   const runId = '00000000-0000-4000-8000-000000000066';
   runIds.push(runId);
   const root = runArtifactDir(runId);
@@ -228,17 +241,17 @@ it("rejects a legacy reconstruction instead of projecting its article or evidenc
     list:()=>[],get:()=>({id:runId,creatorId:'legacy',creatorName:'原作者',profileUrl:'https://example.com',lastSnapshotAt:null,inventoryArtifactRef:null}),
     portfolio:()=>({ reconstructionBatch:{items:[{postExternalId:'post',state:'ready',failedGateIds:[],evaluationArtifactRef:null,gateReportArtifactRef:null,reconstructionArtifactRef:`${prefix}reconstruction.json`,articleArtifactRef:`${prefix}article.md`,threeLensEvaluationArtifactRef:`${prefix}evaluation.json`,threeLensGateReportArtifactRef:`${prefix}evaluation.json`}]} })
   } as unknown as CreatorResearchService;
-  const report = loadVideoResearch(service,'legacy','post',runId);
+  const report = await loadVideoResearch(service,'legacy','post',runId);
   expect(report).toBeNull();
 });
 
-it("does not fall back to another run when the requested run is absent or belongs to another creator", () => {
+it("does not fall back to another run when the requested run is absent or belongs to another creator", async () => {
   const otherRun = { id: "other-run", creatorId: "other-creator" };
   const service = {
     list: () => [{ id: "latest-run", creatorId: "fixture-creator" }],
     get: (id: string) => id === otherRun.id ? otherRun : null,
     portfolio: () => { throw new Error("a rejected run must not be read"); }
   } as unknown as CreatorResearchService;
-  expect(loadVideoResearch(service, "fixture-creator", "post", "missing-run")).toBeNull();
-  expect(loadVideoResearch(service, "fixture-creator", "post", otherRun.id)).toBeNull();
+  expect(await loadVideoResearch(service, "fixture-creator", "post", "missing-run")).toBeNull();
+  expect(await loadVideoResearch(service, "fixture-creator", "post", otherRun.id)).toBeNull();
 });

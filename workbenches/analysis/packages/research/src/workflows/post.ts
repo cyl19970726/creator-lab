@@ -66,7 +66,7 @@ export type PostWorkflowSuiteOptions = {
 /** V2 composes durable, independently retryable workflow nodes; V1 above remains replayable. */
 export function createPostWorkflowSuite(validators: PostWorkflowValidators,
   agents: Pick<ResearchAgentDefinitions, "postBuilder" | "postReviewer" | "postRepair" | "postEvaluationRepair">,
-  options: PostWorkflowSuiteOptions = {}, revisions: { build?: "v1" | "v2" | "v3" } = {}) {
+  options: PostWorkflowSuiteOptions = {}, revisions: { build?: "v1" | "v2" | "v3" | "v4" | "v5" } = {}) {
   const build = workflow<PostWorkflowInput, PostBuildOutput>("post.build", { revision: revisions.build ?? "v1" }, async (ctx, input) => {
     const produced = await ctx.agent("builder", agents.postBuilder, input);
     const checked = await ctx.validate("candidate-check", produced, validators.candidate);
@@ -178,7 +178,7 @@ export type PostSourceCheckOutput = { ok: true; artifact: ArtifactRef; receipt: 
   { ok: false; state: "blocked" | "needs_review"; details: unknown };
 
 /** Source-check revisions track the effective frozen operator independently from post orchestration. */
-export function createPostSourceCheckWorkflow(revision: "v1" | "v2" | "v3",
+export function createPostSourceCheckWorkflow(revision: "v1" | "v2" | "v3" | "v4",
   agents: Partial<Pick<ResearchAgentDefinitions, "postSourceChecker">>) {
   return workflow<PostWorkflowInput, PostSourceCheckOutput>("post.source-check", { revision }, async (ctx, input) => {
     if (!agents.postSourceChecker) return ctx.blocked({ kind: "source_consistency_checker_missing" }) as PostSourceCheckOutput;

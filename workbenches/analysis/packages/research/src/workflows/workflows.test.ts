@@ -29,7 +29,7 @@ describe("research workflows", () => {
     creatorBuilder: agentConfig, creatorReviewer: agentConfig, creatorRepair: agentConfig });
   it("defaults every project research agent to Luna at medium effort", () => {
     expect(Object.values(agents).map(({ model, reasoningEffort }) => ({ model, reasoningEffort })))
-      .toEqual(Array.from({ length: 8 }, () => ({ model: "gpt-5.6-luna", reasoningEffort: "medium" })));
+      .toEqual(Array.from({ length: 8 }, () => ({ model: "gpt-6-luna", reasoningEffort: "medium" })));
   });
   it("keeps the post candidate and stops for an invalid evaluation contract", async () => {
     const store = new MemoryRunStore();
@@ -108,7 +108,7 @@ describe("research workflows", () => {
       return { output: { artifact: { schemaVersion: "post-source-consistency@1", inputSha256: "a".repeat(64), verdict,
         summary: "source mismatch", comparisons: [{ postClaim: "title", relation: verdict === "conflict" ? "contradicts" : "insufficient",
           evidenceRefs: ["frames/sample-1.jpg"], reason: "direct evidence" }], provenance: {
-          model: "gpt-5.6-luna", reasoningEffort: "medium", methodSha256: "b".repeat(64), threadId: "thread"
+          model: "gpt-6-luna", reasoningEffort: "medium", methodSha256: "b".repeat(64), threadId: "thread"
         } } } };
     } } as AgentRunner;
     const result = await runWorkflow({ workflow: suite.analyze,
@@ -129,7 +129,7 @@ describe("research workflows", () => {
       if (request.definition.id === "post-source-checker") return { output: { artifact: {
         schemaVersion: "post-source-consistency@1", inputSha256: "a".repeat(64), verdict: "consistent", summary: "same source",
         comparisons: [{ postClaim: "title", relation: "supports", evidenceRefs: ["frames/sample-1.jpg"], reason: "same subject" }],
-        provenance: { model: "gpt-5.6-luna", reasoningEffort: "medium", methodSha256: "b".repeat(64), threadId: "thread" }
+        provenance: { model: "gpt-6-luna", reasoningEffort: "medium", methodSha256: "b".repeat(64), threadId: "thread" }
       } } };
       if (request.definition.id === "post-reviewer") return { output: { artifact: { reviewed: true }, route: "deliver" } };
       return { output: { artifact: { candidate: true } } };
