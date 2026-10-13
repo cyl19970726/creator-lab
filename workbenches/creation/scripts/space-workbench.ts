@@ -1,4 +1,5 @@
 import {fileURLToPath} from 'node:url';
+import {createBusinessUnderstandingStore, WorkflowSpaceService, PostgresBlobStore} from '@signal-room/workflow-spaces';
 import {readFile} from 'node:fs/promises';
 import {createConnection} from 'node:net';
 import {openContentReadHost} from '../src/spaces/content-read-host.js';
@@ -49,7 +50,10 @@ const business=businessOptions?createContentBusinessCommands(businessOptions):un
 const importedAssetScope=businessOptions?createContentBusinessImportedAssetScope(businessOptions):undefined;
 const server=createSpaceWorkbenchApp({spaceId:host.spaceId,principal:host.principal,publicOrigin,webRoot:fileURLToPath(new URL('../apps/space-workbench/web/dist/',import.meta.url)),accessToken:process.env.SPACE_WORKBENCH_ACCESS_TOKEN,trustedLoopback:!process.env.SPACE_WORKBENCH_ACCESS_TOKEN,hostFor:principal=>{
  const service=host.serviceFor(principal);
- return {service,readers:host.readers,adapter:host.adapterFor(service),runSummary:createContentRunSummary(service),scope:{workflowId:'creation.content',entrypoint:'content'},displayTimeZone:'Asia/Taipei',inputSlotOrder:['opportunity','materials'],inputSummary:contentFrozenInputSummary,
+ const understandingReads=createBusinessUnderstandingStore(service);
+ const understandingWrites=execution?createBusinessUnderstandingStore(new WorkflowSpaceService(execution.pool,new PostgresBlobStore(execution.pool),principal)):null;
+ const understanding={current:understandingReads.current,read:understandingReads.read,history:understandingReads.history,...(understandingWrites?{save:understandingWrites.save}:{})};
+ return {service,understanding,readers:host.readers,adapter:host.adapterFor(service),runSummary:createContentRunSummary(service),scope:{workflowId:'creation.content',entrypoint:'content'},displayTimeZone:'Asia/Taipei',inputSlotOrder:['opportunity','materials'],inputSummary:contentFrozenInputSummary,
   ...(commands?{commands}:{}),...(business?{business,importedAssetScope}:{}),availability:versionId=>execution?catalog.has(versionId)?{state:'available',reason:null}:{state:'unavailable',reason:'准确版本没有当前可执行部署。'}:{state:'unknown',reason:'本只读宿主未挂接执行器部署登记；可执行性需在执行宿主核验。'}};
 }});
 await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve)});

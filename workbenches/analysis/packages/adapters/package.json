@@ -7,13 +7,19 @@
     ".": "./index.ts"
   },
   "dependencies": {
-    "@openai/codex-sdk": "0.154.0",
     "@signal-room/workflow": "workspace:*",
-    "@signal-room/workflow-codex": "workspace:*",
-    "@signal-room/workflow-sqlite": "workspace:*",
     "@signal-room/research": "workspace:*",
     "@signal-room/contracts": "workspace:*",
     "undici": "^7.29.0",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "@signal-room/workflow-postgres": "workspace:*",
+    "@signal-room/workflow-agent-sdk": "workspace:*",
+    "@signal-room/workflow-spaces": "workspace:*",
+    "@signal-room/workflow-space-contracts": "workspace:*",
+    "pg": "8.23.1",
+    "@signal-room/workflow-skill-snapshot": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
   }
 }

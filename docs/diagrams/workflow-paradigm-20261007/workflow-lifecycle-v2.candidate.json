@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "业务方法 Workflow：从 v1 到持续改进",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/diagrams/workflow-paradigm-20261007/workflow-lifecycle-v2.html"
+  },
+  "lanes": [
+    { "id": "method", "label": "方法研发" },
+    { "id": "evidence", "label": "真实执行与证据" },
+    { "id": "decision", "label": "验证与采用" },
+    { "id": "operation", "label": "稳定服务与观察" },
+    { "id": "iteration", "label": "有证据时再迭代" },
+    { "id": "exception", "label": "不升版的处理", "variant": "exception" }
+  ],
+  "nodes": [
+    { "id": "purpose", "lane": "method", "col": 0, "type": "external", "label": "新业务意图", "sublabel": "目的、交付与标准", "width": 148 },
+    { "id": "history", "lane": "evidence", "col": 0, "type": "database", "label": "历史问题与证据", "sublabel": "已有案例／失败经验", "width": 148 },
+    { "id": "v1", "lane": "method", "col": 1, "type": "backend", "label": "最小真实方法 v1", "sublabel": "职责、交接、停止规则", "width": 148 },
+    { "id": "cases", "lane": "evidence", "col": 2, "type": "database", "label": "真实案例与阶段资产", "sublabel": "准确输入、产物、执行记录", "width": 164 },
+    { "id": "diagnose", "lane": "evidence", "col": 3, "type": "backend", "label": "阅读评价／原因诊断", "sublabel": "区分单案与方法问题", "width": 164 },
+    { "id": "candidate", "lane": "method", "col": 4, "type": "backend", "label": "候选改法与版本", "sublabel": "研发线；记录改动假设", "tag": "不自动切换生产", "width": 158 },
+    { "id": "verify", "lane": "evidence", "col": 5, "type": "security", "label": "代表案例验证", "sublabel": "改善、退化、代价与边界", "width": 156 },
+    { "id": "adopt", "lane": "decision", "col": 5, "type": "security", "label": "明确采用", "sublabel": "决定者与适用范围", "width": 146 },
+    { "id": "stable", "lane": "operation", "col": 5, "type": "cloud", "label": "稳定版持续服务", "sublabel": "新案例继续生产", "tag": "与候选研发并行", "width": 150, "yOffset": -58 },
+    { "id": "observe", "lane": "operation", "col": 5, "type": "database", "label": "观察与反馈", "sublabel": "一段时间的成果及例外", "width": 150, "yOffset": 64 },
+    { "id": "tune", "lane": "iteration", "col": 5, "type": "backend", "label": "有证据再调优", "sublabel": "回到原因诊断与候选验证", "width": 152 },
+    { "id": "reject", "lane": "exception", "col": 5, "type": "security", "label": "继续实验或停止", "sublabel": "候选未获采用", "width": 150 }
+  ],
+  "edges": [
+    { "id": "e01", "from": "purpose", "to": "v1" },
+    { "id": "e00", "from": "history", "to": "v1", "label": "复用已有认识" },
+    { "id": "e02", "from": "v1", "to": "cases" },
+    { "id": "e03", "from": "cases", "to": "diagnose" },
+    { "id": "e04", "from": "diagnose", "to": "candidate", "label": "共性原因" },
+    { "id": "e05", "from": "candidate", "to": "verify" },
+    { "id": "e06", "from": "verify", "to": "adopt", "label": "证据足够", "variant": "emphasis" },
+    { "id": "e07", "from": "adopt", "to": "stable" },
+    { "id": "e08", "from": "stable", "to": "observe" },
+    { "id": "e09", "from": "observe", "to": "tune", "label": "共性证据", "variant": "dashed" },
+    { "id": "e11", "from": "verify", "to": "reject", "label": "不合格", "variant": "security", "role": "branch" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "三层各司其职", "items": ["Workflow 组织执行职责、产物与控制关系。", "Harness 提供工具、资产、上下文与执行记录；业务定义标准。"] },
+    { "dot": "amber", "title": "关键边界", "items": ["单案修订不必升版；候选不合格可继续实验或停止。", "稳定版生产与候选研发并行；观察有证据时再回到原因诊断，新版不自动采用。"] },
+    { "dot": "slate", "title": "阅读说明", "items": ["这是业务方法的形成范式，不是现有自动化能力或界面任务清单。", "依据：docs/product-understanding.md；vendor/agent-workflow/docs/product.md、architecture.md、harness-roadmap.md。"] }
+  ]
+}

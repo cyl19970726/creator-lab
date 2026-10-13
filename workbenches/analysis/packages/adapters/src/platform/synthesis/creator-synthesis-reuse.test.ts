@@ -79,7 +79,7 @@ it("keeps child-visible fixed context free of previous research fields and sourc
   expect(serialized).not.toContain("candidate.json");
 });
 
-it("preserves complete three lenses and actual evaluator boundaries without embedding the reconstruction again", () => {
+it("preserves complete three lenses and actual evaluator boundaries without embedding the reconstruction again", async () => {
   temporary = fs.mkdtempSync(path.join(os.tmpdir(), "synthesis-materials-"));
   const priorRuntime = process.env.SELF_MEDIA_RUNTIME_DIR;
   process.env.SELF_MEDIA_RUNTIME_DIR = temporary;
@@ -94,8 +94,8 @@ it("preserves complete three lenses and actual evaluator boundaries without embe
         sourceMediaArtifactRef: null, reconstructionArtifactRef: reconstructionRef, articleArtifactRef: null, evaluationArtifactRef: evaluationRef,
         gateReportArtifactRef: null, threeLensEvaluationArtifactRef: null, threeLensGateReportArtifactRef: null, failedGateIds: [], message: "完成", updatedAt: "2026-09-15T00:00:00.000Z"
       }] };
-    const index = buildReuseMaterialIndex({ request: { ...request(), reconstructionBatchArtifactRef: "batch" },
-      readArtifact: (reference) => reference === "batch" ? batch : JSON.parse(fs.readFileSync(requirePath(reference), "utf8")) });
+    const index = await buildReuseMaterialIndex({ request: { ...request(), reconstructionBatchArtifactRef: "batch" },
+      readArtifact: async (reference) => reference === "batch" ? batch : JSON.parse(fs.readFileSync(requirePath(reference), "utf8")) });
     const material = (index.deepMaterials as Array<Record<string, unknown>>)[0]!;
     expect(material.builderLenses).toEqual(JSON.parse(fs.readFileSync(requirePath(reconstructionRef), "utf8")).builderLenses);
     expect(material.evaluationBoundaries).toMatchObject([{ artifactRef: evaluationRef, boundary: ["媒体边界"] }]);

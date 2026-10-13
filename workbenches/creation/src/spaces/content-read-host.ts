@@ -2,7 +2,8 @@ import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 import {Pool} from 'pg';
-import {PostgresBlobStore,WorkflowSpaceService,type SpacePrincipal} from '@signal-room/workflow-spaces';
+import {WorkflowSpaceService,type SpacePrincipal} from '@signal-room/workflow-spaces';
+import {openConfiguredContentBlobs} from './blob-configuration.js';
 import {creationAssetReaders} from './readers.js';
 import {createContentBusinessAdapter} from './presentation.js';
 import {createContentProcessResolver} from './process.js';
@@ -19,9 +20,10 @@ export async function openContentReadHost(){
  const spaceId=process.env.WORKFLOW_SPACE_ID??config.spaceId??'creator-content';
  // This is per-connection, not a change to database defaults. Accidental writes fail closed.
  const pool=new Pool({connectionString:databaseUrl,options:'-c default_transaction_read_only=on',application_name:'space-workbench-readonly'});
+ const {blobs}=await openConfiguredContentBlobs(pool);
  const serviceFor=(requestPrincipal:SpacePrincipal)=>{
   let service:WorkflowSpaceService;
-  service=new WorkflowSpaceService(pool,new PostgresBlobStore(pool),requestPrincipal,{readerIds:Object.keys(creationAssetReaders),resultRoleIds:['final-draft','research','cold-read','fact-check','editorial-review'],processResolvers:{'creation.content':input=>createContentProcessResolver(service)(input)}});
+  service=new WorkflowSpaceService(pool,blobs,requestPrincipal,{readerIds:Object.keys(creationAssetReaders),resultRoleIds:['final-draft','research','cold-read','fact-check','editorial-review'],processResolvers:{'creation.content':input=>createContentProcessResolver(service)(input)}});
   return service;
  };
  const service=serviceFor(principal);

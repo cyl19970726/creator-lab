@@ -53,6 +53,10 @@ export function creationSchemaDefinitions(): SchemaDefinition[] {
       segments: { type: 'array', items: schema(contentScriptSchema.shape.segments.element) },
     }),
   });
+  const textViewerDraft = object({ script: object({
+    title: text, coverText: text,
+    segments: { type: 'array', items: object({ voiceover: text, onScreenText: text }) },
+  }) });
   const opportunity = contentOpportunitySchema;
   const materials = { type: 'array', minItems: 1, items: schema(contentMaterialSchema) } as JsonValue;
   const readerProfile = object({ account: object({ currentAudience: { type: 'string', minLength: 1 } }) });
@@ -96,6 +100,7 @@ export function creationSchemaDefinitions(): SchemaDefinition[] {
     ['content-review', contentReviewStoredSchema],
     ['content-piece-brief', pieceBrief],
     ['content-viewer-draft', viewerDraft],
+    ['content-text-viewer-draft', textViewerDraft],
     ['b3-frame-design-agent-output', b3DesignAgentOutputSchema],
     ['b3-frame-specs', b3FrameSpecsStoredSchema],
     ['b3-assembly', b3AssemblyReportSchema],
@@ -129,6 +134,7 @@ export interface CreationSchemaRefs {
   review: SchemaRef;
   brief: SchemaRef;
   viewerDraft: SchemaRef;
+  textViewerDraft: SchemaRef;
   frameDesignAgent: SchemaRef;
   frameSpecs: SchemaRef;
   assembly: SchemaRef;
@@ -160,6 +166,7 @@ export function registerCreationSchemas(registry: SchemaRegistry): CreationSchem
     factCheckAgent: get('content-fact-check-agent-output'), factCheck: get('content-fact-check'),
     reviewAgent: get('content-review-agent-output'), review: get('content-review'),
     brief: get('content-piece-brief'), viewerDraft: get('content-viewer-draft'),
+    textViewerDraft: get('content-text-viewer-draft'),
     frameDesignAgent: get('b3-frame-design-agent-output'), frameSpecs: get('b3-frame-specs'),
     assembly: get('b3-assembly'),
     voiceManifest: get('b3-voice-manifest'),
@@ -173,7 +180,8 @@ const output = (schemaRef: SchemaRef, requiredInputs: string[], initialState = '
 });
 
 /** Two independent entrypoints share the registered asset vocabulary and accepted brief handoff. */
-export function creationStorageContracts(refs: CreationSchemaRefs, workflowVersion: string): StorageContractDraft[] {
+export function creationStorageContracts(refs: CreationSchemaRefs, workflowVersion: string,
+  options: { textOnlyColdReader?: boolean } = {}): StorageContractDraft[] {
   const content: StorageContractDraft = {
     workflowVersion,
     nodes: {
@@ -201,7 +209,10 @@ export function creationStorageContracts(refs: CreationSchemaRefs, workflowVersi
       coldReader: {
         actorKinds: ['agent', 'program'],
         inputs: {
-          manuscript: { ...input(refs.draft), projection: {
+          manuscript: { ...input(refs.draft), projection: options.textOnlyColdReader ? {
+            version: 'text-viewer-view-v1', fields: ['/script/title', '/script/coverText',
+              '/script/segments/*/voiceover', '/script/segments/*/onScreenText'], schema: refs.textViewerDraft,
+          } : {
             version: 'viewer-view-v1', fields: ['/script/title', '/script/coverText', '/script/segments'], schema: refs.viewerDraft,
           } },
           audienceProfile: { ...input(refs.opportunity, ['imported', 'candidate']), projection: {

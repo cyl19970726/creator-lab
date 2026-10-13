@@ -3,7 +3,7 @@ import {request,type Server} from 'node:http';
 import {mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {createSpaceWorkbenchApp} from '../apps/space-workbench/app.js';
+import {createSpaceWorkbenchApp,type SpaceCredential} from '../apps/space-workbench/app.js';
 import type {SpaceApiHost} from '@signal-room/workflow-space-api/server';
 
 const origin='http://127.0.0.1:4397';
@@ -11,11 +11,11 @@ const token='test-only-read-token-with-enough-entropy';
 const servers:Server[]=[];
 const directories:string[]=[];
 afterEach(async()=>{await Promise.all(servers.splice(0).map(server=>new Promise<void>(resolve=>server.close(()=>resolve()))));await Promise.all(directories.splice(0).map(directory=>rm(directory,{recursive:true,force:true})));});
-async function fixture(accessToken:string|null=token,commandHost?:Omit<SpaceApiHost,'principal'|'cacheScope'>){
+async function fixture(accessToken:string|null=token,commandHost?:Omit<SpaceApiHost,'principal'|'cacheScope'>,credentials?:SpaceCredential[]){
  const directory=await mkdtemp(join(tmpdir(),'space-host-'));directories.push(directory);
  await writeFile(join(directory,'index.html'),'<!doctype html><title>Real Space host test</title>');
  const hostFor=vi.fn(()=>commandHost??({service:{overview:vi.fn(async()=>{throw new Error('membership boundary');})},scope:{workflowId:'creation.content',entrypoint:'content'}} as unknown as Omit<SpaceApiHost,'principal'|'cacheScope'>));
- const server=createSpaceWorkbenchApp({spaceId:'creator-content',principal:{kind:'human',id:'member'},publicOrigin:origin,webRoot:directory,accessToken:accessToken??undefined,trustedLoopback:!accessToken,hostFor});servers.push(server);
+ const server=createSpaceWorkbenchApp({spaceId:'creator-content',principal:{kind:'human',id:'member'},publicOrigin:origin,webRoot:directory,accessToken:accessToken??undefined,trustedLoopback:!accessToken,credentials,hostFor});servers.push(server);
  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
  const port=(server.address() as {port:number}).port;
  return {hostFor,call:(path:string,method='GET',body='',headers:Record<string,string>={})=>new Promise<{status:number;headers:Record<string,string|string[]|undefined>;body:string}>((resolve,reject)=>{
@@ -23,6 +23,42 @@ async function fixture(accessToken:string|null=token,commandHost?:Omit<SpaceApiH
  })};
 }
 describe('read-only Space host authentication',()=>{
+ it('binds a provisioned Agent credential to its own cookie and never falls back from an invalid bearer to human',async()=>{
+  const agentToken='test-only-agent-credential-with-enough-entropy';
+  const principal={kind:'service' as const,id:'external-codex-observer',externalAgent:{id:'cognition-root',sessionId:'native-codex-thread'}};
+  const host=await fixture(null,undefined,[{token:agentToken,principal}]);
+  const plain=JSON.parse((await host.call('/space-workbench/session')).body);
+  expect(plain.subject).toMatchObject({id:'member',kind:'human'});
+  const bearer=JSON.parse((await host.call('/space-workbench/session','GET','',{Authorization:`Bearer ${agentToken}`})).body);
+  expect(bearer.subject).toMatchObject(principal);
+  expect(JSON.parse((await host.call('/space-workbench/session','GET','',{Authorization:'Bearer bad-token'})).body).authenticated).toBe(false);
+  const login=await host.call('/space-workbench/session','POST',JSON.stringify({token:agentToken,principal:{id:'member',kind:'human'}}),{Origin:origin,'Content-Type':'application/json'});
+  expect(login.status).toBe(200);
+  const cookie=(login.headers['set-cookie'] as string[])[0]!.split(';')[0]!;
+  const authenticated=JSON.parse((await host.call('/space-workbench/session','GET','',{Cookie:cookie})).body);
+  expect(authenticated.subject).toMatchObject(principal);
+  expect(authenticated.subject.cacheScope).not.toBe(plain.subject.cacheScope);
+  expect((await host.call('/space-workbench/creator-content','GET','',{Cookie:cookie})).status).toBe(200);
+  expect(JSON.parse((await host.call('/space-workbench/session','GET','',{Cookie:'creator_space_read_session_4397=expired'})).body).authenticated).toBe(false);
+ });
+ it('allows understanding revisions with session CSRF without enabling business execution',async()=>{
+  const space={id:'creator-content',purpose:'fixture',status:'active',createdAt:'2026-01-01',owner:'member'};
+  const service={listSpaces:async()=>[space],overview:async()=>({space,workflows:[],cases:[],runs:[],assets:[],reviews:[],comparisons:[],iterations:[],adoptions:[],sessions:[],knowledge:[]})};
+  const input={expectedRevisionId:null,idempotencyKey:'first',title:'Business understanding',content:'# Goal\nUseful content.\n',sources:[{kind:'document',ref:'docs/business.md',title:'Business'}],authorship:{kind:'agent',name:'test-agent'},changeReason:'Initial interpretation'};
+  const revision={id:'revision-1',assetId:'space-business-understanding',revision:1,payloadHash:'hash',createdAt:'2026-10-09T00:00:00Z',previousRevisionId:null,title:input.title,content:input.content,sources:input.sources,authorship:input.authorship,changeReason:input.changeReason,recordedBy:'member',confirmation:'unconfirmed'};
+  const save=vi.fn(async()=>revision);
+  const host=await fixture(null,{service,scope:{workflowId:'creation.content',entrypoint:'content'},understanding:{current:async()=>null,read:async()=>revision,history:async()=>[],save}} as unknown as Omit<SpaceApiHost,'principal'|'cacheScope'>);
+  const summary=JSON.parse((await host.call('/api/workflow-spaces/v1/spaces/creator-content/summary')).body);
+  expect(summary.capabilities.understandingWrite).toBe(true);expect(summary.csrfToken).toMatch(/^[a-f0-9]{64}$/);
+  const path='/api/workflow-spaces/v1/spaces/creator-content/understanding/revisions';
+  expect((await host.call(path,'POST',JSON.stringify(input),{'Content-Type':'application/json',Origin:origin})).status).toBe(403);
+  expect(save).not.toHaveBeenCalled();
+  const result=await host.call(path,'POST',JSON.stringify(input),{'Content-Type':'application/json',Origin:origin,'x-space-csrf':summary.csrfToken});
+  expect(result.status).toBe(200);expect(JSON.parse(result.body)).toMatchObject({content:input.content,authorship:{kind:'agent'},recordedBy:'member',confirmation:'unconfirmed'});
+  expect(save).toHaveBeenCalledWith('creator-content',input);
+  expect((await host.call('/api/workflow-spaces/v1/spaces/creator-content/business/preparations','POST','{}',{'Content-Type':'application/json',Origin:origin,'x-space-csrf':summary.csrfToken})).status).toBe(405);
+ });
+
  it('issues session-bound CSRF for ordinary business without plan commands',async()=>{
   const space={id:'creator-content',purpose:'fixture',status:'active',createdAt:'2026-01-01',owner:'member'};
   const service={listSpaces:async()=>[space],overview:async()=>({space,workflows:[],cases:[],runs:[],assets:[],reviews:[],comparisons:[],iterations:[],adoptions:[],sessions:[],knowledge:[]})};

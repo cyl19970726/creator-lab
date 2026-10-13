@@ -3,7 +3,7 @@ import type { CreatorResearchService } from "../../packages/research/index.js";
 import { loadCreatorSummaries } from "./creators.js";
 
 describe("latest creator catalog", () => {
-  it("lists the newest versioned run per creator, including pending runs, without historical report links", () => {
+  it("lists the newest versioned run per creator, including pending runs, without historical report links", async () => {
     const runs = [
       { id: "redfox-first", creatorId: "redfox", canonicalSlug: "redfox", creatorName: "RedFox", status: "collecting" },
       { id: "current", creatorId: "creator", canonicalSlug: "creator", creatorName: "Current", status: "ready" },
@@ -14,13 +14,13 @@ describe("latest creator catalog", () => {
       lastSnapshotAt: null, createdAt: "2026-09-14T00:00:00Z", nextAction: "继续"
     }));
     const service = { list: () => runs } as unknown as CreatorResearchService;
-    const summaries = loadCreatorSummaries(service);
+    const summaries = await loadCreatorSummaries(service);
     expect(summaries.map((item) => item.id)).toEqual(["redfox", "creator"]);
     expect(summaries[0]?.entries[0]?.href).toContain("run=redfox-first");
     expect(summaries.flatMap((item) => item.entries).every((entry) => !entry.href.startsWith("/research/"))).toBe(true);
   });
 
-  it("does not resurrect static evidence when no versioned service is supplied", () => {
-    expect(loadCreatorSummaries()).toEqual([]);
+  it("does not resurrect static evidence when no versioned service is supplied", async () => {
+    expect(await loadCreatorSummaries()).toEqual([]);
   });
 });

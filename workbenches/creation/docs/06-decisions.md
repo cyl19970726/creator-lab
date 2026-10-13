@@ -2,6 +2,12 @@
 
 按时间记录做过的关键决定：决定是什么、为什么、现在在哪里体现。被替代的设计原文在[归档](archive/README.md)。
 
+## 2026-10-12：清退旧 Codex/SQLite runtime
+
+三个工作台统一迁至 PostgreSQL 与官方 Agents SDK。创作删除旧文章 API/worker/React 原型和旧文件式阶段 CLI；CONTENT 继续使用 PG Space，真实 B3 制作 workflow 与确定性媒体管线保留，并改接 PostgreSQL workflow ledger、`OpenAIAgentsSdkRunner` 和 `SiwcAuth`。角色 workspace tools 由共享 SDK 按节点绑定。默认模型统一为 `gpt-6-luna`。历史数据库、reports、media、traces 和 SIWC auth 原样保留，不自动导入；旧 SQLite 仅由命名明确的只读历史归档工具核验。当前状态和入口见[架构](03-architecture/README.md)与[运行说明](03-architecture/business-workbench.md)。
+
+这一迁移建立的是当前可运行的 PG/SDK 路径，不构成内容质量或成片质量验收；真实案例仍须单独检验。
+
 ## 2026-10-04 共享底座范围确认
 
 用户确认，执行、工作流版本与迭代、四问评价、人或 Agent A 审阅、PostgreSQL 资产管理 harness、一般 Agent SDK、上下文和工具控制、trace／session 与通用工作台，均属于 agent-workflow 的目标能力。creation 直接接入，提供创作流程、工具、判据和展示扩展。共同动机和职责分别写入共享[产品](../../../vendor/agent-workflow/docs/product.md)与[架构](../../../vendor/agent-workflow/docs/architecture.md)。
@@ -23,7 +29,7 @@
 | 2026-09-30 | 一个阶段 = 一个决定 + 一份主资产 + 一张标准卡；每个角色防一种失败；阶段停在创作者关口，意见写回标准卡 | 出错时能知道回到哪一步；人的判断要能被审阅角色学到 | [工作流](04-workflows/README.md) |
 | 2026-09-30 | 内容只能由 workflow 产出，主 Agent 只编排与审阅 | 历史手工作品不能验证 workflow 本身的能力 | [核心思想](01-principles.md#用-workflow-产出内容用真实案例改-workflow) |
 | 2026-09-30 | workflow 靠调优成形：同一冻结输入、一次改一处、升版本、前后对比；审阅者用正反案例校准 | 第一版的错法事先猜不到，只有 trace 里看得见 | [调优手册](05-tuning.md) |
-| 2026-09-30 | 阶段 Agent 默认 `gpt-6-sol`（执行 medium、判断 high），Codex CLI 用 ChatGPT 应用内版本；避免大规模多 Agent 编排 | 关键判断用强推理；当时 SDK 自带 CLI 拒绝所选模型；控制额度 | [当前 CLI](03-architecture/README.md#现有-cli-与状态) |
+| 2026-09-30 | 阶段 Agent 默认 `gpt-6-sol`（执行 medium、判断 high），Codex CLI 用 ChatGPT 应用内版本；避免大规模多 Agent 编排 | 关键判断用强推理；当时 SDK 自带 CLI 拒绝所选模型；控制额度 | 迁移前的历史选择；当前默认模型见[运行说明](03-architecture/business-workbench.md) |
 | 2026-09-30 | B3 包住现成的视频模板装配线，只加画面设计者和成品检查两个 Agent；检查者必须看图 | 装配线是确定的，模板的机器闸来自真实事故；视觉验收不能交给看不见图的 Agent | [B3](04-workflows/b3.md) |
 | 2026-09-30 | 阶段之间用有版本的作品档案交接，按角色切片；冷读者隔离 | 会话里手工拼输入，丢了观众问题、参照作品教训和主编给制作的话 | [作品档案与交接](03-architecture/brief-and-handoff.md) |
 | 2026-09-30 | 工作台先用生成的静态页面，按阶段一行、结论先行；暂不接进 React 应用 | 当时先看清要显示什么，再做成产品；目前共享工作台已纳入目标 | [产品](02-product.md) |

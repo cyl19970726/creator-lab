@@ -1,0 +1,98 @@
+// Entirely synthetic UI fixture. Names, briefs, outputs and judgments are invented.
+export const fixture = {
+  meta: { label: '合成演示数据 · 非真实业务或模型运行', asOf: '2026-10-09' },
+  space: {
+    name: 'CONTENT · 合成内容工作台',
+    purpose: '把机构提供的材料整理成可审阅的社区服务短文，同时保留来源与修订依据。',
+    audience: '内容负责人、执行编辑与评价者',
+    criteria: ['事实仅取自已交付材料', '读者能看懂具体服务、时间和参与方式', '缺口及评价范围可追溯'],
+  },
+  versions: [
+    {
+      id: 'v1', name: '来源整理与成稿', motivation: '首版方法：从已提供材料提取事实，再形成适合社区公告栏的短文。',
+      predecessor: null, change: '建立接收材料、整理来源、撰写和复核四步合同。',
+      adopted: true, executable: false, scope: '社区服务短文；既有采用决定仍指向 v1。',
+      conditions: '当前执行绑定中的旧模板资源已下线；历史可读，新委托须等待恢复或由有权者显式改派。',
+      unknowns: ['旧模板恢复时间未定', '案例 A 的缺源失败是否由材料清单不清造成，尚无对照验证'],
+      nodes: [
+        { id: 'v1-intake', name: '接收与列清单', role: '确认委托和材料范围', instructions: '登记目标、受众、输入资产及可用边界。', tools: ['asset-read'], skill: null, executor: 'CONTENT 旧执行绑定', inputs: ['业务简报', '已交付材料'], outputs: ['材料清单'], autonomy: '可整理已交付信息；不得补造事实。', escalation: '交付范围不明时交还负责人确认。' },
+        { id: 'v1-source', name: '来源整理', role: '为拟写事实列出可核对依据', instructions: '只读已交付材料；缺关键日期或资格时保存缺口并停止成稿。', tools: ['asset-read'], skill: null, executor: 'CONTENT 旧执行绑定', inputs: ['材料清单', '已交付材料'], outputs: ['事实提要或缺口记录'], autonomy: '可提炼、归类；当前 CONTENT 不允许联网补源。', escalation: '关键事实缺失时请内容负责人补材料或改写委托。' },
+        { id: 'v1-author', name: '撰写', role: '形成可审阅短文', instructions: '按已核对事实写清服务、时间、参与方式。', tools: ['asset-read', 'draft-write'], skill: null, executor: 'CONTENT 旧执行绑定', inputs: ['事实提要'], outputs: ['短文稿'], autonomy: '可决定结构与措辞，不可扩写无依据事实。', escalation: '事实仍冲突时不发布稿件。' },
+        { id: 'v1-review', name: '交付复核', role: '检查稿件与来源', instructions: '标出需要人工确认的句子，交付可审阅稿件。', tools: ['asset-read'], skill: null, executor: 'CONTENT 旧执行绑定', inputs: ['短文稿', '事实提要'], outputs: ['交付稿及复核备注'], autonomy: '可提出修改建议，不代替业务评价或采用决定。', escalation: '影响准确性的分歧交负责人。' },
+      ],
+      process: { edges: [
+        { from: 'v1-intake', to: 'v1-source', label: '交付材料清单与已收输入' },
+        { from: 'v1-source', to: 'v1-author', label: '关键事实齐备才交付事实提要' },
+        { from: 'v1-author', to: 'v1-review', label: '交付短文稿供复核' },
+        { from: 'v1-review', to: 'v1-author', label: '来源或措辞需修订时退回' },
+      ], returnRule: '复核发现可修订问题时退回作者，并保留前稿；新的输入材料须另起准确尝试。', stopRule: '来源整理发现关键事实不足时保存缺口、请求负责人补材并结束本次尝试。' },
+      hypothesis: '明确来源再成稿，能减少公告中未经证实的信息。', evidenceRunIds: ['R1', 'R2', 'R4'],
+    },
+    {
+      id: 'v2', name: '先核材料再表达', motivation: 'R1 留下缺口却未形成完整成果；希望在撰写前让材料充分性成为显式关口。',
+      predecessor: 'v1', change: '在来源整理与撰写之间加入充分性判定和补材请求；输出保留逐项依据。',
+      adopted: false, executable: true, scope: '候选试跑，仅用于获准的验证项；不接管日常委托。',
+      conditions: '候选执行绑定可用；仍只使用已交付材料，不允许联网；验证计划尚未完成。',
+      unknowns: ['R3 尚无评价', 'Case B 的 v2 计划项尚未开始', '不同输入条件对 R1 与 R3 差异的影响未分离'],
+      nodes: [
+        { id: 'v2-intake', name: '冻结输入', role: '记录每次运行的准确材料', instructions: '登记资产版本、交付范围和本次条件。', tools: ['asset-read'], skill: null, executor: 'CONTENT 候选执行绑定', inputs: ['业务简报', '已交付材料'], outputs: ['运行输入清单'], autonomy: '可整理交付范围，不可变更旧 run 的输入。', escalation: '输入或权限不清时交负责人。' },
+        { id: 'v2-gate', name: '充分性关口', role: '判断关键事实是否足以成稿', instructions: '逐项指出已有依据和缺口；不足时形成补材请求，不猜测也不联网。', tools: ['asset-read'], skill: null, executor: 'CONTENT 候选执行绑定', inputs: ['运行输入清单'], outputs: ['依据表或补材请求'], autonomy: '可整理缺口与可继续部分；无权决定缺失事实。', escalation: '关键材料不足时由内容负责人决定补材、缩小范围或结束本次尝试。' },
+        { id: 'v2-author', name: '依据成稿', role: '写出有依据的短文', instructions: '只使用依据表确认的信息，逐段标明来源。', tools: ['asset-read', 'draft-write'], skill: null, executor: 'CONTENT 候选执行绑定', inputs: ['依据表'], outputs: ['带来源短文稿'], autonomy: '可选择叙述顺序与表达，不可补造事实。', escalation: '仍有关键缺口时返回充分性关口。' },
+        { id: 'v2-review', name: '审阅交付', role: '给人工评价留出明确范围', instructions: '交付稿件和来源说明，标注待人工确认处。', tools: ['asset-read'], skill: null, executor: 'CONTENT 候选执行绑定', inputs: ['带来源短文稿'], outputs: ['候选交付稿'], autonomy: '可做内部复核，不产生独立业务评价。', escalation: '来源与文案不符时退回作者。' },
+      ],
+      process: { edges: [
+        { from: 'v2-intake', to: 'v2-gate', label: '交付冻结的输入清单' },
+        { from: 'v2-gate', to: 'v2-author', label: '充分性通过后交付逐项依据表' },
+        { from: 'v2-author', to: 'v2-review', label: '交付带来源短文稿' },
+        { from: 'v2-review', to: 'v2-author', label: '来源不符时退回并保留意见' },
+      ], returnRule: '复核发现来源不符时退回作者；若发现关键材料缺失，返回充分性关口记录缺口。', stopRule: '充分性未通过时形成补材请求，由负责人决定补材、缩小范围或结束；不得联网或推断缺失事实。' },
+      hypothesis: '显式充分性关口能让缺材料的尝试更早停下，也让完成稿更易核对来源。', evidenceRunIds: ['R3'],
+    },
+  ],
+  cases: [
+    { id: 'A', title: '邻里阅读角开放公告（合成）', brief: '为虚构的河岸社区写一则 120 字左右公告，说明阅读角开放时间、地点及参与方式。', inputIds: ['A-brief', 'A-schedule'] },
+    { id: 'B', title: '修理小站报名提醒（合成）', brief: '为虚构的榆巷社区写一则报名提醒，准确说明活动日期、可修物品与报名截止时间。', inputIds: ['B-brief', 'B-sheet'] },
+  ],
+  runs: [
+    { id: 'R1', caseId: 'A', versionId: 'v1', status: 'failed', summary: '只完成材料清单与缺口记录；缺开放时段和现场报名规则，未生成公告。', planId: 'P', inputIds: ['A-brief'], assetIds: ['A-R1-list', 'A-R1-gap'], evaluationIds: [], actualConditions: '仅交付 A-brief；A-schedule 当时尚不存在于本次输入。旧绑定当时可运行，当前已不可执行；禁止联网。', intervention: '内容负责人收到补材请求；本次尝试结束，未改写原输入。', issue: '需要由内容负责人提供确认过的开放时段和报名规则。' },
+    { id: 'R2', caseId: 'A', versionId: 'v1', status: 'completed', summary: '在后来补交材料的独立尝试中完成公告并获得人工评价。', planId: null, inputIds: ['A-brief', 'A-schedule'], assetIds: ['A-R2-facts', 'A-R2-copy'], evaluationIds: ['E-R2'], actualConditions: '新尝试同时交付 A-brief 与后来提供的 A-schedule；仍禁止联网。该结果不替换 P 中的 R1。', intervention: '负责人在启动前补交并确认时间表；评价者随后审阅成稿。', issue: null },
+    { id: 'R3', caseId: 'A', versionId: 'v2', status: 'completed', summary: '充分性关口通过，候选版完成带来源公告；业务评价尚未进行。', planId: 'P', inputIds: ['A-brief', 'A-schedule'], assetIds: ['A-R3-basis', 'A-R3-copy'], evaluationIds: [], actualConditions: '交付 A-brief 与 A-schedule；v2 候选绑定可用，禁止联网。输入范围与 R1 不同。', intervention: '负责人允许候选试跑；尚未作出采用或质量结论。', issue: '缺少针对 R3 的人工业务评价，且输入差异尚未排除。' },
+    { id: 'R4', caseId: 'B', versionId: 'v1', status: 'completed', summary: '按已交付活动表完成报名提醒，有一条有范围限制的人工评价。', planId: 'P', inputIds: ['B-brief', 'B-sheet'], assetIds: ['B-R4-facts', 'B-R4-copy'], evaluationIds: ['E-R4'], actualConditions: 'B-brief 与 B-sheet 均在启动时交付；旧绑定当时可运行，禁止联网。', intervention: '评价者复核日期与报名说明；没有候选版对照。', issue: null },
+  ],
+  assets: [
+    { id: 'A-brief', caseId: 'A', runId: null, name: 'A 委托简报', kind: 'input', content: '合成委托：面向河岸社区居民；说明阅读角在邻里中心一层，邀请居民借阅与参加共读。初始简报没有开放时段或报名规则。', producer: null, relations: [] },
+    { id: 'A-schedule', caseId: 'A', runId: null, name: 'A 补交时间表', kind: 'input', content: '合成补材：阅读角周二、周四 14:00–17:00 开放；共读活动现场登记，名额 12 人。负责人在 R1 结束后提供，供 R2 和 R3 使用。', producer: null, relations: [] },
+    { id: 'B-brief', caseId: 'B', runId: null, name: 'B 委托简报', kind: 'input', content: '合成委托：提醒榆巷社区居民报名修理小站，语气简洁，避免承诺无法修复的物件。', producer: null, relations: [] },
+    { id: 'B-sheet', caseId: 'B', runId: null, name: 'B 活动表', kind: 'input', content: '合成活动表：10 月 18 日 10:00–12:00，在社区活动室；可带小家电和衣物；10 月 16 日 18:00 前向服务台报名。', producer: null, relations: [] },
+    { id: 'A-R1-list', caseId: 'A', runId: 'R1', name: 'R1 材料清单', kind: 'intermediate', content: '本次收到 A-brief；可确认地点和目标读者。开放时段、共读报名方式均未收到。', producer: 'v1-intake', relations: [{ targetId: 'A-brief', type: 'delivered', basis: 'R1 输入绑定记录：交付 A-brief 全文。', detail: '此边只证明资产被交付，不证明节点已理解全文。' }] },
+    { id: 'A-R1-gap', caseId: 'A', runId: 'R1', name: 'R1 缺口与补材请求', kind: 'intermediate', content: '未能确认开放时段与共读报名方式。现有材料可写地点和邀请语，但不能形成完整公告。请负责人补交经确认的时间表；本次不联网，结束尝试。', producer: 'v1-source', relations: [{ targetId: 'A-R1-list', type: 'declared', basis: '缺口记录正文列出清单中的未交付字段。', detail: '声明依赖，尚不是独立来源核查。' }] },
+    { id: 'A-R2-facts', caseId: 'A', runId: 'R2', name: 'R2 事实提要', kind: 'intermediate', content: '地点：邻里中心一层；开放：周二、周四 14:00–17:00；共读：现场登记，12 人。', producer: 'v1-source', relations: [{ targetId: 'A-brief', type: 'declared', basis: 'R2 事实提要声明地点来自 A-brief。', detail: '这是输出声明；尚无逐字工具读取证明。' }, { targetId: 'A-schedule', type: 'delivered', basis: 'R2 启动时输入绑定包含补交时间表。', detail: '交付范围为 A-schedule 全文，不代表所有引用均已核查。' }] },
+    { id: 'A-R2-copy', caseId: 'A', runId: 'R2', name: 'R2 阅读角公告', kind: 'output', content: '河岸社区阅读角在邻里中心一层等你来。每周二、周四 14:00–17:00 可借阅。想参加共读，请到现场登记；每次限 12 人。欢迎带上想分享的书。', producer: 'v1-author', relations: [{ targetId: 'A-R2-facts', type: 'declared', basis: '交付稿声明使用 R2 事实提要。', detail: '可据此追溯写作依据，不能仅凭边认定文字准确。' }, { targetId: 'A-R1-gap', type: 'responds', basis: 'R2 是补材后的独立尝试，回应 R1 所列缺口。', detail: '跨 run 关联不表示 R1 输入被修改或 R2 属于计划 P。' }] },
+    { id: 'A-R3-basis', caseId: 'A', runId: 'R3', name: 'R3 充分性与依据表', kind: 'intermediate', content: '关键字段齐全：地点见 A-brief；开放时段、共读登记及人数见 A-schedule。允许成稿；未使用外部来源。', producer: 'v2-gate', relations: [{ targetId: 'A-brief', type: 'delivered', basis: 'R3 输入绑定交付 A-brief。', detail: '仅证明交付。' }, { targetId: 'A-schedule', type: 'delivered', basis: 'R3 输入绑定交付 A-schedule。', detail: '仅证明交付；依据表是节点声明。' }] },
+    { id: 'A-R3-copy', caseId: 'A', runId: 'R3', name: 'R3 候选公告', kind: 'output', content: '邻里中心一层的河岸社区阅读角每周二、周四 14:00–17:00 开放。共读活动可现场登记，每次限 12 人。欢迎居民来借阅、交流。来源：委托简报及补交时间表。', producer: 'v2-author', relations: [{ targetId: 'A-R3-basis', type: 'declared', basis: 'R3 交付稿附有对依据表的来源声明。', detail: '尚未接受独立业务评价。' }, { targetId: 'A-R2-copy', type: 'compares', basis: '候选试跑的人工设置要求与既有公告并列查看。', detail: '供对照阅读；不表示两稿已完成效果比较。' }] },
+    { id: 'B-R4-facts', caseId: 'B', runId: 'R4', name: 'R4 活动事实提要', kind: 'intermediate', content: '活动 10 月 18 日 10:00–12:00；地点社区活动室；可带小家电和衣物；报名截止 10 月 16 日 18:00。', producer: 'v1-source', relations: [{ targetId: 'B-brief', type: 'delivered', basis: 'R4 输入绑定交付 B-brief。', detail: '交付不等于已理解。' }, { targetId: 'B-sheet', type: 'delivered', basis: 'R4 输入绑定交付 B-sheet。', detail: '时间、地点及范围见活动表，仍须核对输出。' }] },
+    { id: 'B-R4-copy', caseId: 'B', runId: 'R4', name: 'R4 修理小站提醒', kind: 'output', content: '榆巷社区修理小站将于 10 月 18 日 10:00–12:00 在社区活动室举行，可带小家电或衣物。请于 10 月 16 日 18:00 前向服务台报名。现场会先查看物件情况，不能保证都能修好。', producer: 'v1-author', relations: [{ targetId: 'B-R4-facts', type: 'declared', basis: 'R4 稿件声明依据活动事实提要写成。', detail: '评价者仅核对活动表范围内的关键信息。' }] },
+  ],
+  evaluations: [
+    { id: 'E-R2', runId: 'R2', assetId: 'A-R2-copy', author: '合成评价者 · 内容负责人', standard: '对已交付材料的事实一致性与居民可读性作定性审阅；无评分规则。', conclusion: '地点、时间和现场登记方式与补材一致；可以作为审阅稿。末句邀请语可按发布渠道调整。', evidence: '对照 A-brief、A-schedule 与 A-R2-copy；只审阅 R2 成稿。', limits: 'R2 在 P 之外，不能替代计划中的 R1；不证明 v1 当前可执行。' },
+    { id: 'E-R4', runId: 'R4', assetId: 'B-R4-copy', author: '合成评价者 · 社区编辑', standard: '核对活动表列出的日期、范围和报名截止，并判断提醒是否避免过度承诺；无评分规则。', conclusion: '关键信息齐全，避免了保证修复的说法；发布前仍需确认服务台对外称呼。', evidence: '对照 B-sheet 与 B-R4-copy 中的日期、物品类别和报名句。', limits: '只评价 Case B 的这次 v1 成稿；尚无 B/v2 对照，不能据此判断候选优劣。' },
+  ],
+  plan: {
+    id: 'P', goal: '用同一组 A、B 案例核对 v1 与 v2 的材料处理、成果和评价覆盖，再决定是否值得采用候选版。',
+    conditions: '各计划项须保留准确输入和执行条件；失败、未评和未启动分别呈现。计划覆盖并不自动等于业务覆盖充分。',
+    slots: [
+      { id: 'P-A-v1', caseId: 'A', versionId: 'v1', runId: 'R1' },
+      { id: 'P-A-v2', caseId: 'A', versionId: 'v2', runId: 'R3' },
+      { id: 'P-B-v1', caseId: 'B', versionId: 'v1', runId: 'R4' },
+      { id: 'P-B-v2', caseId: 'B', versionId: 'v2', runId: null },
+    ],
+  },
+  change: {
+    from: 'v1', to: 'v2', problem: 'R1 因缺关键材料而未成稿；原版的缺口表达不足以直接支持后续验证判断。',
+    evidenceIds: ['R1', 'A-R1-gap', 'R2', 'E-R2'],
+    hypothesis: '先显式判断材料是否充分，再写稿，能让缺口与来源更易审阅。',
+    change: 'v2 加入充分性关口、逐项依据表和补材请求；仍由负责人决定缺失事实。',
+    verification: 'P 中 R3 已完成但未评，B/v2 未启动；R1 与 R3 的输入不同，需补评价并核对条件后再判断改动效果。',
+    decision: 'v2 保持候选、未采用；v1 的既有采用范围仍在，但当前不可执行，新委托等待恢复或由有权者显式改派。',
+  },
+};

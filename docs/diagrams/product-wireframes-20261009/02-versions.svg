@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760">
+<rect width="1280" height="760" fill="#fff"/>
+<style>text{font-family:Arial,"PingFang SC","Noto Sans CJK SC",sans-serif;fill:#232323} .muted{fill:#666}</style>
+<rect x="0" y="0" width="215" height="760" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="20" y="30" font-size="18" font-weight="600">SPACE / 内容创作</text>
+<text x="20" y="57" font-size="13" class="muted">目的：形成可交付内容</text>
+<text x="19" y="100" font-size="14">业务目标与问题</text>
+<text x="19" y="145" font-size="14">▾ 工作流 · CONTENT</text>
+<rect x="8" y="161" width="198" height="29" rx="0" fill="#ececec" stroke="none" stroke-width="1"/>
+<text x="32" y="181" font-size="14" font-weight="600">版本总览</text>
+<text x="32" y="215" font-size="14">版本遗传图谱</text>
+<text x="32" y="253" font-size="14">▾ 当前查看 v2  [切换]</text>
+<text x="45" y="289" font-size="14">设计目标与改动</text>
+<text x="45" y="323" font-size="14">方法与产出图</text>
+<text x="45" y="357" font-size="14">案例与资产</text>
+<text x="45" y="391" font-size="14">评价与分析</text>
+<text x="45" y="425" font-size="14">调优与后续版本</text>
+<text x="32" y="469" font-size="14">服务与复盘</text>
+<text x="19" y="513" font-size="14">全部业务案例</text>
+<text x="19" y="551" font-size="14">资产库</text>
+<line x1="16" y1="592" x2="199" y2="592" stroke="#e5e5e5" stroke-width="1"/>
+<text x="20" y="620" font-size="12" class="muted">查看 v2 ≠ 采用 v2</text>
+<text x="20" y="640" font-size="11" class="muted">最新发布 / 采用 / 可执行分列</text>
+<rect x="215" y="0" width="1065" height="72" rx="0" fill="none" stroke="#b6b6b6" stroke-width="1"/>
+<text x="239" y="31" font-size="21" font-weight="600">版本总览</text>
+<text x="239" y="57" font-size="13" class="muted">比较列表 · 当前查看 v2；采用状态独立于查看与最新发布</text>
+<text x="1258" y="56" font-size="11" class="muted" text-anchor="end">合成线框示意 · 非实测</text>
+<line x1="940" y1="72" x2="940" y2="760" stroke="#b6b6b6" stroke-width="1"/>
+<text x="239" y="105" font-size="17" font-weight="600">准确版本比较</text>
+<text x="239" y="126" font-size="12" class="muted">版本名、动机、前驱、可执行性、Case / run / 评价覆盖</text>
+<line x1="239" y1="139" x2="916" y2="139" stroke="#e5e5e5" stroke-width="1"/>
+<rect x="247" y="171" width="672" height="45" rx="0" fill="#f5f5f5" stroke="#b6b6b6" stroke-width="1"/>
+<text x="262" y="199" font-size="14" font-weight="600">版本 / 设计目的</text>
+<text x="475" y="199" font-size="14" font-weight="600">前驱与改动</text>
+<text x="700" y="199" font-size="14" font-weight="600">状态 / 覆盖</text>
+<rect x="247" y="225" width="672" height="93" rx="0" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="261" y="252" font-size="16" font-weight="600">① v1 · 首版</text>
+<text x="261" y="279" font-size="12" class="muted">业务基线</text>
+<text x="476" y="253" font-size="13">无前驱</text>
+<text x="700" y="252" font-size="12">既有 · 不可执行</text>
+<text x="700" y="277" font-size="12" class="muted">Case 2 / Run 3</text>
+<rect x="247" y="332" width="672" height="93" rx="0" fill="#eee" stroke="#232323" stroke-width="1"/>
+<text x="261" y="359" font-size="16" font-weight="600">② v2 · 改进稿</text>
+<text x="261" y="386" font-size="12" class="muted">改写关键审阅</text>
+<text x="476" y="360" font-size="13">来自 v1</text>
+<text x="700" y="359" font-size="12">最新发布 · 未采用</text>
+<text x="700" y="384" font-size="12" class="muted">Case 1 / Run 1</text>
+<rect x="247" y="439" width="672" height="93" rx="0" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="261" y="466" font-size="16" font-weight="600">③ 候选分支</text>
+<text x="261" y="493" font-size="12" class="muted">仅有记录时显示</text>
+<text x="476" y="467" font-size="13">按真实前驱</text>
+<text x="700" y="466" font-size="12">示意位：此处非事实</text>
+<text x="700" y="491" font-size="12" class="muted">—</text>
+<text x="254" y="577" font-size="13">查看 = 保留准确版本上下文   ·   采用 = 改变指定业务范围   ·   执行 = 显式启动一次委托</text>
+<text x="961" y="107" font-size="13" class="muted">选中对象 · 详情</text>
+<text x="961" y="140" font-size="19" font-weight="600">② v2 · 改进稿</text>
+<text x="961" y="165" font-size="12" class="muted">正在查看 v2 · 未采用 · 最新发布</text>
+<line x1="960" y1="181" x2="1258" y2="181" stroke="#e5e5e5" stroke-width="1"/>
+<text x="961" y="211" font-size="14" font-weight="600">版本身份</text>
+<text x="961" y="235" font-size="13">准确 ID 按需展开；不可只靠时间戳。</text>
+<text x="961" y="275" font-size="14" font-weight="600">改动</text>
+<text x="961" y="299" font-size="13">针对 v1 审阅问题；依据见设计目标。</text>
+<text x="961" y="339" font-size="14" font-weight="600">覆盖</text>
+<text x="961" y="363" font-size="13">Case A / R3：完成未评；Case 1，Run 1。</text>
+<text x="961" y="403" font-size="14" font-weight="600">可用动作</text>
+<text x="961" y="427" font-size="13">查看方法与证据；采用需指定范围。</text>
+<text x="961" y="448" font-size="13">执行需检查部署与本次材料。</text>
+</svg>

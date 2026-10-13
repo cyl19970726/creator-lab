@@ -96,7 +96,7 @@ export function createCreatorAnalysisWorkflowV9(
   return createCreatorAnalysisWorkflowPhased("v9", postWorkflow, synthesisWorkflow, prepareSynthesis);
 }
 
-function createCreatorAnalysisWorkflowPhased(revision: "v3" | "v4" | "v5" | "v6" | "v7" | "v8" | "v9",
+function createCreatorAnalysisWorkflowPhased(revision: "v3" | "v4" | "v5" | "v6" | "v7" | "v8" | "v9" | "v10" | "v11",
   postWorkflow: WorkflowDefinition<PostWorkflowInput, PostWorkflowOutput>,
   synthesisWorkflow: WorkflowDefinition<CreatorSynthesisWorkflowInput, CreatorSynthesisWorkflowOutput>,
   prepareSynthesis: (input: CreatorAnalysisWorkflowInput, posts: PostWorkflowOutput[]) => Promise<CreatorSynthesisWorkflowInput>,
@@ -177,4 +177,20 @@ function createCreatorAnalysisWorkflowVersion(revision: "v1" | "v2",
     if (!synthesis.ok) return synthesis as CreatorAnalysisWorkflowOutput;
     return { ok: true, posts, synthesis };
   });
+}
+
+export function createCreatorAnalysisWorkflowV10(
+  postWorkflow: WorkflowDefinition<PostWorkflowInput, PostWorkflowOutput>,
+  synthesisWorkflow: WorkflowDefinition<CreatorSynthesisWorkflowInput, CreatorSynthesisWorkflowOutput>,
+  prepareSynthesis: (input: CreatorAnalysisWorkflowInput, posts: PostWorkflowOutput[]) => Promise<CreatorSynthesisWorkflowInput>,
+) {
+  return createCreatorAnalysisWorkflowPhased("v10", postWorkflow, synthesisWorkflow, prepareSynthesis);
+}
+
+export function createCreatorAnalysisWorkflowV11(
+  postWorkflow: WorkflowDefinition<PostWorkflowInput, PostWorkflowOutput>,
+  synthesisWorkflow: WorkflowDefinition<CreatorSynthesisWorkflowInput, CreatorSynthesisWorkflowOutput>,
+  prepareSynthesis: (input: CreatorAnalysisWorkflowInput, posts: PostWorkflowOutput[]) => Promise<CreatorSynthesisWorkflowInput>,
+) {
+  return createCreatorAnalysisWorkflowPhased("v11", postWorkflow, synthesisWorkflow, prepareSynthesis);
 }

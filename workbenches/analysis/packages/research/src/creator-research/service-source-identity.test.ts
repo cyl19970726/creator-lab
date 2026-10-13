@@ -31,7 +31,7 @@ class MemoryRepository implements CreatorResearchRepository {
   list(): CreatorResearchRun[] { return [this.run]; }
   findLatestByProfileUrl(): CreatorResearchRun | null { return null; }
   findLatestByProfileUrlAndAdapter(): CreatorResearchRun | null { return null; }
-  enqueue(job: ResearchJob): ResearchJob { this.jobs.push(job); return job; }
+  enqueue(job: ResearchJob): ReturnType<CreatorResearchRepository["enqueue"]> { this.jobs.push(job); return job; }
   cancelWorkflowJobs(): number { this.cancelCalls += 1; return 1; }
   requeueRun(): ResearchJob | null { return null; }
   claimNext(): ResearchJob | null { return null; }
@@ -88,9 +88,9 @@ function fixture() {
   return { run, repository, calls, service };
 }
 
-it("persists a source identity blocker without replacing other blockers and records its evidence", () => {
+it("persists a source identity blocker without replacing other blockers and records its evidence", async () => {
   const { run, repository, service } = fixture();
-  service.recordSourceIdentityConflict(runId, {
+  await service.recordSourceIdentityConflict(runId, {
     postExternalId: "6a916dbf000000000302829c", message: "详情元数据与下载媒体不一致", evidenceRef: "/diagnostics/redfox.json"
   });
   expect(run.blockers).toEqual(expect.arrayContaining([
@@ -104,7 +104,7 @@ it("persists a source identity blocker without replacing other blockers and reco
   expect(repository.events[0]).toMatchObject({ type: "handoff.required", payload: {
     blockerCode: "source_identity_conflict", postExternalId: "6a916dbf000000000302829c", evidenceRef: "/diagnostics/redfox.json"
   } });
-  service.recordSourceIdentityConflict(runId, {
+  await service.recordSourceIdentityConflict(runId, {
     postExternalId: "another-post", message: "another mismatch", evidenceRef: "/diagnostics/another.json"
   });
   expect(run.blockers.filter((blocker) => blocker.code === "source_identity_conflict")).toHaveLength(2);
@@ -112,13 +112,13 @@ it("persists a source identity blocker without replacing other blockers and reco
 
 it("blocks all new downstream starts and retries, while reads and cancellation remain available", async () => {
   const { repository, calls, service } = fixture();
-  service.recordSourceIdentityConflict(runId, { postExternalId: "p1", message: "mismatch", evidenceRef: "/evidence" });
+  await service.recordSourceIdentityConflict(runId, { postExternalId: "p1", message: "mismatch", evidenceRef: "/evidence" });
   await expect(service.startPostWorkflow(runId, "p1")).rejects.toThrow("来源身份冲突");
   await expect(service.startCreatorSynthesisWorkflow(runId)).rejects.toThrow("来源身份冲突");
   await expect(service.startCreatorAnalysisWorkflow(runId)).rejects.toThrow("来源身份冲突");
   await expect(service.retryWorkflowStep(runId, "workflow-1", "repair")).rejects.toThrow("来源身份冲突");
-  expect(() => service.resynthesize(runId)).toThrow("来源身份冲突");
-  expect(() => service.retryFailedReconstructions(runId)).toThrow("来源身份冲突");
+  await expect(service.resynthesize(runId)).rejects.toThrow("来源身份冲突");
+  await expect(service.retryFailedReconstructions(runId)).rejects.toThrow("来源身份冲突");
   expect(calls.retry).toBe(0);
   await expect(service.getWorkflowQueue(runId, "workflow-1")).resolves.toEqual(receipt);
   await expect(service.cancelWorkflow(runId, "workflow-1")).resolves.toEqual(receipt);
@@ -130,6 +130,24 @@ it("allows an ordinary workflow retry when no source identity blocker exists", a
   const { calls, service } = fixture();
   await expect(service.retryWorkflowStep(runId, "workflow-1", "repair")).resolves.toMatchObject({ state: "queued" });
   expect(calls.retry).toBe(1);
+});
+
+it("waits for the durable workflow job before reporting a queued receipt", async () => {
+  const { repository, service } = fixture();
+  let release!: () => void;
+  let enqueued = false;
+  repository.enqueue = async (job) => {
+    await new Promise<void>((resolve) => { release = resolve; });
+    enqueued = true;
+    repository.jobs.push(job);
+    return job;
+  };
+  const pending = service.retryWorkflowStep(runId, "workflow-1", "repair");
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  expect(enqueued).toBe(false);
+  release();
+  await expect(pending).resolves.toMatchObject({ state: "queued" });
+  expect(enqueued).toBe(true);
 });
 
 it("passes explicit rebuild mode to every selected post in creator analysis", async () => {
@@ -195,10 +213,10 @@ it("passes explicit rebuild mode to every selected post in creator analysis", as
     .rejects.toThrow("单帖 p2 存在旧报告但缺少可冻结的媒体来源");
 });
 
-it.each(legacyEntrypoints)("does not let %s clear a source identity blocker", (_name, invoke) => {
+it.each(legacyEntrypoints)("does not let %s clear a source identity blocker", async (_name, invoke) => {
   const { run, service } = fixture();
-  service.recordSourceIdentityConflict(runId, { postExternalId: "p1", message: "mismatch", evidenceRef: "/evidence" });
-  expect(() => invoke(service)).toThrow("来源身份冲突");
+  await service.recordSourceIdentityConflict(runId, { postExternalId: "p1", message: "mismatch", evidenceRef: "/evidence" });
+  await expect(invoke(service)).rejects.toThrow("来源身份冲突");
   expect(run.blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "source_identity_conflict" })]));
   expect(run.status).toBe("needs_user");
 });

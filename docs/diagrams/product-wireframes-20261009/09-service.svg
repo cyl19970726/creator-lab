@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760">
+<rect width="1280" height="760" fill="#fff"/>
+<style>text{font-family:Arial,"PingFang SC","Noto Sans CJK SC",sans-serif;fill:#232323} .muted{fill:#666}</style>
+<rect x="0" y="0" width="215" height="760" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="20" y="30" font-size="18" font-weight="600">SPACE / 内容创作</text>
+<text x="20" y="57" font-size="13" class="muted">目的：形成可交付内容</text>
+<text x="19" y="100" font-size="14">业务目标与问题</text>
+<text x="19" y="145" font-size="14">▾ 工作流 · CONTENT</text>
+<text x="32" y="181" font-size="14">版本总览</text>
+<text x="32" y="215" font-size="14">版本遗传图谱</text>
+<text x="32" y="253" font-size="14">▾ 当前查看 v2  [切换]</text>
+<text x="45" y="289" font-size="14">设计目标与改动</text>
+<text x="45" y="323" font-size="14">方法与产出图</text>
+<text x="45" y="357" font-size="14">案例与资产</text>
+<text x="45" y="391" font-size="14">评价与分析</text>
+<text x="45" y="425" font-size="14">调优与后续版本</text>
+<rect x="8" y="449" width="198" height="29" rx="0" fill="#ececec" stroke="none" stroke-width="1"/>
+<text x="32" y="469" font-size="14" font-weight="600">服务与复盘</text>
+<text x="19" y="513" font-size="14">全部业务案例</text>
+<text x="19" y="551" font-size="14">资产库</text>
+<line x1="16" y1="592" x2="199" y2="592" stroke="#e5e5e5" stroke-width="1"/>
+<text x="20" y="620" font-size="12" class="muted">查看 v2 ≠ 采用 v2</text>
+<text x="20" y="640" font-size="11" class="muted">最新发布 / 采用 / 可执行分列</text>
+<rect x="215" y="0" width="1065" height="72" rx="0" fill="none" stroke="#b6b6b6" stroke-width="1"/>
+<text x="239" y="31" font-size="21" font-weight="600">服务与复盘</text>
+<text x="239" y="57" font-size="13" class="muted">按采用范围和服务窗口观察业务；不自动改派既有委托</text>
+<text x="1258" y="56" font-size="11" class="muted" text-anchor="end">合成线框示意 · 非实测</text>
+<line x1="940" y1="72" x2="940" y2="760" stroke="#b6b6b6" stroke-width="1"/>
+<text x="239" y="105" font-size="17" font-weight="600">采用状态与真实服务覆盖</text>
+<text x="239" y="126" font-size="12" class="muted">业务范围、窗口、执行条件、评价覆盖和人工负担</text>
+<line x1="239" y1="139" x2="916" y2="139" stroke="#e5e5e5" stroke-width="1"/>
+<rect x="252" y="178" width="636" height="116" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="270" y="208" font-size="15" font-weight="600">① 采用范围：内容创作主方法 / 指定业务入口</text>
+<text x="270" y="237" font-size="13">服务窗口：最近 7 天（台北时间）   ·   证据截至：示意</text>
+<text x="270" y="265" font-size="13">当前采用指针与最新发布、可执行部署分别核对</text>
+<rect x="252" y="329" width="305" height="115" rx="0" fill="none" stroke="#b6b6b6" stroke-width="1"/>
+<text x="270" y="362" font-size="15" font-weight="600">② v1 · 既有采用记录</text>
+<text x="270" y="391" font-size="13">当前不可执行；历史仍可读</text>
+<rect x="583" y="329" width="305" height="115" rx="0" fill="none" stroke="#b6b6b6" stroke-width="1"/>
+<text x="601" y="362" font-size="15" font-weight="600">③ v2 · 候选可执行</text>
+<text x="601" y="391" font-size="13">尚未采用；不能静默接管</text>
+<rect x="252" y="480" width="636" height="125" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="270" y="510" font-size="15" font-weight="600">④ 待处理列表 / 业务覆盖</text>
+<text x="270" y="540" font-size="13">失败与无产物 · 未评价 · 人工介入 · 重复问题</text>
+<text x="270" y="567" font-size="13">点状态下钻准确 Case / run；显示纳入与排除数量</text>
+<text x="961" y="107" font-size="13" class="muted">选中对象 · 详情</text>
+<text x="961" y="140" font-size="19" font-weight="600">② 采用范围与阻塞</text>
+<text x="961" y="165" font-size="12" class="muted">主方法 slot / 指定业务范围</text>
+<line x1="960" y1="181" x2="1258" y2="181" stroke="#e5e5e5" stroke-width="1"/>
+<text x="961" y="211" font-size="14" font-weight="600">当前情况</text>
+<text x="961" y="235" font-size="13">v1 有既有采用记录，但部署不可执行。</text>
+<text x="961" y="275" font-size="14" font-weight="600">下一步决定</text>
+<text x="961" y="299" font-size="13">核对恢复条件、候选适用性与范围。</text>
+<text x="961" y="339" font-size="14" font-weight="600">派发边界</text>
+<text x="961" y="363" font-size="13">新委托显式等待或选择试跑；</text>
+<text x="961" y="384" font-size="13">既有委托不会自动改派到 v2。</text>
+</svg>

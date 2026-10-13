@@ -8,7 +8,7 @@
 | 分析 | 单帖内容还原、编导与画面分析；单博主作品研究 | [analysis](workbenches/analysis/README.md) |
 | 创作 | 内容迭代 → B3 制作的 workflow；文章应用 | [creation](workbenches/creation/README.md) |
 
-研究、分析、创作没有必经的先后顺序。保留各工作台已有流程、界面和完整 Skill 包；只共享 `vendor/agent-workflow`。本次不加入统一业务平台或强制跨台流程。
+研究、分析、创作没有必经的先后顺序，各自保留业务流程、界面和完整 Skill 包，共享 `vendor/agent-workflow`。三个工作台的代码接线与 PostgreSQL + 官方 OpenAI Agents SDK 迁移已完成，旧共享 Codex／SQLite 执行包与 SIWC runner alias 已移除。回归证据包括 root build、shared 600 项实际 PG 测试、analysis 613 项回归加 9 项定向 Reviewer 修复检查、research 33 项及实际历史导入和 UI 阅读、creation PG 回归与配置迁移。Creation launcher 已切换到新配置；main 与 first-design 配置及 metadata 均为 `ordinary-content-20261012`，未触发新模型运行或方法采用，原有 5 条 run 记录保持不变。新单帖 run `a33ae133-94a8-401d-b5f2-eebc1e572854` 已完成，历时 546.287 秒、36 次模型请求；报告和三 Lens 图片已在浏览器可读。候选状态为 `revised_unverified`：Reviewer 的一条相矛盾 minor finding 已正确驳回，因此不能称独立审阅通过。只读审计确认此前完整性缺口已修复，仍有少量精度备注；质量调优继续，不宣称整体质量成熟或全质量通过。旧 SQLite 数据只允许明确选择的只读历史导入，不用于新 run，也不作为 PostgreSQL 连接失败时的执行 fallback。旧 Codex trace 只能作为只读历史证据。
 
 ## 安装
 
@@ -31,7 +31,7 @@ pnpm creation          # 新创作工作台/API，4337
 pnpm creation:worker   # 独立终端：执行显式提交的创作任务
 ```
 
-各工作台的本地资料配置见各自 README。私有报告、运行数据库和媒体不随公开仓库分发。研究执行由独立 worker 处理；分析沿用内嵌 worker 配置，查看历史数据时使用其 README 的只读模式。
+各工作台的本地资料配置见各自 README。私有报告、运行数据库和媒体不随公开仓库分发。以上启动命令保留现有入口；三台代码迁移与指定回归、creation launcher 配置切换和单帖新一轮主执行验收均已完成。该单帖候选仍为 `revised_unverified`，Reviewer finding 被驳回且没有独立审阅通过结论，质量调优仍在继续。历史 SQLite 读取必须显式走只读导入，不会启动 SQLite 执行器或自动重放旧队列。
 
 ## 文档
 
@@ -48,9 +48,9 @@ pnpm docs:serve
 
 ## 技术栈
 
-- 研究：React / Vite、Fastify、独立 worker、SQLite。
-- 分析：React / Vite、Express、分析 worker、SQLite。
-- 创作：TypeScript；阶段 workflow 以命令行 + 生成的静态页面运行；文章应用为 React / Vite、Fastify、独立 worker、SQLite。
-- 公用：Node 24、pnpm workspace、一份固定版本的 agent-workflow。
+- 目标共享运行基线：PostgreSQL 执行账本与官方 `@openai/agents` SDK；SIWC 仅是当前受限 runner 的 ChatGPT 授权和 Responses transport。
+- 保留各工作台自己的 UI、业务流程和数据适配；代码迁移与指定回归已完成。单帖主执行和报告／三 Lens 浏览器阅读已完成，候选仍为 `revised_unverified`，业务质量调优继续。
+- 历史兼容：SQLite 仅显式只读导入；Codex trace 仅由 read-model 解码阅读。新 workflow 不使用 SQLite/Codex 执行 fallback。
+- 公用：Node 24、pnpm workspace、一份固定版本的 agent-workflow；技能快照由独立 `@signal-room/workflow-skill-snapshot` 包提供。
 
-本次沿用现有实现，不为合仓改写框架。每个工作台的 `.agents/skills/` 包含方法及脚本、Schema、参考资料等完整资源，无全局安装。
+本次保留各工作台现有 UI 与业务方法，执行和存储的统一代码迁移与指定回归已完成；单帖主执行验收通过并完成浏览器阅读，Reviewer 未通过独立审阅门，候选仍为 `revised_unverified`，质量调优继续。每个工作台的 `.agents/skills/` 包含方法及脚本、Schema、参考资料等完整资源，无全局安装；共享快照 helper 也只在项目内使用，不安装全局 skill。

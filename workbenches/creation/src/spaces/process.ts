@@ -1,6 +1,7 @@
 import type { ProcessContractDraft, NodeOccurrenceAnnotation, HistoricalProcessResolver, WorkflowSpaceService, NodeRelationWrite, AssetVersion } from '@signal-room/workflow-spaces';
 import type { StepRecord } from '@signal-room/workflow';
 import type { CreationSchemaRefs } from './contracts.js';
+import { resolveSourceReferences, sourceHandleIndex } from './source-handles.js';
 
 export const CONTENT_PROCESS_REVISION='content-process-2';
 export const CONTENT_PROCESS_RESOLVER_REVISION='content-observation-2';
@@ -87,28 +88,24 @@ const object=(value:unknown):Record<string,unknown>=>value&&typeof value==='obje
 const array=(value:unknown):unknown[]=>Array.isArray(value)?value:[];
 const text=(value:unknown):string=>typeof value==='string'?value:'';
 
-function citationRefs(nodeId:string,payload:unknown):Array<{ref:string;pointer:string}> {
-  const refs:Array<{ref:string;pointer:string}>=[];
-  if(nodeId==='researcher')array(object(payload).questions).forEach((item,index)=>array(object(item).materialRefs).forEach((ref,refIndex)=>refs.push({ref:text(ref),pointer:`/questions/${index}/materialRefs/${refIndex}`})));
-  if(nodeId==='author') {
-    array(object(object(payload).script).sourcesUsed).forEach((ref,index)=>refs.push({ref:text(ref),pointer:`/script/sourcesUsed/${index}`}));
-    array(object(object(payload).decision).beats).forEach((item,index)=>array(object(item).evidence).forEach((ref,refIndex)=>refs.push({ref:text(ref),pointer:`/decision/beats/${index}/evidence/${refIndex}`})));
-  }
-  return refs;
-}
-
 /** Required-by-content reference resolution runs before atomic publication; it never searches mutable assets. */
 export function contentCitationDeclarations(nodeId:string,payload:unknown,inputs:Record<string,AssetVersion>):NodeRelationWrite[] {
-  const outputSlot=nodeId==='researcher'?'research':'draft',notes=nodeId==='researcher'?object(payload).notes:object(inputs.research?.payload).notes;
-  return citationRefs(nodeId,payload).flatMap(({ref,pointer})=>{
-    const matches:Array<NodeRelationWrite['to']>=[];
-    array(inputs.materials?.payload).forEach((item,index)=>{if(text(object(item).id)===ref)matches.push({inputSlot:'materials',pointer:`/${index}`});});
-    array(notes).forEach((item,index)=>{if(text(object(item).id)===ref)matches.push(nodeId==='researcher'?{outputSlot:'research',pointer:`/notes/${index}`}:{inputSlot:'research',pointer:`/notes/${index}`});});
-    if(matches.length!==1) {
-      throw new Error(`CONTENT citation ${ref} is ${matches.length?'ambiguous':'unresolved'} in its exact frozen parent`);
-    }
-    return [{typeId:'cites',from:{outputSlot,pointer},to:matches[0]!,evidence:'exact content reference in frozen material or research parent'}];
-  });
+  if(nodeId!=='researcher'&&nodeId!=='author')return [];
+  const materials=inputs.materials;
+  if(!materials)throw new Error('CONTENT citation materials parent is missing');
+  const index=sourceHandleIndex(materials,nodeId==='author'?inputs.research:undefined,
+    nodeId==='researcher'?payload:undefined);
+  try {
+    return resolveSourceReferences(nodeId,payload,index).map(({reference,handle,pendingNotePointer})=>({
+      typeId:'cites',from:{outputSlot:nodeId==='researcher'?'research':'draft',pointer:reference.path},
+      to:pendingNotePointer?{outputSlot:'research',pointer:pendingNotePointer}:handle?.kind==='research-note'
+        ?{inputSlot:'research',pointer:handle.pointer}:{inputSlot:'materials',pointer:handle!.pointer},
+      evidence:'exact content reference in frozen material or research parent',
+    }));
+  } catch(error) {
+    const message=error instanceof Error?error.message:String(error);
+    throw new Error(message.replace('SOURCE_ID_MISSING','unresolved').replace('SOURCE_ID_AMBIGUOUS','ambiguous'));
+  }
 }
 
 /** Explains current recorded process observations without rebuilding archived contracts. */

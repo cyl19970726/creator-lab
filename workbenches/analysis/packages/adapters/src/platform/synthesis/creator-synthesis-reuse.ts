@@ -72,42 +72,41 @@ export function loadReuseBase(reusePath: string, request: CreatorSynthesisReques
 }
 
 /** Validate the reused compatibility fields against the current registered frozen inputs. */
-export function assertReuseBaseBindings(input: { base: ReuseBase; request: CreatorSynthesisRequest; readArtifact: (reference: string) => unknown }): void {
-  const portfolio = creatorPortfolioAnalysisSchema.parse(input.readArtifact(input.request.portfolioArtifactRef));
-  const corpus = creatorCorpusSchema.parse(input.readArtifact(portfolio.corpusArtifactRef));
-  const batch = videoReconstructionBatchSchema.parse(input.readArtifact(input.request.reconstructionBatchArtifactRef));
+export async function assertReuseBaseBindings(input: { base: ReuseBase; request: CreatorSynthesisRequest; readArtifact: (reference: string) => unknown | Promise<unknown> }): Promise<void> {
+  const portfolio = creatorPortfolioAnalysisSchema.parse(await input.readArtifact(input.request.portfolioArtifactRef));
+  const corpus = creatorCorpusSchema.parse(await input.readArtifact(portfolio.corpusArtifactRef));
+  const batch = videoReconstructionBatchSchema.parse(await input.readArtifact(input.request.reconstructionBatchArtifactRef));
   const candidate = input.base.candidate;
   if (!candidate.portfolioClassification) throw new Error("CREATOR_SYNTHESIS_REUSE_CLASSIFICATION_MISSING");
   try {
     validateAdaptivePortfolioClassification({ classification: candidate.portfolioClassification, corpus,
       corpusArtifactRef: portfolio.corpusArtifactRef, reconstructionBatch: batch });
-    assertValidCrossPostResearch({ selection: input.readArtifact(input.request.selectionArtifactRef), batch, synthesis: candidate });
+    assertValidCrossPostResearch({ selection: await input.readArtifact(input.request.selectionArtifactRef), batch, synthesis: candidate });
   } catch (error) {
     throw new Error(`CREATOR_SYNTHESIS_REUSE_BINDING_INVALID:${error instanceof Error ? error.message : "invalid"}`);
   }
 }
 
 /** Keep complete deep sources available to the new Builder; never replace them with a prior synthesis narrative. */
-export function buildReuseMaterialIndex(input: {
+export async function buildReuseMaterialIndex(input: {
   request: CreatorSynthesisRequest;
-  readArtifact: (reference: string) => unknown;
-}): Record<string, unknown> {
-  const batch = videoReconstructionBatchSchema.parse(input.readArtifact(input.request.reconstructionBatchArtifactRef));
+  readArtifact: (reference: string) => unknown | Promise<unknown>;
+}): Promise<Record<string, unknown>> {
+  const batch = videoReconstructionBatchSchema.parse(await input.readArtifact(input.request.reconstructionBatchArtifactRef));
   return {
     schemaVersion: "creator-synthesis-reuse-material-index@1",
     reconstructionBatchArtifactRef: input.request.reconstructionBatchArtifactRef,
-    deepMaterials: batch.items.filter((item) => item.reconstructionArtifactRef).map((item) => {
+    deepMaterials: await Promise.all(batch.items.filter((item) => item.reconstructionArtifactRef).map(async (item) => {
       const reconstructionArtifactRef = item.reconstructionArtifactRef!;
       const reconstructionPath = artifactPath(reconstructionArtifactRef);
-      const reconstruction = input.readArtifact(reconstructionArtifactRef) as { builderLenses?: unknown };
-      const evaluationBoundaries = [item.evaluationArtifactRef, item.gateReportArtifactRef,
-        item.threeLensEvaluationArtifactRef, item.threeLensGateReportArtifactRef].flatMap((reference) => {
-        if (!reference) return [];
-        const value = input.readArtifact(reference) as Record<string, unknown>;
+      const reconstruction = await input.readArtifact(reconstructionArtifactRef) as { builderLenses?: unknown };
+      const evaluationBoundaries = await Promise.all([item.evaluationArtifactRef, item.gateReportArtifactRef,
+        item.threeLensEvaluationArtifactRef, item.threeLensGateReportArtifactRef].filter((reference): reference is string => Boolean(reference)).map(async (reference) => {
+        const value = await input.readArtifact(reference) as Record<string, unknown>;
         const valuePath = artifactPath(reference);
-        return [{ artifactRef: reference, path: valuePath, sha256: sha256File(valuePath),
-          boundary: value.boundaries ?? value.boundary ?? value.gates ?? value.failedGateIds ?? null }];
-      });
+        return { artifactRef: reference, path: valuePath, sha256: sha256File(valuePath),
+          boundary: value.boundaries ?? value.boundary ?? value.gates ?? value.failedGateIds ?? null };
+      }));
       return {
         postExternalId: item.postExternalId,
         tier: item.tier,
@@ -120,7 +119,7 @@ export function buildReuseMaterialIndex(input: {
         builderLenses: reconstruction.builderLenses ?? null,
         evaluationBoundaries
       };
-    })
+    }))
   };
 }
 

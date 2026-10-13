@@ -3,6 +3,7 @@ import type { AssetVersion, BusinessPresentationAdapter, BusinessRunResolution, 
   WorkflowPresentationDraft, WorkflowSpaceService } from '@signal-room/workflow-spaces';
 import type { CreationSchemaRefs } from './contracts.js';
 import { creationPresentationReaderIds } from './readers.js';
+import { sourceHandleIndex } from './source-handles.js';
 
 const object = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -192,27 +193,19 @@ export function createContentBusinessAdapter(service: Pick<WorkflowSpaceService,
       if (context.spaceId !== data.space.id || context.runId !== asset.source.runId || context.nodeId !== (isResearch?'researcher':'author')) {
         throw new Error('CONTENT research source context is inconsistent');
       }
-      const candidates = new Map<string, ResolvedAssetSource[]>();
-      const add = (item: unknown, parent: string, pointer:string, note = false) => {
-        const value = object(item), id = text(value.id);
-        if (!id) return;
-        const source = { ref: id, label: text(value.title) || id,
-          excerpt: note ? array(value.keyPoints).map(text).filter(Boolean).join('\n') : text(value.text), assetVersionId: parent, pointer, resolved: true };
-        candidates.set(id, [...(candidates.get(id) ?? []), source]);
-      };
       const materials = context.inputs.materials;
-      if (materials) {
-        const bound = await service.readAsset(data.space.id, materials.assetVersionId);
-        if (bound.schema.namespace !== 'creation/content-materials' || bound.payloadHash !== materials.payloadHash) throw new Error('CONTENT frozen materials mismatch');
-        array(bound.payload).forEach((item,index) => add(item, bound.id,`/${index}`));
-      }
+      if (!materials) throw new Error('CONTENT frozen materials parent is missing');
+      const bound = await service.readAsset(data.space.id, materials.assetVersionId);
+      if (bound.schema.namespace !== 'creation/content-materials' || bound.payloadHash !== materials.payloadHash) throw new Error('CONTENT frozen materials mismatch');
       // Notes are part of this exact research version, including notes carried forward by the workflow.
       const noteParent=isResearch?asset:context.inputs.research?await service.readAsset(data.space.id,context.inputs.research.assetVersionId):undefined;
       if(noteParent&&!isResearch&&noteParent.payloadHash!==context.inputs.research!.payloadHash)throw new Error('CONTENT frozen research note parent mismatch');
-      if(noteParent)array(object(noteParent.payload).notes).forEach((item,index) => add(item, noteParent.id,`/notes/${index}`, true));
+      const index=sourceHandleIndex(bound,noteParent);
       return refs.map(ref => {
-        const matches = candidates.get(ref) ?? [];
-        return matches.length === 1 ? matches[0]! : { ref, label: `${ref} · 来源未解析${matches.length > 1 ? '（标识冲突）' : ''}`, resolved: false };
+        const matches=index.byRef.get(ref)??[];
+        return matches.length===1?{ref,label:matches[0]!.label,excerpt:matches[0]!.excerpt,
+          assetVersionId:matches[0]!.assetVersionId,pointer:matches[0]!.pointer,resolved:true}
+          :{ref,label:`${ref} · 来源未解析${matches.length>1?'（标识冲突）':''}`,resolved:false};
       });
     },
   };

@@ -12,10 +12,15 @@ type Service=Pick<WorkflowSpaceService,'readCase'|'readWorkflowVersion'|'readMan
 export interface ContentBusinessExecutionRelease {
   revision:1;spaceId:string;principalId:string;caseId:string;versionId:string;inputManifestId:string;inputManifestHash:string;
   models:{worker:StageModel;judge:StageModel};expiresAt:string;
-  exclusive:{confirmedAt:string;disabledPorts:number[]};maxRevisions:2;webResearch:false;
+  exclusive:{confirmedAt:string;disabledPorts:number[]};maxRevisions:number;webResearch:false;
 }
 export interface ContentBusinessCommandOptions {
   service:Service;workbench:Workbench;spaceId:string;principalId:string;
+  /** Explicit host method scope; ordinary CONTENT keeps its existing identity. */
+  workflowId?:string;
+  /** CONTENT revision budget; legacy business hosts retain two revisions. */
+  maxRevisions?:number;
+  extraConditions?:string[];
   models:{worker:StageModel;judge:StageModel};loadRelease:()=>Promise<ContentBusinessExecutionRelease|null>;
   verifyExclusive:(release:ContentBusinessExecutionRelease)=>Promise<boolean>;now?:()=>number;
 }
@@ -43,12 +48,12 @@ const canonical=(value:unknown):unknown=>Array.isArray(value)?value.map(canonica
 const sha=(value:unknown)=>createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 const caseIdFor=(spaceId:string,key:string)=>`content-business-${sha([spaceId,key]).slice(0,32)}`;
 const expectedScope=(input:{spaceId:string},options:ContentBusinessCommandOptions)=>{if(input.spaceId!==options.spaceId)fail(403,'FORBIDDEN','当前宿主不能操作这个 Space。');};
-function contentInputFor(caseId:string,descriptor:ContentBusinessRequest){
+function contentInputFor(caseId:string,descriptor:ContentBusinessRequest,maxRevisions:number){
   return {topicId:caseId,opportunity:descriptor.objective,account:{name:descriptor.accountName,positioning:descriptor.positioning,
     currentAudience:descriptor.currentAudience,referencePieces:[]},form:descriptor.form,
     materials:descriptor.materials.map(m=>({id:m.id,title:m.title,text:`来源：${m.source}\n${m.text}`})),
     standards:descriptor.standards,webResearch:false,readerGoal:descriptor.objective,requiredQuestions:descriptor.requiredQuestions,
-    maxRevisions:2,...(descriptor.maxSeconds?{maxSeconds:descriptor.maxSeconds}:{})};
+    maxRevisions,...(descriptor.maxSeconds?{maxSeconds:descriptor.maxSeconds}:{})};
 }
 const summary=(asset:AssetVersion&{state?:string},caseId:string|null,versionId:string|null):AssetSummaryDto&{payloadHash:string}=>({
   id:asset.id,title:(asset.payload&&typeof asset.payload==='object'&&'title' in asset.payload&&typeof asset.payload.title==='string'?asset.payload.title:asset.schema.namespace),
@@ -59,13 +64,16 @@ const summary=(asset:AssetVersion&{state?:string},caseId:string|null,versionId:s
 /** The authenticated host owns identity and dispatch. Browser values only describe the business request. */
 export function createContentBusinessCommands(options:ContentBusinessCommandOptions):Business {
   const now=options.now??Date.now;
+  const workflowId=options.workflowId??'creation.content';
+  const maxRevisions=options.maxRevisions??2;
+  if(!Number.isSafeInteger(maxRevisions)||maxRevisions<0||maxRevisions>5)throw new Error('Invalid business revision budget');
   const preparationNamespace='creation/content-business-preparation',noteNamespace='creation/content-handling-note';
   let previous:Promise<unknown>=Promise.resolve();
   const serialized=<T>(work:()=>Promise<T>):Promise<T>=>{const result=previous.then(work,work);previous=result.catch(()=>undefined);return result;};
 
   async function method(spaceId:string,versionId:string){
     const value=await options.service.readWorkflowVersion(spaceId,versionId);
-    if(value.spaceId!==spaceId||value.id!==versionId||value.entrypoints.content?.workflowId!=='creation.content')fail(409,'RELATION_MISMATCH','选择的方法不属于 CONTENT。');
+    if(value.spaceId!==spaceId||value.id!==versionId||value.entrypoints.content?.workflowId!==workflowId)fail(409,'RELATION_MISMATCH','选择的方法不属于当前内容方法范围。');
     return value;
   }
   async function available(spaceId:string,versionId:string){
@@ -84,7 +92,7 @@ export function createContentBusinessCommands(options:ContentBusinessCommandOpti
     if(!value)fail(403,'EXECUTION_DISABLED','运行前核验尚未完成或与当前条件不符。');
     if(value.revision!==1||value.spaceId!==spaceId||value.principalId!==options.principalId||value.caseId!==caseId||
       value.versionId!==versionId||value.inputManifestId!==manifest.id||value.inputManifestHash!==manifest.hash||
-      value.maxRevisions!==2||value.webResearch!==false||!Number.isFinite(Date.parse(value.expiresAt))||Date.parse(value.expiresAt)<=now()||
+      value.maxRevisions!==maxRevisions||value.webResearch!==false||!Number.isFinite(Date.parse(value.expiresAt))||Date.parse(value.expiresAt)<=now()||
       JSON.stringify(canonical(value.models))!==JSON.stringify(canonical(options.models)))fail(403,'EXECUTION_DISABLED','运行前核验尚未完成或与当前条件不符。');
     if(!value.exclusive||!Number.isFinite(Date.parse(value.exclusive.confirmedAt))||!(await options.verifyExclusive(value)))fail(403,'EXECUTION_DISABLED','执行宿主的独占条件尚未确认。');
     await available(spaceId,versionId);
@@ -128,7 +136,7 @@ export function createContentBusinessCommands(options:ContentBusinessCommandOpti
       asset.dependencies.length!==new Set(Object.values(binding.manifest.assets)).size||!asset.dependencies.every(id=>Object.values(binding.manifest.assets).includes(id)))
       fail(409,'RELATION_MISMATCH','业务准备记录与冻结内容不相符。');
     const [opportunity,materials]=await Promise.all([options.service.readAsset(spaceId,binding.manifest.assets.opportunity!),options.service.readAsset(spaceId,binding.manifest.assets.materials!)]);
-    const expected=contentInputFor(caseId,parsed.input),{materials:expectedMaterials,...expectedOpportunity}=expected;
+    const expected=contentInputFor(caseId,parsed.input,maxRevisions),{materials:expectedMaterials,...expectedOpportunity}=expected;
     if(opportunity.schema.namespace!=='creation/content-opportunity'||materials.schema.namespace!=='creation/content-materials'||
       JSON.stringify(canonical(opportunity.payload))!==JSON.stringify(canonical(expectedOpportunity))||
       JSON.stringify(canonical(materials.payload))!==JSON.stringify(canonical(expectedMaterials)))
@@ -140,19 +148,22 @@ export function createContentBusinessCommands(options:ContentBusinessCommandOpti
     const {parsed,binding}=record,{item,version,manifest}=binding;
     const inputs=await Promise.all([...new Set(Object.values(manifest.assets))].map(id=>options.service.readAsset(spaceId,id)));
     if(inputs.some(asset=>asset.spaceId!==spaceId||asset.source.kind!=='import'))fail(409,'RELATION_MISMATCH','冻结材料来源无效。');
-    const runs=await options.service.caseRunsPage(spaceId,caseId,'creation.content','content',undefined,101);
+    const runs=await options.service.caseRunsPage(spaceId,caseId,workflowId,'content',undefined,101);
     const matching=runs.filter(run=>run.workflowVersionId===version.id&&run.inputManifestId===manifest.id);
     const tasks=await options.service.executionTasks(spaceId);
+    const trialRunIds=new Set<string>();
     const runDtos:RunSummaryDto[]=await Promise.all(matching.slice(0,100).map(async run=>{
       const task=tasks.find(t=>t.runId===run.runId),assets=await options.service.runAssets(spaceId,run.runId);
       const result=await options.workbench.runStatus(spaceId,run.runId);
+      if(workflowId==='content.explanatory-method'&&result.run.metadata?.executionMode==='research-trial')trialRunIds.add(run.runId);
       return {id:run.runId,label:`${run.runId.slice(0,8)}`,versionId:run.workflowVersionId,caseId:run.caseId,entrypoint:run.entrypoint,
         state:result.run.state,taskState:task?.status??null,reason:task?.error??null,progress:null,startedAt:task?.createdAt??null,
         assetCount:assets.length,draftCount:assets.filter(a=>a.schema.namespace==='creation/content-draft').length,primaryAssetId:result.draftVersionId??null};
     }));
+    const caseMatching=matching.filter(run=>!trialRunIds.has(run.runId));
     let reason:string|null=null,start=false,dispatch=false;
-    try{await release(spaceId,caseId,version.id,manifest);active(tasks,matching[0]?.runId);
-      start=matching.length===0;dispatch=matching.length===1&&tasks.some(t=>t.runId===matching[0]!.runId&&t.status==='queued');
+    try{await release(spaceId,caseId,version.id,manifest);active(tasks,caseMatching[0]?.runId);
+      start=caseMatching.length===0;dispatch=caseMatching.length===1&&tasks.some(t=>t.runId===caseMatching[0]!.runId&&t.status==='queued');
       if(!start&&!dispatch)reason='此业务已有运行记录；不会自动重试。';
     }catch(error){reason=error instanceof Error?error.message:'运行条件尚未核验。';}
     const sourceLines=parsed.input.materials.map(m=>`${m.title}（${m.id}）\n来源：${m.source}\n${m.text}`);
@@ -161,7 +172,7 @@ export function createContentBusinessCommands(options:ContentBusinessCommandOpti
       sections:[{title:'业务要求',text:`${parsed.input.objective}\n必答问题：\n${parsed.input.requiredQuestions.map(q=>`- ${q}`).join('\n')}`},
         {title:'账号、受众与形式',text:`账号：${parsed.input.accountName}\n定位：${parsed.input.positioning}\n当前受众：${parsed.input.currentAudience}\n形式：${parsed.input.form}`},
         {title:'标准',text:parsed.input.standards},{title:'准确材料及来源',text:sourceLines.join('\n\n')},
-        {title:'冻结输入契约',text:`topicId：${caseId}\nreaderGoal：${parsed.input.objective}\nreferencePieces：[]\nmaxRevisions：2\nwebResearch：false\nmaxSeconds：${parsed.input.maxSeconds??'未设置'}`},
+        {title:'冻结输入契约',text:`topicId：${caseId}\nreaderGoal：${parsed.input.objective}\nreferencePieces：[]\nmaxRevisions：${maxRevisions}\nwebResearch：false\nmaxSeconds：${parsed.input.maxSeconds??'未设置'}`},
         {title:'冻结输入槽位',text:Object.entries(manifest.assets).map(([slot,id])=>`${slot}: ${id}`).join('\n')}],
       conditions:parsed.conditions,runs:runDtos,actions:{start,dispatch,reason}};
   }
@@ -175,7 +186,7 @@ export function createContentBusinessCommands(options:ContentBusinessCommandOpti
       {key:'currentAudience',label:'当前受众',kind:'multiline',required:true},{key:'form',label:'表达形式',kind:'text',required:true},
       {key:'standards',label:'内容标准',kind:'multiline',required:true},{key:'materials',label:'材料与来源',kind:'materials',required:true},
       {key:'maxSeconds',label:'可选时长上限（秒）',kind:'text',required:false,help:'留空则不设置固定时长。'},
-    ],conditions:[`作者/研究模型：${options.models.worker.model} · ${options.models.worker.reasoningEffort}`,`内部审阅模型：${options.models.judge.model} · ${options.models.judge.reasoningEffort}`,'最多修订 2 轮','联网研究：关闭','参考作品：空列表；不注入历史样例','观众学习目标沿用填写的业务目标','全部材料来源和正文会显示在预览中']};
+    ],conditions:[`作者/研究模型：${options.models.worker.model} · ${options.models.worker.reasoningEffort}`,`内部审阅模型：${options.models.judge.model} · ${options.models.judge.reasoningEffort}`,`最多修订 ${maxRevisions} 轮`,'联网研究：关闭','参考作品：空列表；不注入历史样例','观众学习目标沿用填写的业务目标','全部材料来源和正文会显示在预览中',...(options.extraConditions??[])]};
   };
   const prepare:Business['prepare']=input=>serialized(async()=>{
     expectedScope(input,options);if(!input.key?.trim())fail(400,'INVALID_REQUEST','准备 key 缺失。');
@@ -187,7 +198,7 @@ export function createContentBusinessCommands(options:ContentBusinessCommandOpti
     await available(input.spaceId,input.versionId);
     const caseId=caseIdFor(input.spaceId,input.key);
     await preparationWrite(()=>options.workbench.createCase(input.spaceId,{id:caseId,title:descriptor.title,objective:descriptor.objective,constraints:[]}));
-    const contentInput=contentInputFor(caseId,descriptor);
+    const contentInput=contentInputFor(caseId,descriptor,maxRevisions);
     const manifest=await preparationWrite(()=>options.workbench.freezeInput({spaceId:input.spaceId,caseId,input:contentInput,idempotencyKey:`business:${input.key}`}));
     if(manifest.caseId!==caseId||manifest.spaceId!==input.spaceId)fail(409,'RELATION_MISMATCH','冻结输入归属错误。');
     const definitions=await options.service.registerSchemas(input.spaceId,contentBusinessSchemaDefinitions());
@@ -203,15 +214,20 @@ export function createContentBusinessCommands(options:ContentBusinessCommandOpti
     expectedScope(input,options);const record=await savedPreparation(input.spaceId,input.caseId);
     if(!record||record.parsed.versionId!==input.versionId||record.parsed.inputManifestId!==input.inputManifestId)fail(409,'RELATION_MISMATCH','开始选择与冻结业务不符。');
     const {manifest}=await caseManifest(input.spaceId,input.caseId,input.versionId,input.inputManifestId);
-    const prior=await options.service.caseRunsPage(input.spaceId,input.caseId,'creation.content','content',undefined,101);
+    const prior=await options.service.caseRunsPage(input.spaceId,input.caseId,workflowId,'content',undefined,101);
+    let caseRuns=0;
     for(const run of prior){
       const status=await options.workbench.runStatus(input.spaceId,run.runId);
-      if(status.run.metadata?.commandKey===`content:${input.caseId}:${input.key}`){
+      if(workflowId==='content.explanatory-method'&&status.run.metadata?.executionMode==='research-trial')continue;
+      caseRuns++;
+      const commandKey=workflowId==='content.explanatory-method'
+        ?`content:${input.caseId}:case:${input.key}`:`content:${input.caseId}:${input.key}`;
+      if(status.run.metadata?.commandKey===commandKey){
         const {task}=await exactTask(input.spaceId,input.caseId,input.versionId,manifest,run.runId);
         return receipt(input.caseId,input.versionId,manifest,task);
       }
     }
-    if(prior.length)fail(409,'CONFLICT','此业务已有运行；不会自动增加第二次运行。');
+    if(caseRuns)fail(409,'CONFLICT','此业务已有运行；不会自动增加第二次运行。');
     await release(input.spaceId,input.caseId,input.versionId,manifest);
     active(await options.service.executionTasks(input.spaceId));
     const handle=await options.workbench.startFromManifest({spaceId:input.spaceId,caseId:input.caseId,workflowVersionId:input.versionId,

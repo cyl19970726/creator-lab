@@ -17,39 +17,77 @@ const out = path.join(root, 'docs/site');
 /** Reading order: [source, level, sidebar label]. Level 1 entries are indented under the entry above them. */
 const NAV = [
   { title: 'Creator Lab', pages: [['docs/README.md', 0, '导览'], ['docs/overview.md', 0, '三个工作台'], ['README.md', 0, '仓库使用说明'], ['docs/migration.md', 0, '迁移记录']] },
-  { title: 'agent-workflow', pages: [
-    ['vendor/agent-workflow/README.md', 0, '首页与核心思想'],
-    ['docs/product-understanding.md', 0, '产品认知与设计推导'],
-    ['vendor/agent-workflow/docs/product.md', 0, '产品定位与目标'],
-    ['vendor/agent-workflow/docs/designing-workflows.md', 0, '方法设计'],
-    ['vendor/agent-workflow/docs/evaluating-workflows.md', 1, '方法评估'],
-    ['vendor/agent-workflow/docs/optimizing-workflows.md', 1, '方法优化'],
-    ['vendor/agent-workflow/docs/tuning-loop.md', 1, '调优循环'],
-    ['vendor/agent-workflow/docs/workbench-presentation.md', 0, 'Space 产品与图中心交互'],
-    ['vendor/agent-workflow/docs/archify-viewer.md', 1, 'Archify 查看器使用'],
-    ['vendor/agent-workflow/docs/architecture.md', 0, '架构与职责'],
-    ['vendor/agent-workflow/docs/space-frontend-architecture.md', 1, 'Space 前端技术架构'],
-    ['vendor/agent-workflow/docs/space-frontend-implementation-plan.md', 1, 'Space 前端分批实施'],
-    ['vendor/agent-workflow/docs/harness-roadmap.md', 0, '唯一实现状态与下一步'],
-    ['vendor/agent-workflow/docs/workflow-spaces.md', 0, 'Workflow Space 存储合同'],
-    ['vendor/agent-workflow/docs/workflow-process-assets.md', 1, '流程、执行与资产关系'],
-    ['vendor/agent-workflow/docs/space-storage.md', 1, '已实现的 Space 存储与接入'],
-    ['vendor/agent-workflow/docs/postgres-sdk-plan.md', 1, '存储后端与 SDK 方案'],
-    ['vendor/agent-workflow/docs/postgres-storage.md', 1, '已实现的 PG 执行账本'],
-    ['vendor/agent-workflow/docs/getting-started.md', 0, '快速开始'],
-    ['vendor/agent-workflow/docs/writing-workflows.md', 0, '编写工作流与 API'],
-    ['vendor/agent-workflow/docs/codex-and-skills.md', 0, 'Codex 与 Skills'],
-    ['vendor/agent-workflow/docs/integration.md', 0, '宿主集成'],
-    ['vendor/agent-workflow/docs/frontend-integration.md', 0, '前端读模型'],
-    ['vendor/agent-workflow/docs/skill-package-verification.md', 0, 'Skill 包加载验证'],
-  ] },
-  { title: 'agent-workflow · 实施与复盘', pages: [
-    ['vendor/agent-workflow/docs/cognition-execution-loop.md', 0, '认知循环与产品复盘'],
-    ['vendor/agent-workflow/docs/workbench-implementation-2026-10-05.md', 1, '10-05 首轮页面交付'],
-    ['vendor/agent-workflow/docs/workbench-method-implementation-2026-10-05.md', 1, '10-05 方法图交付'],
-    ['vendor/agent-workflow/docs/workbench-execution-implementation-2026-10-06.md', 1, '10-06 执行管理交付'],
-    ['vendor/agent-workflow/docs/workbench-validation-implementation-2026-10-06.md', 1, '10-06 验证比较交付'],
-    ['vendor/agent-workflow/docs/workbench-validation-plan-2026-10-06.md', 1, '验证比较原计划'],
+  { title: 'Agent Workflow', pages: [['vendor/agent-workflow/docs/documentation.md', 0, '产品全貌与任务导览'], ['vendor/agent-workflow/README.md', 0, '仓库与运行说明']], folders: [
+    { title: "产品目标与原则", overview: ["vendor/agent-workflow/docs/product.md", "目标、原则与正式定义"], pages: [
+    ] },
+    { title: "产品架构", overview: ["vendor/agent-workflow/docs/product-architecture.md", "对象、责任与生命周期"], pages: [
+    ] },
+    { title: "前端与交互设计", overview: ["vendor/agent-workflow/docs/interaction-design.md", "交互设计导览"], pages: [
+      ["vendor/agent-workflow/docs/workbench-presentation.md", "正式交互合同"],
+      ["vendor/agent-workflow/docs/archify-viewer.md", "Archify 查看器使用"],
+      ["docs/product-design/README.md", "设计方案导览"],
+      ["docs/product-design/layout.md", "整体布局推导"],
+      ["docs/product-design/wireframes.md", "十二张页面线框"],
+      ["docs/product-design/decisions-and-states.md", "关键决定与状态"],
+      ["docs/product-design/walkthroughs.md", "场景走查"],
+    ] },
+    { title: "系统技术架构", overview: ["vendor/agent-workflow/docs/architecture.md", "总览：一次业务怎样穿过系统"], pages: [
+      ["vendor/agent-workflow/docs/workflow-spaces.md", "1. Space、schema 与节点合同"],
+      ["vendor/agent-workflow/docs/workflow-process-assets.md", "2. 方法、执行与资产关系"],
+      ["vendor/agent-workflow/docs/postgres-sdk-plan.md", "3. 执行 harness 与执行器"],
+      ["vendor/agent-workflow/docs/storage-architecture.md", "4. 存储与一致性"],
+      ["vendor/agent-workflow/docs/space-frontend-architecture.md", "5. 工作台与 API"],
+    ] },
+    { title: "工作流设计与调优", overview: ["vendor/agent-workflow/docs/workflow-practice.md", "从首版到持续服务"], pages: [
+      ["vendor/agent-workflow/docs/designing-workflows.md", "设计方法"],
+      ["vendor/agent-workflow/docs/evaluating-workflows.md", "评价与稳定窗口复盘"],
+      ["vendor/agent-workflow/docs/optimizing-workflows.md", "诊断、候选与采用"],
+      ["vendor/agent-workflow/docs/tuning-loop.md", "一轮调优操作"],
+    ] },
+    { title: "使用与开发接入", overview: ["vendor/agent-workflow/docs/usage-and-integration.md", "接入任务导览"], pages: [
+      ["vendor/agent-workflow/docs/getting-started.md", "快速开始"],
+      ["vendor/agent-workflow/docs/operator-cli.md", "最小只读 Operator CLI"],
+      ["vendor/agent-workflow/docs/writing-workflows.md", "编写工作流与 API"],
+      ["vendor/agent-workflow/docs/codex-and-skills.md", "Codex 与 Skills"],
+      ["vendor/agent-workflow/packages/agent-sdk/README.md", "官方 Agents SDK 执行器"],
+      ["vendor/agent-workflow/docs/space-storage.md", "Space 服务与运行接入"],
+      ["vendor/agent-workflow/docs/postgres-storage.md", "PG 执行账本"],
+      ["vendor/agent-workflow/docs/integration.md", "宿主集成"],
+      ["vendor/agent-workflow/docs/frontend-integration.md", "前端读模型"],
+    ] },
+    { title: "建设状态与路线", overview: ["vendor/agent-workflow/docs/harness-roadmap.md", "唯一实现状态与缺口"], pages: [
+      ["vendor/agent-workflow/docs/space-frontend-implementation-plan.md", "分批实施与验收安排"],
+    ] },
+    { title: "认知方法与设计依据", overview: ["docs/product-understanding.md", "推导、检验与修正"], pages: [
+      ["docs/product-understanding/goals-and-paradigm.md", "目标与范式的推导"],
+      ["docs/product-understanding/lifecycle-and-methods.md", "方法形成与生命周期论证"],
+      ["docs/product-understanding/responsibilities-and-objects.md", "场景、责任与对象论证"],
+      ["docs/product-understanding/decisions-and-evidence.md", "判断与证据"],
+      ["docs/product-understanding/learning-and-dogfood.md", "调优与 Dogfood 分流"],
+      ["docs/product-understanding/review-and-validation.md", "认知审阅与验证"],
+      ["docs/documentation-architecture.md", "文档架构依据与实施"],
+    ] },
+    { title: "历史与验证证据", overview: ["vendor/agent-workflow/docs/history-and-evidence.md", "历史与证据导览"], pages: [
+      ["vendor/agent-workflow/docs/harness-roadmap-history-2026-10-09.md", "10-09 建设路线历史快照"],
+      ["vendor/agent-workflow/docs/cognition-execution-loop.md", "认知实用审查"],
+      ["vendor/agent-workflow/docs/workbench-implementation-2026-10-05.md", "10-05 页面交付"],
+      ["vendor/agent-workflow/docs/workbench-method-implementation-2026-10-05.md", "10-05 方法图交付"],
+      ["vendor/agent-workflow/docs/workbench-process-implementation-2026-10-05.md", "10-05 过程资产交付"],
+      ["vendor/agent-workflow/docs/workbench-process-implementation-plan-2026-10-05.md", "过程资产原计划"],
+      ["vendor/agent-workflow/docs/workbench-execution-implementation-2026-10-06.md", "10-06 执行管理交付"],
+      ["vendor/agent-workflow/docs/workbench-validation-implementation-2026-10-06.md", "10-06 验证比较交付"],
+      ["vendor/agent-workflow/docs/workbench-validation-plan-2026-10-06.md", "验证比较原计划"],
+      ["vendor/agent-workflow/docs/archify-integration-plan.md", "Archify 接入记录"],
+      ["vendor/agent-workflow/docs/skill-package-verification.md", "Skill 包加载验证"],
+      ["docs/product-design/prototype-round.md", "历史原型与走查"],
+      ["vendor/agent-workflow/docs/architecture-history-2026-10-10.md", "架构整理前：系统总览"],
+      ["vendor/agent-workflow/docs/workflow-spaces-history-2026-10-10.md", "架构整理前：Space合同"],
+      ["vendor/agent-workflow/docs/workflow-process-assets-history-2026-10-10.md", "架构整理前：流程与资产"],
+      ["vendor/agent-workflow/docs/postgres-sdk-plan-history-2026-10-10.md", "架构整理前：执行与SDK"],
+      ["vendor/agent-workflow/docs/storage-architecture-history-2026-10-10.md", "架构整理前：存储"],
+      ["vendor/agent-workflow/docs/space-frontend-architecture-history-2026-10-10.md", "架构整理前：前端"],
+      ["vendor/agent-workflow/docs/space-storage-history-2026-10-10.md", "架构整理前：Space接入"],
+    ] },
   ] },
   { title: '创作工作台', pages: [
     ['workbenches/creation/docs/README.md', 0, '导览'],
@@ -82,7 +120,11 @@ const NAV = [
     ['workbenches/research/docs/architecture.md', 1, '架构'],
     ['workbenches/research/docs/development.md', 1, '开发'],
     ['workbenches/research/docs/storage.md', 1, '存储'],
-    ['workbenches/analysis/README.md', 0, '分析工作台'],
+    ['workbenches/analysis/README.md', 0, '分析工作台'], ['workbenches/analysis/docs/storage-execution-migration.md', 1, '存储与执行迁移'],
+    ['workbenches/analysis/docs/postgres-discovery-20261010.md', 1, 'PostgreSQL 接入调查'],
+    ['workbenches/analysis/docs/agent-sdk-discovery-20261010.md', 1, 'Agent SDK 接入调查'],
+    ['workbenches/analysis/docs/official-agents-sdk-migration.md', 1, '官方 SDK 迁移与验收'],
+    ['workbenches/analysis/docs/postgres-sdk-retirement-20261012.md', 1, 'PostgreSQL 与官方 SDK 验收'],
   ] },
 ];
 
@@ -113,7 +155,13 @@ md.core.ruler.push('heading_ids', state => {
   });
 });
 
-const pages = NAV.flatMap(group => group.pages.map(([source, level, label]) => ({ source, level, label, group: group.title })));
+const pages = NAV.flatMap(group => [
+  ...group.pages.map(([source, level, label]) => ({ source, level, label, group: group.title })),
+  ...(group.folders ?? []).flatMap(folder => [
+    { source: folder.overview[0], level: 0, label: folder.overview[1], group: group.title, folder: folder.title },
+    ...folder.pages.map(([source, label]) => ({ source, level: 1, label, group: group.title, folder: folder.title })),
+  ]),
+]);
 const pageBySource = new Map(pages.map(page => [page.source, page]));
 const problems = [];
 
@@ -124,6 +172,16 @@ for (const page of pages) {
   page.markdown = await readFile(file, 'utf8');
   const tokens = md.parse(page.markdown, {});
   page.ids = new Set(tokens.filter(t => t.type === 'heading_open').map(t => t.attrGet('id')));
+  // Explicit anchors keep existing deep links valid when a section is reorganized.
+  for (const token of tokens) {
+    const htmlTokens = [token, ...(token.children ?? [])];
+    for (const item of htmlTokens) {
+      if (item.type !== 'html_block' && item.type !== 'html_inline') continue;
+      for (const match of item.content.matchAll(/\bid\s*=\s*(?:"([^"]+)"|'([^']+)')/g)) {
+        page.ids.add(match[1] ?? match[2]);
+      }
+    }
+  }
   const h1 = tokens.findIndex(t => t.type === 'heading_open' && t.tag === 'h1');
   page.title = h1 >= 0 ? tokens[h1 + 1].content : path.basename(page.source, '.md');
 }
@@ -185,6 +243,8 @@ a{color:var(--accent)}
 .group{margin:0 0 18px}.group>p{margin:0 0 6px;font-size:12px;letter-spacing:.08em;color:var(--muted)}
 .group a{display:block;padding:4px 8px;border-radius:5px;color:var(--text);text-decoration:none}
 .group a.l1{padding-left:22px;color:var(--muted)}
+.group details{margin:2px 0}.group summary{padding:4px 8px;border-radius:5px;color:var(--text);cursor:pointer;list-style-position:inside}
+.group summary:hover{background:var(--active)}.group details a{padding-left:25px}.group details a.l1{padding-left:39px}
 .group a:hover{background:var(--active)}.group a.current{background:var(--active);color:var(--accent);font-weight:600}
 main{padding:40px 48px 60px;max-width:960px;width:100%}
 article h1{font-size:30px;line-height:1.3;margin:0 0 20px}
@@ -216,10 +276,16 @@ footer{margin-top:48px;padding-top:14px;border-top:1px solid var(--line);font-si
 
 function nav(current) {
   const fromDir = path.posix.dirname(outputOf(current.source));
-  return NAV.map(group => `<div class="group"><p>${escapeHtml(group.title)}</p>${group.pages.map(([source, level, label]) => {
+  const link = (source, label, level = 0) => {
     const page = pageBySource.get(source);
     const href = path.posix.relative(fromDir, outputOf(source)) || path.posix.basename(outputOf(source));
-    return `<a class="l${level}${source === current.source ? ' current' : ''}" href="${href}">${escapeHtml(label ?? page.title)}</a>`;
+    const isCurrent = source === current.source;
+    return `<a class="l${level}${isCurrent ? ' current' : ''}" href="${href}"${isCurrent ? ' aria-current="page"' : ''}>${escapeHtml(label ?? page.title)}</a>`;
+  };
+  return NAV.map(group => `<div class="group"><p>${escapeHtml(group.title)}</p>${group.pages.map(([source, level, label]) => link(source, label, level)).join('')}${(group.folders ?? []).map(folder => {
+    const folderSources = [folder.overview[0], ...folder.pages.map(([source]) => source)];
+    const open = folderSources.includes(current.source) ? ' open' : '';
+    return `<details${open}><summary>${escapeHtml(folder.title)}</summary>${link(...folder.overview)}${folder.pages.map(([source, label]) => link(source, label, 1)).join('')}</details>`;
   }).join('')}</div>`).join('');
 }
 

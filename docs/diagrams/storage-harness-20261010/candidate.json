@@ -1,0 +1,319 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "存储层与 Workflow：当前实现",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": ".archify/architecture-storage-harness-20261010-212400/storage-harness.html",
+    "repository": {
+      "url": "https://github.com/cyl19970726/creator-lab.git",
+      "revision": "b713d530af185eb20a2f5a6767373d8e6dbb898c",
+      "link_mode": "local-only"
+    }
+  },
+  "components": [
+    {
+      "id": "access",
+      "type": "frontend",
+      "label": "工作台 / CLI",
+      "sublabel": "读附件；CLI 受控上传",
+      "pos": [
+        40,
+        265
+      ],
+      "size": [
+        190,
+        72
+      ],
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/space-api/server.ts",
+          "line": 334,
+          "end_line": 385
+        }
+      ]
+    },
+    {
+      "id": "host",
+      "type": "security",
+      "label": "认证宿主 / HTTP API",
+      "sublabel": "Space 权限 · 写入开关",
+      "pos": [
+        340,
+        265
+      ],
+      "size": [
+        190,
+        72
+      ],
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/space-api/server.ts",
+          "line": 340,
+          "end_line": 365
+        }
+      ]
+    },
+    {
+      "id": "space",
+      "type": "backend",
+      "label": "Space 领域服务",
+      "sublabel": "合同 · 资产 · 准确版本",
+      "pos": [
+        650,
+        265
+      ],
+      "size": [
+        190,
+        72
+      ],
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/service.ts",
+          "line": 432,
+          "end_line": 513
+        }
+      ]
+    },
+    {
+      "id": "facts",
+      "type": "database",
+      "label": "PostgreSQL 领域事实",
+      "sublabel": "ws_* 版本 / 关系 / 会话",
+      "pos": [
+        970,
+        265
+      ],
+      "size": [
+        215,
+        72
+      ],
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/migration.ts",
+          "line": 64,
+          "end_line": 153
+        }
+      ]
+    },
+    {
+      "id": "runtime",
+      "type": "backend",
+      "label": "Workflow / 节点 harness",
+      "sublabel": "冻结输入 · NodeClient",
+      "pos": [
+        650,
+        40
+      ],
+      "size": [
+        190,
+        72
+      ],
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/runtime.ts",
+          "line": 113,
+          "end_line": 130
+        }
+      ]
+    },
+    {
+      "id": "ledger",
+      "type": "database",
+      "label": "PostgreSQL 执行账本",
+      "sublabel": "aw_* Run / attempt / event",
+      "pos": [
+        970,
+        40
+      ],
+      "size": [
+        215,
+        72
+      ],
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/postgres/postgres-run-store.ts",
+          "line": 31,
+          "end_line": 95
+        }
+      ]
+    },
+    {
+      "id": "router",
+      "type": "backend",
+      "label": "BlobStore 后端路由",
+      "sublabel": "按清单 key 读取真实字节",
+      "pos": [
+        650,
+        490
+      ],
+      "size": [
+        190,
+        72
+      ],
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/blob-store.ts",
+          "line": 98,
+          "end_line": 109
+        }
+      ]
+    },
+    {
+      "id": "r2",
+      "type": "cloud",
+      "label": "私有 R2 对象存储",
+      "sublabel": "新字节 · 内容寻址 · ≤16 MiB",
+      "pos": [
+        970,
+        490
+      ],
+      "size": [
+        215,
+        72
+      ],
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/blob-store.ts",
+          "line": 47,
+          "end_line": 97
+        }
+      ]
+    },
+    {
+      "id": "legacy",
+      "type": "database",
+      "label": "历史 PG 字节",
+      "sublabel": "ws_blob_bytes · 保留读取",
+      "pos": [
+        650,
+        715
+      ],
+      "size": [
+        190,
+        72
+      ],
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/blob-store.ts",
+          "line": 114,
+          "end_line": 146
+        }
+      ]
+    },
+    {
+      "id": "config",
+      "type": "security",
+      "label": "宿主私有配置",
+      "sublabel": "桶与凭据只由宿主加载",
+      "pos": [
+        340,
+        490
+      ],
+      "size": [
+        190,
+        72
+      ],
+      "sources": [
+        {
+          "path": "workbenches/creation/src/spaces/blob-configuration.ts",
+          "line": 6,
+          "end_line": 24
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "request",
+      "from": "access",
+      "to": "host",
+      "label": "同源 API",
+      "variant": "default"
+    },
+    {
+      "id": "authorize",
+      "from": "host",
+      "to": "space",
+      "label": "授权调用",
+      "variant": "security"
+    },
+    {
+      "id": "metadata",
+      "from": "space",
+      "to": "facts",
+      "label": "PG 事务",
+      "variant": "emphasis"
+    },
+    {
+      "id": "node-client",
+      "from": "runtime",
+      "to": "space",
+      "label": "限定读写",
+      "variant": "emphasis"
+    },
+    {
+      "id": "execution-ledger",
+      "from": "runtime",
+      "to": "ledger",
+      "label": "步骤与事件",
+      "variant": "default"
+    },
+    {
+      "id": "byte-io",
+      "from": "space",
+      "to": "router",
+      "label": "上传 / 读回",
+      "variant": "default"
+    },
+    {
+      "id": "new-object",
+      "from": "router",
+      "to": "r2",
+      "label": "S3 · 校验 SHA",
+      "variant": "emphasis"
+    },
+    {
+      "id": "historical",
+      "from": "router",
+      "to": "legacy",
+      "label": "旧 key",
+      "variant": "dashed"
+    },
+    {
+      "id": "configure",
+      "from": "config",
+      "to": "router",
+      "label": "注入后端",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "两类 PostgreSQL 表，同一事实环境",
+      "items": [
+        "ws_* 管业务身份、版本、依赖、会话与评价；aw_* 管执行事实。",
+        "Space 提交可把资产、输出绑定、步骤收据和事件放进同一 PG 事务。"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "对象存储只承载字节",
+      "items": [
+        "R2 PUT → GET 校验 → PG BlobManifest → 准确 AssetVersion 附件。",
+        "对象写入和 PG 不是跨系统事务；相同内容键重试对账，孤儿清理尚未实现。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "范围与证据",
+      "items": [
+        "真实 R2 / 隔离 PG / CLI 上传导入及重开下载通过；工作台独立实用验收另列。",
+        "单对象 ≤16 MiB；大媒体、自动清理、备份恢复及生产多租户仍待建设。",
+        "图源为本轮工作树的隔离源码快照，revision 不表示主仓库已提交。"
+      ]
+    }
+  ]
+}

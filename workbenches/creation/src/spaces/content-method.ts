@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { type AgentRunner } from '@signal-room/workflow';
 import { SchemaRegistry, publishStorageContract } from '@signal-room/workflow-space-contracts';
 import { publishProcessContract, type WorkflowVersion, type WorkflowVersionDraft, type WorkflowSpaceService } from '@signal-room/workflow-spaces';
-import { CONTENT_REVISION, CONTENT_ROLES, contentInputSchema, createContentWorkflow, type ContentInput } from '../stages/content.js';
+import { CONTENT_REVISION, CONTENT_ROLES, contentInputSchema, createContentWorkflow, type ContentInput, type ContentRoleSpecs,
+  type ContentWorkflowOptions } from '../stages/content.js';
 import { stageAgent, type StageModel } from '../stages/runtime.js';
 import { creationStorageContracts, registerCreationSchemas, type CreationSchemaRefs } from './contracts.js';
 import { buildContentProcess } from './process.js';
@@ -51,6 +52,12 @@ export interface ContentDeploymentProfile {
   runner: AgentRunner;
   /** Complete author instruction; omitted preserves the original role. */
   authorPrompt?: string;
+  /** Complete five-role replacement. Each role may explicitly set preamble to ''. */
+  roles?: ContentRoleSpecs;
+  /** Optional exact per-role model selection. Omission preserves the original worker/judge split. */
+  roleModels?: Record<keyof ContentRoleSpecs, StageModel>;
+  /** Explicit behavior switches for a captured successor workflow; omission preserves legacy behavior. */
+  workflowOptions?: ContentWorkflowOptions;
   executorManifest?: ReturnType<typeof contentSiwcExecutorManifest>;
 }
 
@@ -58,6 +65,9 @@ export interface ContentDeploymentProfile {
 export interface ContentDeployment {
   readonly runner: AgentRunner;
   readonly models: Readonly<{ worker: StageModel; judge: StageModel }>;
+  readonly roleModels: Readonly<Record<keyof ContentRoleSpecs, StageModel>>;
+  readonly roles: Readonly<ContentRoleSpecs>;
+  readonly workflowOptions: Readonly<ContentWorkflowOptions>;
   verify(): void;
   candidate(): { version: WorkflowVersionDraft; entrypoint: 'content'; refs: CreationSchemaRefs;
     presentation: ReturnType<typeof buildContentPresentation> };
@@ -71,8 +81,15 @@ export interface ContentDeployment {
 export function createContentDeployment(profile: ContentDeploymentProfile): ContentDeployment {
   if (profile.authorPrompt !== undefined && !profile.authorPrompt.trim())
     throw new Error('CONTENT author prompt must be nonempty');
-  const roles = structuredClone(CONTENT_ROLES);
+  if (profile.authorPrompt !== undefined && profile.roles)
+    throw new Error('CONTENT authorPrompt and complete roles cannot be combined');
+  const roles: ContentRoleSpecs = structuredClone(profile.roles ?? CONTENT_ROLES);
   if (profile.authorPrompt !== undefined) roles.author.prompt = profile.authorPrompt;
+  for (const name of Object.keys(CONTENT_ROLES) as Array<keyof ContentRoleSpecs>) {
+    const role = roles[name];
+    if (!role || !role.prompt?.trim() || !role.id?.trim() || !role.guards?.trim() || !role.outputSchema)
+      throw new Error(`CONTENT ${name} role declaration is incomplete`);
+  }
   // These exact captured roles supply both declaration and execution. No caller owns them.
   const freeze = (value: object): void => {
     Object.values(value).forEach(item => { if (item && typeof item === 'object') freeze(item); });
@@ -81,6 +98,18 @@ export function createContentDeployment(profile: ContentDeploymentProfile): Cont
   freeze(roles);
   const models = structuredClone(profile.models);
   Object.freeze(models.worker); Object.freeze(models.judge); Object.freeze(models);
+  const roleModels: Record<keyof ContentRoleSpecs, StageModel> = structuredClone(profile.roleModels ?? {
+    researcher: models.worker, author: models.judge, reader: models.worker,
+    checker: models.worker, editor: models.judge,
+  });
+  for (const name of Object.keys(CONTENT_ROLES) as Array<keyof ContentRoleSpecs>) {
+    const model = roleModels[name];
+    if (!model?.model?.trim() || !['low', 'medium', 'high'].includes(model.reasoningEffort))
+      throw new Error(`CONTENT ${name} model declaration is incomplete`);
+  }
+  freeze(roleModels);
+  const workflowOptions = structuredClone(profile.workflowOptions ?? {});
+  freeze(workflowOptions);
   const executorManifest = profile.executorManifest ? structuredClone(profile.executorManifest) : undefined;
   if (executorManifest) { Object.freeze(executorManifest.tools); Object.freeze(executorManifest); }
   const runner = profile.runner;
@@ -95,8 +124,6 @@ export function createContentDeployment(profile: ContentDeploymentProfile): Cont
   function candidate() {
     verify();
     const refs = registerCreationSchemas(new SchemaRegistry());
-    const roleModels = { researcher: models.worker, author: models.judge, reader: models.worker,
-      checker: models.worker, editor: models.judge };
     const roleNodeIds: Record<string, string> = { reader: 'coldReader', checker: 'factChecker' };
     const roleNodes = Object.fromEntries(Object.entries(roles).map(([name, role]) => {
       const model = roleModels[name as keyof typeof roleModels];
@@ -109,6 +136,7 @@ export function createContentDeployment(profile: ContentDeploymentProfile): Cont
           ? { executor: { family: 'agent-sdk' as const, adapter: 'SIWC Responses' } } : {}),
         configuration: { stageDeclaration: { reasoningEffort: agent.reasoningEffort,
           permissionsRevision: agent.permissionsRevision, outputSchema: agent.config?.outputSchema,
+          ...(agent.config?.instructionsFormat ? { instructionsFormat: agent.config.instructionsFormat } : {}),
           threadOptions: agent.config?.threadOptions, timeoutMs: agent.config?.timeoutMs },
           ...(executorManifest ? { executor: executorManifest } : {}),
           ...(live ? { webSearchMode: 'run-input-dependent', whenWebResearchTrue: {
@@ -124,8 +152,9 @@ export function createContentDeployment(profile: ContentDeploymentProfile): Cont
         executor: { family: 'program' as const } },
     });
     const config = { adapterRevision: 'content-space-process-v3', codeRevision: CONTENT_REVISION,
-      models: structuredClone(models), methodSnapshot: structuredClone(loadedSnapshot),
-      runtimeDependencies: structuredClone(loadedDependencies), nodeDefinitions: structuredClone(roleNodes) };
+      models: structuredClone(models), roleModels: structuredClone(roleModels), methodSnapshot: structuredClone(loadedSnapshot),
+      runtimeDependencies: structuredClone(loadedDependencies), workflowOptions: structuredClone(workflowOptions),
+      nodeDefinitions: structuredClone(roleNodes) };
     const versionId = `creation-content-${sha(config).slice(0, 32)}`;
     const [storageContract] = creationStorageContracts(refs, versionId);
     const version: WorkflowVersionDraft = { id: versionId, revision: CONTENT_REVISION, changeReason: '', config,
@@ -143,10 +172,10 @@ export function createContentDeployment(profile: ContentDeploymentProfile): Cont
     return { ...entry, storageContract, process };
   }
 
-  return Object.freeze({ runner, models, verify, candidate, frozenDefinition,
+  return Object.freeze({ runner, models, roleModels, roles, workflowOptions, verify, candidate, frozenDefinition,
     parseInput: (value: unknown) => contentInputSchema.parse(value),
     createRuntime: (service: WorkflowSpaceService, spaceId: string,
       binding: { workflowVersionId: string; entrypoint: string; inputManifestId: string }) =>
       createCreationSpaceRuntime(service, spaceId, binding, runner, candidate().refs),
-    workflow: (input: ContentInput) => createContentWorkflow(models, roles) });
+    workflow: (input: ContentInput) => createContentWorkflow(models, roles, workflowOptions) });
 }

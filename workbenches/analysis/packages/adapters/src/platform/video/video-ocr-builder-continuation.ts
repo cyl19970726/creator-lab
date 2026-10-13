@@ -43,7 +43,8 @@ probe.json, capture-protocol.json, reconstruction.json, and only the cited frame
 Repair only report conclusions, unknowns, evidence bindings, and content blocks materially affected by the newly available OCR.
 Do not assume a predefined answer and do not rewrite unaffected analysis. Modify only reconstruction.json and, only when needed,
 the matching OCR/UI carrier rationale in probe.json. Do not modify post-source-input.json, media-preparation.json, evidence/,
-capture-protocol.json, targeted-evidence/, frames, OCR artifacts, article.md, or evaluator artifacts. Do not rerun OCR or capture.
+capture-protocol.json, ocr-input-manifest.json (when present), targeted-evidence/, frames, OCR artifacts, article.md,
+or evaluator artifacts. Do not rerun OCR or capture.
 Preserve source boundaries and mark any still-unreadable text unknown. Run the canonical schema validator once before finishing.
 Do not create article.md or any independent evaluation/report artifact. Your only allowed writes are reconstruction.json and,
 when newly recovered OCR changes its OCR/UI carrier rationale, those specific fields in probe.json.

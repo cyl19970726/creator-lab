@@ -11,6 +11,6 @@
 
 创作者在工作台阅读主作品、评价和比较，决定采用哪个确切版本。通用四问、Agent A 委托、比较与运行记录的产品合同属于共享 [agent-workflow](../../../vendor/agent-workflow/docs/product.md)；创作只定义内容与成品的阅读视图、业务判断标准及从内容到制作的交接。评价本身不等于采用，内容采用不自动启动 B3，制作采用不自动发布。
 
-当前可用入口见[本地原型使用与运行](03-architecture/business-workbench.md)。CLI 的 `stage:workbench` 展示作品及各阶段历史，`stage:render` 展示一轮稿件和审阅，`stage:trace` 用于查看可见执行证据；页面刷新不调用模型。旧 B1/B2 运行继续可读，其历史通过不自动成为新内容流程的通过。
+当前入口见[运行与历史数据边界](03-architecture/business-workbench.md)：CONTENT 通过 PostgreSQL Space 工作台和业务命令运行；真实 B3 通过 PG ledger 与官方 Agents SDK 运行完整制作 workflow。页面刷新不调用模型。旧 B1/B2 和 SQLite/Codex run 只作为历史证据保留，其历史通过不自动成为当前内容流程的通过。
 
-正式配音、发布和发布后反馈是独立工作；当前不自动执行。研究、分析及[文章应用](03-architecture/article-app.md)保持各自入口。模型产出的业务质量与自动审阅校准仍须用真实案例验证。
+发布和发布后反馈是独立工作；当前不自动执行。研究和分析保持各自独立的可选入口。旧文章应用原型已退役，相关历史合同保留供研究。模型产出的业务质量与自动审阅校准仍须用真实案例验证。

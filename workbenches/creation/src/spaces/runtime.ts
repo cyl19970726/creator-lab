@@ -4,7 +4,7 @@ import { createSpaceRuntime, type SpaceRuntimeService, type SpaceRuntimeResolver
 import type { AssetVersion, InputManifest } from '@signal-room/workflow-spaces';
 import type { CreationSchemaRefs } from './contracts.js';
 import { briefAfterContent, type PieceBrief } from '../stages/brief.js';
-import type { ContentInput, ContentDraft, ContentResearch, ContentReview } from '../stages/content.js';
+import { textOnlyColdReaderView, type ContentInput, type ContentDraft, type ContentResearch, type ContentReview } from '../stages/content.js';
 import { dependency } from '../stages/runtime.js';
 import { contentOccurrence,contentCitationDeclarations } from './process.js';
 import type { NodeOccurrenceAnnotation,NodeRelationWrite,ProcessDecisionBinding } from '@signal-room/workflow-spaces';
@@ -189,9 +189,14 @@ export async function resolveCreationAgent(request: AgentRunRequest<unknown>, ap
       break;
     }
     case 'content-cold-reader': {
+      const professional=request.definition.config?.instructionsFormat==='precompiled-schema-v1';
+      const opportunity=professional?await api.readAsset(must(manifest.assets.opportunity,'Frozen opportunity is missing')):undefined;
+      const profile=object(object(opportunity?.payload).account).currentAudience;
       const draft = artifacts.filter(({ artifact }) => artifact.type === 'content-draft').filter(pair => phaseOf(pair, steps) === `content-draft-${contentRound}`).filter(({ version }) => {
         const script = object(object(version.payload).script);
-        return script.title === input.title && script.coverText === input.coverText && same(script.segments, input.segments);
+        return professional
+          ? typeof profile==='string'&&same(input,textOnlyColdReaderView(withoutMarkdown(version.payload) as ContentDraft,profile))
+          : script.title === input.title && script.coverText === input.coverText && same(script.segments, input.segments);
       });
       if (draft.length !== 1) throw new Error(`Expected one exact cold-reader draft; found ${draft.length}`);
       inputs.manuscript = draft[0]!.version.id;
@@ -293,7 +298,10 @@ export async function resolveCreationPublication(artifact: ArtifactDraft, api: S
       step.configFingerprint !== workflowFingerprint(item.effectiveConfig)) return undefined;
     const attempts = await attemptsForStep(step.id);
     if (!attempts.some(attempt => attempt.id === item.attemptId && attempt.state === 'succeeded')) return undefined;
-    const directAgentOutput = artifact.type === 'content-draft' ? withoutMarkdown(artifact.payload)
+    const directAgentOutput = artifact.type === 'content-research' &&
+      object(item.effectiveConfig.config).instructionsFormat === 'precompiled-schema-v1'
+      ? artifact.payload
+      : artifact.type === 'content-draft' ? withoutMarkdown(artifact.payload)
       : artifact.type === 'content-review' ? (() => {
         const { guardFailures: _guardFailures, ...raw } = object(artifact.payload);
         return raw;

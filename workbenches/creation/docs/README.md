@@ -2,11 +2,11 @@
 
 创作负责把一次内容机会变成可验收的作品：**形成完整内容 → 制作成品 → 交付与反馈**。研究与分析是可选的材料来源，三个工作台没有强制先后顺序。
 
-当前 CONTENT 使用共享 Workflow Space。先从[共享工作台产品与交互](../../../vendor/agent-workflow/docs/workbench-presentation.md)理解版本、Case、运行和资产，再读本目录的创作流程与标准。图中心的统一前端正在规划／整改，现有局部页面可读不表示整体产品已完成；状态统一见[共享建设状态](../../../vendor/agent-workflow/docs/harness-roadmap.md)。本页后面的旧阶段 CLI 与当前 Space 入口分别说明，不能混为同一工作台。
+当前 CONTENT 和真实 B3 制作均使用共享 PostgreSQL workflow ledger 与官方 OpenAI Agents SDK；CONTENT 由 Space 入口运行，B3 保留业务 stage workflow 和专用 `b3` CLI。B3 的确定性配音、装配、核验和真实渲染是业务实现，不由演示 fixture 替代。先从[共享工作台产品与交互](../../../vendor/agent-workflow/docs/workbench-presentation.md)理解版本、Case、运行和资产，再读本目录的创作流程与标准。建设状态见[共享建设状态](../../../vendor/agent-workflow/docs/harness-roadmap.md)。
 
 2026-10-03，用户授权将原 B1 选题研究与 B2 写作合为一个 `content` workflow。MiMo 实跑说明，环节代理逐一接受也可能留下普通读者无法理解的稿件；工程跑通不能证明内容质量。现在研究、定位、完整稿和返工在同一轮内往返，创作者只在完整内容形成后验收一次，再由版本化作品档案交给 B3。旧 B1/B2 资产及当时判断保留为历史。进一步撤销人工验收须用创作者认可和不认可的正反例校准审阅者。
 
-工作流执行、版本迭代、四问评价、Agent A、资产与版本、PostgreSQL 主存储 harness、通用 Agent SDK／工具／上下文控制、trace／session 和通用工作台属于共享 [agent-workflow 产品](../../../vendor/agent-workflow/docs/product.md)与[架构](../../../vendor/agent-workflow/docs/architecture.md)。创作提供业务流程、角色、工具、标准和作品展示扩展。共享库已加入 schema 注册、PG Space 领域存储、受限节点客户端、运行桥接、只读控制台和 SIWC Responses 适配器；具体能力及限制见[存储接入说明](../../../vendor/agent-workflow/docs/space-storage.md)。原 `apps/workbench` 仍是 SQLite、文件和 Codex 的本地原型，未自动迁移；一般 Agents SDK、生产部署和完整媒体链仍按[共享路线图](../../../vendor/agent-workflow/docs/harness-roadmap.md)推进。
+工作流执行、版本迭代、四问评价、Agent A、资产与版本、PostgreSQL 主存储、通用 Agent SDK／工具／上下文控制、trace／session 和通用工作台属于共享 [agent-workflow 产品](../../../vendor/agent-workflow/docs/product.md)与[架构](../../../vendor/agent-workflow/docs/architecture.md)。创作提供业务流程、角色、工具、标准和作品展示扩展。历史 Codex/SQLite runtime 已退役；其数据库、reports、media 和 traces 作为历史数据保留，不自动修改或导入。旧 SQLite 只允许由明确的只读历史归档工具检查。
 
 | 文档 | 读什么 |
 | --- | --- |
@@ -14,29 +14,25 @@
 | [产品](02-product.md) | 创作者提交、验收与阅读的内容 |
 | [架构](03-architecture/README.md) | 创作扩展与当前本地原型的关系；[作品档案](03-architecture/brief-and-handoff.md) |
 | [接入共享底座](03-architecture/runtime-options-report.md) | 职责边界和接入导航 |
-| [本地原型使用与运行](03-architecture/business-workbench.md) | 当前入口、部署示例、备份恢复及验证边界 |
+| [运行与历史数据边界](03-architecture/business-workbench.md) | 当前 PG/SDK 入口、B3 执行方式和历史数据说明 |
 | [工作流](04-workflows/README.md) | [内容迭代](04-workflows/content.md)与[B3 制作](04-workflows/b3.md) |
 | [调优手册](05-tuning.md) | 命令、测试与真实运行记录 |
 | [决策与历史](06-decisions.md) | 当前决定及旧 [B1](04-workflows/b1.md)、[B2](04-workflows/b2.md) |
 | [接入计划](workbench-implementation-plan.md) | 本地原型已有功能与共享底座目标缺口 |
 
-## 旧阶段 CLI（B3 与历史入口）
+## B3 真实制作 CLI
 
 在 `workbenches/creation` 下使用 Node 24：
 
 ```bash
-pnpm stage content <input.json>
-pnpm stage:render <topic> [runId]
-pnpm stage:workbench <topic>
-pnpm stage:trace <topic> [runId]
-pnpm stage:accept <topic> <runId> --verdict accept --reviewer <名字>
+pnpm --filter @creator-lab/creation b3 <input.json>
 ```
 
-只有接受完整内容后才生成给 B3 的作品档案。`revise` 记录修改意见；修订输入保留原目的并加入具体反馈。CLI 状态位于 Git 忽略的 `.local/stages/<topic>/`。命令说明与证据见[调优手册](05-tuning.md)；新原型的独立入口见[运行说明](03-architecture/business-workbench.md)。
+输入需包含已接受的版本化作品档案和工程目录。真实 B3 会执行配音、画面规格设计、装配、技术检查、快照、成片检查和视频渲染；PG 账本使用 `WORKFLOW_DATABASE_URL`，run 私有产物写入 `.local/creation/runs/<runId>` 或 `CREATION_STATE_ROOT` 指定目录。历史阶段文件 CLI 和 Codex runner 已删除，旧运行资料保留用于阅读与校准。
 
 ## PostgreSQL Space 接入
 
-`src/spaces/contracts.ts` 从现有 CONTENT／B3 定义登记业务 schema 与节点合同；`src/spaces/runtime.ts` 将现有阶段运行接入共享 harness；`src/spaces/readers.ts` 为稿件、作品档案、研究和制作方案提供按 schema 版本选择的阅读方式。通用持久化与控制台来自 vendor，没有复制引擎。
+`src/spaces/contracts.ts` 登记 CONTENT／B3 业务 schema 与节点合同；`src/spaces/runtime.ts` 将 Space 节点接入共享 harness；`src/spaces/readers.ts` 为稿件、作品档案、研究和制作方案提供按 schema 版本选择的阅读方式。真实 B3 的 stage CLI 也直接使用同一 PG workflow ledger 和共享 Agents SDK runner。
 
 先在根目录运行 `pnpm build:workflow`，为专用数据库设置 `WORKFLOW_DATABASE_URL`，再运行：
 
@@ -45,11 +41,11 @@ pnpm --filter @creator-lab/creation space:demo
 pnpm --filter @creator-lab/creation space:console
 ```
 
-demo 会在指定数据库持久化合成案例：现有 CONTENT 流程、模拟人工接受、作品档案、独立 B3 程序样例、反馈后的第二版以及四问比较。Agent 回答和人工选择都是明确标注的测试数据；B3 只保存可读方案和实际附件字节，没有执行制作构建、配音或成片渲染。脚本不会调用模型，也不表示创作者认可内容质量。
+demo 会在指定数据库持久化合成案例：CONTENT 流程、模拟人工接受、作品档案、独立 B3 方案样例、反馈后的第二版以及四问比较。Agent 回答和人工选择都是明确标注的测试数据；demo 不调用模型，也不执行 B3 媒体制作。要制作真实视频，使用上面的 B3 CLI；fixture 不替代该 workflow。
 
-控制台默认只读监听 `http://127.0.0.1:4318/`；`WORKFLOW_SPACE_CONSOLE_PORT` 可更改端口，`WORKFLOW_SPACE_PRINCIPAL` 选择本地认证主体（默认 `local-owner`）。这只是可信单用户宿主入口，不是面向公网的身份认证。历史原型与 SQLite 数据不自动迁移。
+控制台默认只读监听 `http://127.0.0.1:4318/`；`WORKFLOW_SPACE_CONSOLE_PORT` 可更改端口，`WORKFLOW_SPACE_PRINCIPAL` 选择本地认证主体（默认 `local-owner`）。这只是可信单用户宿主入口，不是面向公网的身份认证。旧 SQLite 业务记录不会自动导入 PostgreSQL。
 
-真实 ChatGPT 订阅接入和独立评审已有共享 SIWC Responses 合成材料探针记录，操作及权限限制见[共享存储接入说明](../../../vendor/agent-workflow/docs/space-storage.md)。SIWC Responses 是专用适配器，不是目标中的一般 Agents SDK。2026-10-05 已用 MiMo 冻结材料完成真实 CONTENT 运行和 PG 读回：三版稿件后仍未收敛，等待业务评价，不能宣称内容质量或完整 B3 制作已经验收。失败恢复及检查结果见[本轮验收记录](workbench-implementation-plan.md#2026-10-05-当前交付先完成单条-content)。
+历史真实模型探针和 CONTENT 运行记录仍适用于各自发生时的条件；2026-10-05 的 MiMo 冻结材料运行三版后仍未收敛，不能宣称内容质量通过。当前执行器、权限和 PostgreSQL 接入见[运行说明](03-architecture/business-workbench.md)；故障恢复与历史检查结果见[迁移前实施记录](workbench-implementation-plan.md#2026-10-05-当前交付先完成单条-content)。
 
 ## 当前 CONTENT 调优操作
 
@@ -106,4 +102,4 @@ pnpm --filter @creator-lab/creation content:space experiment --version VERSION_I
 Markdown 是文档源。在仓库根目录运行 `pnpm docs:build` 会生成 Git 忽略的 `docs/site/` 并校验内部链接；`pnpm docs:serve` 后可打开 `http://127.0.0.1:4340/docs/site/index.html`。修改业务流程时记录版本、依据和实跑结果；历史结论须标明适用时间。
 
 
-2026-10-06 接入了共享 [Archify 交互工作流查看器](../../../vendor/agent-workflow/docs/archify-viewer.md)：完整图支持搜索、聚焦和节点详情联动；已发布版本可选择准确 run 阅读实例状态。类型颜色和运行状态分开显示，SIWC Responses 明确标注适配器，历史未知配置不猜。此次本机体验入口为 `http://127.0.0.1:4394/workbench/workflows/preview`；常规工作台重启后仍使用其配置的端口。
+历史记录：2026-10-06 接入共享 [Archify 交互工作流查看器](../../../vendor/agent-workflow/docs/archify-viewer.md)，并记录了当时可用入口。当前方法预览与运行入口以本机正在运行的 CONTENT Space 配置为准；不要依赖本段中的旧端口或旧执行器标签。

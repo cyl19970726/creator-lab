@@ -15,7 +15,7 @@ export const StartSchema = z
     asOf: z.iso.date(),
     sourceIds: z.array(z.string()).min(1).max(30),
     idempotencyKey: z.string().min(8),
-    model: z.literal('gpt-5.6-luna').default('gpt-5.6-luna'),
+    model: z.literal('gpt-6-luna').default('gpt-6-luna'),
     reasoningEffort: z.literal('medium').default('medium'),
   })
   .strict();
@@ -64,7 +64,7 @@ export interface Run {
   goal: string;
   asOf: string;
   readers: string[];
-  model: 'gpt-5.6-luna';
+  model: string;
   sources: Array<{ id: string; title: string; sha256: string }>;
 
   id: string;
@@ -76,6 +76,7 @@ export interface Run {
   queueState: string;
   createdAt: string;
   workflowRevision: string;
+  readOnly?: boolean;
 }
 export interface CollaborationEvent {
   id: string;

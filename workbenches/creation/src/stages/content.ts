@@ -156,6 +156,11 @@ function viewerView(draft: ContentDraft, profile: string) {
   const { title, coverText, segments } = draft.script;
   return { profile, title, coverText, segments: segments.map(({ time, voiceover, onScreenText, visual }) => ({ time, voiceover, onScreenText, visual })) };
 }
+/** Only words visible to an audience member; no decision, research, or visual intent leaks. */
+export function textOnlyColdReaderView(draft: ContentDraft, audienceProfile: string) {
+  const { title, coverText, segments } = draft.script;
+  return { audienceProfile, title, coverText, segments: segments.map(({ voiceover, onScreenText }, index) => ({ number: index + 1, voiceover, onScreenText })) };
+}
 function mergeResearch(previous: ContentResearch | undefined, current: ContentResearch): ContentResearch {
   const notes = (previous?.notes ?? []).map(n => ({ ...n, keyPoints: [...n.keyPoints] }));
   const aliases = new Map<string, string>();
@@ -217,16 +222,37 @@ export function contentAcceptanceFailures(input: ContentInput, review: ContentRe
 }
 
 export type ContentRoleSpecs = Record<keyof typeof CONTENT_ROLES, RoleSpec>;
+export interface ContentWorkflowOptions {
+  roleModels?: Partial<Record<keyof ContentRoleSpecs, StageModel>>;
+  includePreamble?: boolean;
+  textOnlyColdReader?: boolean;
+  preserveResearchOutput?: boolean;
+  strictReviewRouting?: boolean;
+  workflowId?: string;
+}
 
-export function createContentWorkflow(models: { worker: StageModel; judge: StageModel }, roles: ContentRoleSpecs = CONTENT_ROLES): WorkflowDefinition<ContentInput, WorkflowTerminal<never>> {
-  const author = stageAgent<unknown, ContentDraft>(roles.author, models.judge, CONTENT_REVISION);
-  const reader = stageAgent<unknown, ColdRead>(roles.reader, models.worker, CONTENT_REVISION);
-  const checker = stageAgent<unknown, FactCheck>(roles.checker, models.worker, CONTENT_REVISION);
-  const editor = stageAgent<unknown, ContentReview>(roles.editor, models.judge, CONTENT_REVISION);
-  return workflow<ContentInput, WorkflowTerminal<never>>('creation.content', { revision: CONTENT_REVISION }, async (ctx, raw) => {
+function reviewRouteFailures(review: ContentReview): string[] {
+  if (review.verdict === 'pass' && review.route !== 'pass') return ['review.route: verdict pass requires route pass'];
+  if (review.verdict === 'blocked' && review.route !== 'blocked') return ['review.route: verdict blocked requires route blocked'];
+  if (review.verdict === 'revise' && !(['rewrite', 'research', 'reframe'] as string[]).includes(review.route))
+    return ['review.route: verdict revise requires rewrite, research, or reframe'];
+  if (review.route === 'pass' && review.verdict !== 'pass') return ['review.verdict: route pass requires verdict pass'];
+  if (review.route === 'blocked' && review.verdict !== 'blocked') return ['review.verdict: route blocked requires verdict blocked'];
+  return [];
+}
+
+export function createContentWorkflow(models: { worker: StageModel; judge: StageModel }, roles: ContentRoleSpecs = CONTENT_ROLES,
+  options: ContentWorkflowOptions = {}): WorkflowDefinition<ContentInput, WorkflowTerminal<never>> {
+  const role = (name: keyof ContentRoleSpecs): RoleSpec => options.includePreamble === false ? { ...roles[name], preamble: '' } : roles[name];
+  const model = (name: keyof ContentRoleSpecs): StageModel => options.roleModels?.[name] ?? (name === 'author' || name === 'editor' ? models.judge : models.worker);
+  const author = stageAgent<unknown, ContentDraft>(role('author'), model('author'), CONTENT_REVISION);
+  const reader = stageAgent<unknown, ColdRead>(role('reader'), model('reader'), CONTENT_REVISION);
+  const checker = stageAgent<unknown, FactCheck>(role('checker'), model('checker'), CONTENT_REVISION);
+  const editor = stageAgent<unknown, ContentReview>(role('editor'), model('editor'), CONTENT_REVISION);
+  return workflow<ContentInput, WorkflowTerminal<never>>(options.workflowId ?? 'creation.content', { revision: CONTENT_REVISION }, async (ctx, raw) => {
     const input = contentInputSchema.parse(raw);
     const researcher = stageAgent<unknown, ContentResearch>(
-      { ...roles.researcher, webSearch: input.webResearch }, models.worker, CONTENT_REVISION,
+      { ...role('researcher'), webSearch: input.webResearch }, model('researcher'), CONTENT_REVISION,
     );
     let research: Published<ContentResearch> | undefined;
     let draft: Published<ContentDraft> | undefined;
@@ -252,9 +278,11 @@ export function createContentWorkflow(models: { worker: StageModel; judge: Stage
           });
           const valid = await phase.validate('check-research', value, v => check(researchSchema, v));
           if (!valid.valid) return phase.blocked({ reason: 'invalid-research', details: valid.details });
+          if (options.preserveResearchOutput && value.notes.length)
+            return phase.blocked({ reason: 'research-output-not-offline', details: ['research.notes: offline research must return an empty array'] });
           const conflicts = sourceIdConflicts(input, { ...value, notes: [...(previousResearch?.value.notes ?? []), ...value.notes] });
           if (conflicts.length) return phase.blocked({ reason: 'source-id-conflict', details: conflicts });
-          const combined = mergeResearch(previousResearch?.value, value);
+          const combined = options.preserveResearchOutput ? value : mergeResearch(previousResearch?.value, value);
           const ref = await phase.publish('research', 'content-research', combined, { validation: 'valid', review: 'not_applicable',
             dependsOn: [previousResearch?.ref, previousDraft?.ref, previousReview?.ref].filter((r): r is ArtifactRef => !!r).map(dependency) });
           await phase.bindArtifact(ref, { role: 'research', title: '材料对答', primary: true });
@@ -292,7 +320,9 @@ export function createContentWorkflow(models: { worker: StageModel; judge: Stage
         expectedArtifacts: [{ role: 'reader', title: '冷读体验', required: true }, { role: 'checker', title: '事实核查', required: true }],
       }, async phase => {
         const both = await phase.parallel('reviewers', {
-          reader: () => phase.agent('cold-read', reader, viewerView(currentDraft.value, input.account.currentAudience)),
+          reader: () => phase.agent('cold-read', reader, options.textOnlyColdReader
+            ? textOnlyColdReaderView(currentDraft.value, input.account.currentAudience)
+            : viewerView(currentDraft.value, input.account.currentAudience)),
           checker: () => phase.agent('fact-check', checker, { draft: currentDraft.value, materials: materialsFor(input, currentResearch.value) }),
         }, { concurrency: 2 });
         const cold = both.reader as ColdRead;
@@ -315,6 +345,8 @@ export function createContentWorkflow(models: { worker: StageModel; judge: Stage
           coldRead: checked.reader.value, factCheck: checked.checker.value });
         const valid = await phase.validate('check-editor', value, v => check(reviewSchema, v));
         if (!valid.valid) return phase.blocked({ reason: 'invalid-editor', details: valid.details });
+        const routingFailures = options.strictReviewRouting ? reviewRouteFailures(value) : [];
+        if (routingFailures.length) return phase.blocked({ reason: 'invalid-editor-routing', details: routingFailures });
         const guardFailures = contentAcceptanceFailures(input, value, checked.checker.value, currentDraft.value, currentResearch.value);
         const recorded: ContentReview = { ...value, guardFailures };
         const ref = await phase.publish('review', 'content-review', recorded, { validation: 'valid', review: 'not_applicable',
@@ -329,6 +361,7 @@ export function createContentWorkflow(models: { worker: StageModel; judge: Stage
       const details = (reason: ContentGateDetails['reason']): ContentGateDetails => ({ stage: 'CONTENT', reason,
         draft: currentDraft.ref, review: edited.ref, research: currentResearch.ref, rounds: round + 1, guardFailures: failures });
       if (edited.value.verdict === 'pass' && edited.value.route === 'pass' && failures.length === 0) return ctx.needsReview(details('awaiting-human-review'));
+      if (options.strictReviewRouting && edited.value.verdict === 'pass' && failures.length) return ctx.needsReview(details('not-converged'));
       if (edited.value.verdict === 'blocked' || edited.value.route === 'blocked') return ctx.needsReview(details('blocked'));
       if (round >= input.maxRevisions) return ctx.needsReview(details('not-converged'));
       route = failures.length && edited.value.route === 'pass' ? 'rewrite' : edited.value.route;

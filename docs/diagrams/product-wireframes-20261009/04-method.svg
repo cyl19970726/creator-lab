@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760">
+<rect width="1280" height="760" fill="#fff"/>
+<style>text{font-family:Arial,"PingFang SC","Noto Sans CJK SC",sans-serif;fill:#232323} .muted{fill:#666}</style>
+<rect x="0" y="0" width="215" height="760" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="20" y="30" font-size="18" font-weight="600">SPACE / 内容创作</text>
+<text x="20" y="57" font-size="13" class="muted">目的：形成可交付内容</text>
+<text x="19" y="100" font-size="14">业务目标与问题</text>
+<text x="19" y="145" font-size="14">▾ 工作流 · CONTENT</text>
+<text x="32" y="181" font-size="14">版本总览</text>
+<text x="32" y="215" font-size="14">版本遗传图谱</text>
+<text x="32" y="253" font-size="14">▾ 当前查看 v2  [切换]</text>
+<text x="45" y="289" font-size="14">设计目标与改动</text>
+<rect x="8" y="303" width="198" height="29" rx="0" fill="#ececec" stroke="none" stroke-width="1"/>
+<text x="45" y="323" font-size="14" font-weight="600">方法与产出图</text>
+<text x="45" y="357" font-size="14">案例与资产</text>
+<text x="45" y="391" font-size="14">评价与分析</text>
+<text x="45" y="425" font-size="14">调优与后续版本</text>
+<text x="32" y="469" font-size="14">服务与复盘</text>
+<text x="19" y="513" font-size="14">全部业务案例</text>
+<text x="19" y="551" font-size="14">资产库</text>
+<line x1="16" y1="592" x2="199" y2="592" stroke="#e5e5e5" stroke-width="1"/>
+<text x="20" y="620" font-size="12" class="muted">查看 v2 ≠ 采用 v2</text>
+<text x="20" y="640" font-size="11" class="muted">最新发布 / 采用 / 可执行分列</text>
+<rect x="215" y="0" width="1065" height="72" rx="0" fill="none" stroke="#b6b6b6" stroke-width="1"/>
+<text x="239" y="31" font-size="21" font-weight="600">v2 · 方法与产出图</text>
+<text x="239" y="57" font-size="13" class="muted">定义模式 · 预期资产类型，不是已经生成的实物</text>
+<text x="1258" y="56" font-size="11" class="muted" text-anchor="end">合成线框示意 · 非实测</text>
+<line x1="940" y1="72" x2="940" y2="760" stroke="#b6b6b6" stroke-width="1"/>
+<text x="239" y="105" font-size="17" font-weight="600">沿用 Archify 画布 · 方法图布局</text>
+<text x="239" y="126" font-size="12" class="muted">流程节选：实际画布承载完整分支、循环与停止；虚线=资产关系</text>
+<line x1="239" y1="139" x2="916" y2="139" stroke="#e5e5e5" stroke-width="1"/>
+<rect x="246" y="205" width="137" height="68" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="258" y="228" font-size="15" font-weight="600">1  输入</text>
+<text x="258" y="250" font-size="12" class="muted">要求 + 材料</text>
+<rect x="430" y="205" width="170" height="68" rx="4" fill="#f0f0f0" stroke="#232323" stroke-width="1.5"/>
+<text x="442" y="228" font-size="15" font-weight="600">2  研究 Agent</text>
+<text x="442" y="250" font-size="12" class="muted">需证据材料</text>
+<rect x="657" y="205" width="199" height="68" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="669" y="228" font-size="15" font-weight="600">3  作者 Agent</text>
+<text x="669" y="250" font-size="12" class="muted">消费研究报告</text>
+<line x1="383" y1="239" x2="430" y2="239" stroke="#232323" stroke-width="1.3"/>
+<path d="M 423 235 L 430 239 L 423 243" fill="none" stroke="#232323" stroke-width="1.3"/>
+<text x="406.5" y="232.0" font-size="11" class="muted" text-anchor="middle">控制</text>
+<line x1="600" y1="239" x2="657" y2="239" stroke="#232323" stroke-width="1.3"/>
+<path d="M 650 235 L 657 239 L 650 243" fill="none" stroke="#232323" stroke-width="1.3"/>
+<text x="628.5" y="232.0" font-size="11" class="muted" text-anchor="middle">控制</text>
+<rect x="430" y="328" width="170" height="65" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="442" y="351" font-size="15" font-weight="600">A  研究报告</text>
+<text x="442" y="373" font-size="12" class="muted">预期资产类型</text>
+<rect x="657" y="328" width="199" height="65" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="669" y="351" font-size="15" font-weight="600">B  稿件</text>
+<text x="669" y="373" font-size="12" class="muted">预期资产类型</text>
+<line x1="515" y1="273" x2="515" y2="328" stroke="#232323" stroke-width="1.2" stroke-dasharray="5 4"/>
+<line x1="756" y1="273" x2="756" y2="328" stroke="#232323" stroke-width="1.2" stroke-dasharray="5 4"/>
+<path d="M 600 361 H 625 V 300 H 700 V 273" fill="none" stroke="#232323" stroke-width="1.2" stroke-dasharray="5 4"/>
+<path d="M 696 280 L 700 273 L 704 280" fill="none" stroke="#232323" stroke-width="1.2"/>
+<rect x="431" y="452" width="191" height="68" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="443" y="475" font-size="15" font-weight="600">4  冷读 / 核查</text>
+<text x="443" y="497" font-size="12" class="muted">意见 → 审阅</text>
+<rect x="657" y="452" width="199" height="68" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="669" y="475" font-size="15" font-weight="600">5  主编判断</text>
+<text x="669" y="497" font-size="12" class="muted">通过 / 返工 / 停止</text>
+<path d="M 856 239 H 886 V 423 H 526 V 452" fill="none" stroke="#232323" stroke-width="1.3"/>
+<path d="M 522 445 L 526 452 L 530 445" fill="none" stroke="#232323" stroke-width="1.3"/>
+<line x1="622" y1="486" x2="657" y2="486" stroke="#232323" stroke-width="1.3"/>
+<path d="M 650 482 L 657 486 L 650 490" fill="none" stroke="#232323" stroke-width="1.3"/>
+<text x="639.5" y="479.0" font-size="11" class="muted" text-anchor="middle">控制</text>
+<text x="455" y="554" font-size="13">B 稿件供冷读/核查；意见供主编；返工 → 作者</text>
+<text x="455" y="581" font-size="12" class="muted">缺材料 → 等待/停止；点 A/B 读 schema、角色、消费者</text>
+<text x="961" y="107" font-size="13" class="muted">选中对象 · 详情</text>
+<text x="961" y="140" font-size="19" font-weight="600">② 研究 Agent</text>
+<text x="961" y="165" font-size="12" class="muted">v2 方法定义 · 不是本次运行</text>
+<line x1="960" y1="181" x2="1258" y2="181" stroke="#e5e5e5" stroke-width="1"/>
+<text x="961" y="211" font-size="14" font-weight="600">职责与输入</text>
+<text x="961" y="235" font-size="13">按要求整理来源；必需输入见合同。</text>
+<text x="961" y="275" font-size="14" font-weight="600">方法配置</text>
+<text x="961" y="299" font-size="13">Prompt / model / tools / 可选 skill</text>
+<text x="961" y="320" font-size="13">完整长文按需展开。</text>
+<text x="961" y="360" font-size="14" font-weight="600">自主边界</text>
+<text x="961" y="384" font-size="13">材料不足时等待或提出缺口；</text>
+<text x="961" y="405" font-size="13">不得擅自扩大来源与执行权限。</text>
+<text x="961" y="445" font-size="14" font-weight="600">预期输出</text>
+<text x="961" y="469" font-size="13">A 研究报告：schema、用途与消费方。</text>
+</svg>

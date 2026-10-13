@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { type AgentRunRequest, type AgentRunner } from '@signal-room/workflow';
-import { SiwcResponsesRunner, type SiwcAuth } from '@signal-room/workflow-agent-sdk';
+import { OpenAIAgentsSdkRunner, type SiwcAuth } from '@signal-room/workflow-agent-sdk';
 import { nodeReadTools, type WorkflowSpaceService } from '@signal-room/workflow-spaces';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -25,7 +25,7 @@ export function contentSiwcExecutorManifest(options: Pick<ContentSiwcOptions, 'm
 export function createContentSiwcRunner(options: ContentSiwcOptions): AgentRunner {
   const manifest = contentSiwcExecutorManifest(options);
   const { maxTurns, maxToolCalls } = manifest;
-  const runner = new SiwcResponsesRunner({
+  const runner = new OpenAIAgentsSdkRunner({
     auth: options.auth,
     maxTurns,
     maxToolCalls,
@@ -54,7 +54,8 @@ export function createContentSiwcRunner(options: ContentSiwcOptions): AgentRunne
       const prompt = request.definition.config?.prompt;
       const schema = request.definition.config?.outputSchema;
       if (typeof prompt !== 'string' || !prompt.trim() || !schema) throw new Error('CONTENT role has no prompt or JSON schema');
-      const instructions = `${prompt}\n\n【必须遵循的输出 JSON Schema】\n${JSON.stringify(schema)}\n只返回一个符合该 schema 的 JSON 对象。`;
+      const instructions = request.definition.config?.instructionsFormat === 'precompiled-schema-v1'
+        ? prompt : `${prompt}\n\n【必须遵循的输出 JSON Schema】\n${JSON.stringify(schema)}\n只返回一个符合该 schema 的 JSON 对象。`;
       const config = { ...request.definition.config, instructions, outputFormat: 'json' };
       await request.emit('content.siwc.mapping', {
         role: request.definition.id, instructions, instructionsSha256: digest(instructions),

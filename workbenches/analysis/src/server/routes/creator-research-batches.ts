@@ -7,9 +7,9 @@ import {
 } from "../../../packages/contracts/index.js";
 
 export interface CreatorResearchBatchHttpService {
-  create(input: CreateCreatorResearchBatchInput): CreatorResearchBatchProjection;
-  get(batchId: string): CreatorResearchBatchProjection | null;
-  list(limit?: number): CreatorResearchBatchProjection[];
+  create(input: CreateCreatorResearchBatchInput): CreatorResearchBatchProjection | Promise<CreatorResearchBatchProjection>;
+  get(batchId: string): CreatorResearchBatchProjection | null | Promise<CreatorResearchBatchProjection | null>;
+  list(limit?: number): CreatorResearchBatchProjection[] | Promise<CreatorResearchBatchProjection[]>;
 }
 
 function requestError(response: express.Response, error: unknown): express.Response {
@@ -35,26 +35,26 @@ export function registerCreatorResearchBatchRoutes(
   app: express.Express,
   service: CreatorResearchBatchHttpService
 ): void {
-  app.post("/api/v1/creator-research-batches", (request, response) => {
+  app.post("/api/v1/creator-research-batches", async (request, response) => {
     try {
       const input = createCreatorResearchBatchInputSchema.parse(request.body);
-      return response.status(202).json(service.create(input));
+      return response.status(202).json(await service.create(input));
     } catch (error) {
       return requestError(response, error);
     }
   });
 
-  app.get("/api/v1/creator-research-batches", (request, response) => {
+  app.get("/api/v1/creator-research-batches", async (request, response) => {
     try {
-      return response.json({ batches: service.list(queryLimit(request.query.limit)) });
+      return response.json({ batches: await service.list(queryLimit(request.query.limit)) });
     } catch (error) {
       return requestError(response, error);
     }
   });
 
-  app.get("/api/v1/creator-research-batches/:id", (request, response) => {
+  app.get("/api/v1/creator-research-batches/:id", async (request, response) => {
     try {
-      const batch = service.get(request.params.id);
+      const batch = await service.get(request.params.id);
       if (!batch) return response.status(404).json({ error: "博主分析批次不存在" });
       return response.json(batch);
     } catch (error) {

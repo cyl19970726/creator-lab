@@ -48,9 +48,16 @@ export function createResearchReadingService(store: RunStore, payload: (id: stri
       // Source-consistency receipts carry their recorded method provenance inside
       // `output.artifact`; other receipt shapes do not claim this field.
       const provenance = object(object(output.artifact).provenance);
-      const event = [...events].reverse().find(e => ["agent.usage", "agent.started", "agent.delegate"].includes(e.type));
+      const latest = [...events].reverse();
+      const method = object(latest.find(e => e.type === "responses.method")?.data);
+      const event = latest.find(e => ["agent.usage", "agent.started", "agent.delegate"].includes(e.type));
       const config = object(event?.data);
-      return { model: safeToken(config.model ?? provenance.model), reasoningEffort: safeToken(config.reasoningEffort ?? provenance.reasoningEffort), methodRevision: safeToken(provenance.methodRevision), methodDigest: safeToken(provenance.methodSha256) };
+      return {
+        model: safeToken(method.model) ?? safeToken(config.model) ?? safeToken(provenance.model),
+        reasoningEffort: safeToken(method.reasoningEffort) ?? safeToken(config.reasoningEffort) ?? safeToken(provenance.reasoningEffort),
+        methodRevision: safeToken(method.methodRevision) ?? safeToken(provenance.methodRevision),
+        methodDigest: safeToken(method.promptSha256) ?? safeToken(provenance.methodSha256)
+      };
     },
     callArtifacts: async (step, artifacts) => {
       if (step.kind !== "agent") return {};

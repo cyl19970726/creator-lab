@@ -2,6 +2,23 @@ import { validateVideoDepth } from "./video-depth-integrity.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { projectRoot } from "../../core/config.js";
+
+const skillDir = process.env.SELF_MEDIA_VIDEO_RECONSTRUCTION_SKILL_DIR ??
+  path.join(projectRoot, ".agents", "skills", "video-content-reconstruction");
+const builderIntegrityContractVersion = "builder-integrity-v9-evidence-time-feedback";
+
+export function builderIntegrityContractRevision(): string {
+  const contractFiles = [
+    path.join(skillDir, "references/builder-operator.md"),
+    path.join(skillDir, "references/single-post-depth.md"),
+    path.join(skillDir, "schemas/capture-protocol.schema.json"),
+    path.join(skillDir, "schemas/reconstruction.schema.json")
+  ];
+  const hash = crypto.createHash("sha256").update(builderIntegrityContractVersion);
+  for (const file of contractFiles) hash.update(fs.readFileSync(file));
+  return hash.digest("hex");
+}
 
 type EvidenceRef = { refType?: string; ref?: string };
 type Carrier = {
@@ -97,6 +114,67 @@ function sha256(file: string): string {
 
 function fail(code: string, detail?: string): never {
   throw new Error(`BUILDER_INTEGRITY_${code}${detail ? `:${detail}` : ""}`);
+}
+
+/** Return actionable locations for visual content blocks that have no bound visual evidence. */
+export function contentBlockVisualDiagnostics(contentRestoration: unknown): string[] {
+  const lens = contentRestoration && typeof contentRestoration === "object" && !Array.isArray(contentRestoration)
+    ? contentRestoration as { blocks?: unknown } : {};
+  const blocks = Array.isArray(lens.blocks) ? lens.blocks : [];
+  const visualBlockTypes = new Set(["single_frame", "annotated_crop", "before_after", "operation_sequence", "frame_strip"]);
+  return blocks.flatMap((block, index) => {
+    if (!block || typeof block !== "object" || Array.isArray(block)) return [];
+    const row = block as Record<string, unknown>;
+    if (!visualBlockTypes.has(String(row.type ?? "")) ||
+      (Array.isArray(row.visuals) && row.visuals.length > 0) ||
+      (Array.isArray(row.frameRefs) && row.frameRefs.length > 0) ||
+      Boolean(row.beforeFrameRef) || Boolean(row.afterFrameRef) ||
+      (Array.isArray(row.steps) && row.steps.length > 0)) return [];
+    const id = typeof row.id === "string" ? `(${row.id})` : "";
+    return [`BUILDER_INTEGRITY_CONTENT_BLOCK_VISUAL_MISSING:builderLenses.contentRestoration.blocks[${index}]${id} has no visuals, frameRefs, beforeFrameRef/afterFrameRef, or steps`];
+  });
+}
+
+/** Check the timing of primary visual anchors; explicit before/after comparisons may cross the block boundary. */
+export function contentBlockTemporalDiagnostics(contentRestoration: unknown,
+  frameTimes: ReadonlyMap<string, number>, duration: number): string[] {
+  const lens = contentRestoration && typeof contentRestoration === "object" && !Array.isArray(contentRestoration)
+    ? contentRestoration as { blocks?: unknown } : {};
+  const blocks = Array.isArray(lens.blocks) ? lens.blocks : [];
+  const issues: string[] = [];
+  blocks.forEach((block, index) => {
+    if (!block || typeof block !== "object" || Array.isArray(block)) return;
+    const row = block as Record<string, unknown>;
+    const location = `builderLenses.contentRestoration.blocks[${index}]${typeof row.id === "string" ? `(${row.id})` : ""}`;
+    const range = row.timeRange && typeof row.timeRange === "object" && !Array.isArray(row.timeRange)
+      ? row.timeRange as { start?: unknown; end?: unknown } : {};
+    const start = range.start;
+    const end = range.end;
+    if (typeof start !== "number" || !Number.isFinite(start) || typeof end !== "number" || !Number.isFinite(end) ||
+      start < 0 || end < start || !Number.isFinite(duration) || duration < 0 || end > duration + 0.5) {
+      issues.push(`BUILDER_INTEGRITY_CONTENT_BLOCK_TIME_RANGE:${location}.timeRange:${String(start)}..${String(end)} duration=${duration}`);
+      return;
+    }
+    const check = (ref: unknown, field: string) => {
+      if (typeof ref !== "string") return; // Schema and dangling-reference checks own invalid/unknown IDs.
+      const time = frameTimes.get(ref);
+      if (time !== undefined && Number.isFinite(time) && (time < start - 0.5 || time > end + 0.5)) {
+        issues.push(`BUILDER_INTEGRITY_CONTENT_BLOCK_FRAME_TIME:${location}.${field}:${ref}@${time} outside ${start}..${end}`);
+      }
+    };
+    if (Array.isArray(row.frameRefs)) row.frameRefs.forEach((ref, refIndex) => check(ref, `frameRefs[${refIndex}]`));
+    if (Array.isArray(row.visuals)) row.visuals.forEach((visual, visualIndex) => {
+      if (!visual || typeof visual !== "object" || Array.isArray(visual)) return;
+      const item = visual as { ref?: unknown; role?: unknown };
+      if (item.role !== "before" && item.role !== "after") check(item.ref, `visuals[${visualIndex}].ref`);
+    });
+    if (row.type === "operation_sequence" && Array.isArray(row.steps)) row.steps.forEach((step, stepIndex) => {
+      if (!step || typeof step !== "object" || Array.isArray(step)) return;
+      const refs = (step as { frameRefs?: unknown }).frameRefs;
+      if (Array.isArray(refs)) refs.forEach((ref, refIndex) => check(ref, `steps[${stepIndex}].frameRefs[${refIndex}]`));
+    });
+  });
+  return issues;
 }
 
 function ids(values: Array<{ id?: string }> | undefined): Set<string> {
@@ -213,7 +291,14 @@ export function validateBuilderIntegrity(outputDir: string, videoPath: string): 
   const accountability = reconstruction.coverageMatrix?.cueAccountability ?? [];
   const accountedIds = accountability.map((row) => row.cueId).filter((id): id is string => Boolean(id));
   if (accountedIds.length !== sourceCueIds.size || new Set(accountedIds).size !== sourceCueIds.size ||
-      accountedIds.some((id) => !sourceCueIds.has(id))) problem("CUE_ACCOUNTABILITY");
+      accountedIds.some((id) => !sourceCueIds.has(id))) {
+    const missing = [...sourceCueIds].filter(id => !accountedIds.includes(id));
+    const duplicates = [...new Set(accountedIds.filter((id, index) => accountedIds.indexOf(id) !== index))];
+    const unknown = [...new Set(accountedIds.filter(id => !sourceCueIds.has(id)))];
+    const preview = (values: string[]) => `${values.slice(0, 8).join(",")}${values.length > 8 ? ` (+${values.length - 8} more)` : ""}`;
+    problem("CUE_ACCOUNTABILITY", `expected=${sourceCueIds.size} actual=${accountedIds.length}` +
+      ` missing=${preview(missing)} duplicates=${preview(duplicates)} unknown=${preview(unknown)}`);
+  }
   for (const row of accountability) {
     if ((row.unitIds ?? []).some((id) => !unitIds.has(id))) problem("CUE_UNIT_REFERENCE", row.cueId);
     if ((row.disposition === "knowledge" || row.disposition === "context") && !(row.unitIds ?? []).length) {
@@ -293,11 +378,8 @@ export function validateBuilderIntegrity(outputDir: string, videoPath: string): 
       if (contentBlocks.some((block) => !(block.body?.trim()) || !(block.evidenceRefs?.length))) {
         problem("CONTENT_BLOCK_EVIDENCE");
       }
-      const visualBlockTypes = new Set(["single_frame", "annotated_crop", "before_after", "operation_sequence", "frame_strip"]);
-      if (contentBlocks.some((block) => visualBlockTypes.has(block.type ?? "") &&
-        !(block.visuals?.length || block.frameRefs?.length || block.beforeFrameRef || block.afterFrameRef || block.steps?.length))) {
-        problem("CONTENT_BLOCK_VISUAL_MISSING");
-      }
+      issues.push(...contentBlockVisualDiagnostics(lenses?.contentRestoration));
+      issues.push(...contentBlockTemporalDiagnostics(lenses?.contentRestoration, frameTimes, Number(pack.media?.duration)));
       const stages = lenses?.directingLogic?.stages ?? [];
       const meanings = stages.map((stage) => normalizedMeaning(`${stage.function} ${stage.cognitiveChange}`));
       if (meanings.some((value) => !value) || new Set(meanings).size !== meanings.length) {
@@ -311,20 +393,28 @@ export function validateBuilderIntegrity(outputDir: string, videoPath: string): 
 
   const duration = Number(pack.media?.duration ?? 0);
   const evidenceTimeViolations: string[] = [];
+  const evidenceTimeContexts: Array<{ unitId: string; range: { start: number; end: number };
+    outside: Array<{ ref: string; time: number }>; timedEvidence: Array<{ ref: string; time: number }> }> = [];
   for (const unit of units) {
     const start = Number(unit.timeRange?.start);
     const end = Number(unit.timeRange?.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || end > duration + 0.5) {
       problem("UNIT_TIME_RANGE", unit.id);
     }
-    for (const reference of unit.evidence ?? []) {
-      const evidenceTime = reference.ref ? frameTimes.get(reference.ref) : undefined;
-      if (evidenceTime !== undefined && (evidenceTime < start - 0.5 || evidenceTime > end + 0.5)) {
-        evidenceTimeViolations.push(`${unit.id}:${reference.ref}`);
-      }
-    }
+    const timedEvidence = (unit.evidence ?? []).flatMap((reference) => {
+      const time = reference.ref ? frameTimes.get(reference.ref) : undefined;
+      return reference.ref && time !== undefined && Number.isFinite(time) ? [{ ref: reference.ref, time }] : [];
+    });
+    const outside = timedEvidence.filter(({ time }) => time < start - 0.5 || time > end + 0.5);
+    for (const { ref } of outside) evidenceTimeViolations.push(`${unit.id}:${ref}`);
+    if (outside.length) evidenceTimeContexts.push({ unitId: unit.id ?? "unknown", range: { start, end },
+      outside, timedEvidence });
   }
-  if (evidenceTimeViolations.length > 0) problem("EVIDENCE_TIME_RANGE", evidenceTimeViolations.join(","));
+  if (evidenceTimeViolations.length > 0) problem("EVIDENCE_TIME_RANGE",
+    `${evidenceTimeViolations.join(",")}; temporalContext=${JSON.stringify(evidenceTimeContexts)}; ` +
+    "correctionChoices=correct the actual unit time range after checking every cited time | " +
+    "split a cross-time knowledge unit | remove inapplicable references; " +
+    "do not widen a range solely to pass validation or rewrite the conclusion");
   for (const source of reconstruction.derivedSources ?? []) {
     if (!source.path) { problem("DERIVED_SOURCE_PATH", source.id); continue; }
     const resolved = path.resolve(outputDir, source.path);

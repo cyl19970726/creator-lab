@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760">
+<rect width="1280" height="760" fill="#fff"/>
+<style>text{font-family:Arial,"PingFang SC","Noto Sans CJK SC",sans-serif;fill:#232323} .muted{fill:#666}</style>
+<rect x="0" y="0" width="215" height="760" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="20" y="30" font-size="18" font-weight="600">SPACE / 内容创作</text>
+<text x="20" y="57" font-size="13" class="muted">目的：形成可交付内容</text>
+<rect x="8" y="80" width="198" height="29" rx="0" fill="#ececec" stroke="none" stroke-width="1"/>
+<text x="19" y="100" font-size="14" font-weight="600">业务目标与问题</text>
+<text x="19" y="145" font-size="14">▾ 工作流 · CONTENT</text>
+<text x="32" y="181" font-size="14">版本总览</text>
+<text x="32" y="215" font-size="14">版本遗传图谱</text>
+<text x="32" y="253" font-size="14">▾ 当前查看 v2  [切换]</text>
+<text x="45" y="289" font-size="14">设计目标与改动</text>
+<text x="45" y="323" font-size="14">方法与产出图</text>
+<text x="45" y="357" font-size="14">案例与资产</text>
+<text x="45" y="391" font-size="14">评价与分析</text>
+<text x="45" y="425" font-size="14">调优与后续版本</text>
+<text x="32" y="469" font-size="14">服务与复盘</text>
+<text x="19" y="513" font-size="14">全部业务案例</text>
+<text x="19" y="551" font-size="14">资产库</text>
+<line x1="16" y1="592" x2="199" y2="592" stroke="#e5e5e5" stroke-width="1"/>
+<text x="20" y="620" font-size="12" class="muted">查看 v2 ≠ 采用 v2</text>
+<text x="20" y="640" font-size="11" class="muted">最新发布 / 采用 / 可执行分列</text>
+<rect x="215" y="0" width="1065" height="72" rx="0" fill="none" stroke="#b6b6b6" stroke-width="1"/>
+<text x="239" y="31" font-size="21" font-weight="600">两个入口 · 首版设计 / 新委托</text>
+<text x="239" y="57" font-size="13" class="muted">覆盖层与底层图共享选择状态；此页上下两种状态</text>
+<text x="1258" y="56" font-size="11" class="muted" text-anchor="end">合成线框示意 · 非实测</text>
+<line x1="940" y1="72" x2="940" y2="760" stroke="#b6b6b6" stroke-width="1"/>
+<text x="239" y="105" font-size="17" font-weight="600">状态 A · 从零形成首版</text>
+<text x="239" y="126" font-size="12" class="muted">底层：Space 目的及标准；覆盖层输入结果是业务草案</text>
+<line x1="239" y1="139" x2="916" y2="139" stroke="#e5e5e5" stroke-width="1"/>
+<rect x="249" y="164" width="647" height="198" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="266" y="191" font-size="13" class="muted">保留底层图：目的 ① → 受众 ② → 标准 ③</text>
+<rect x="285" y="211" width="574" height="117" rx="0" fill="#fff" stroke="#232323" stroke-width="1.5"/>
+<text x="303" y="238" font-size="16" font-weight="600">首版设计阅读层</text>
+<text x="303" y="264" font-size="13">目的 / 材料 / 成功标准 / 未知 → 具名业务草案</text>
+<text x="303" y="289" font-size="12" class="muted">第一委托携带准确草案 snapshot；草案 ≠ 可执行版本</text>
+<text x="249" y="415" font-size="17" font-weight="600">状态 B · 新委托</text>
+<text x="249" y="436" font-size="12" class="muted">底层：Case 关系或服务状态；填写要求时不丢原选择</text>
+<rect x="249" y="452" width="647" height="205" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="266" y="479" font-size="13" class="muted">保留底层图：Case 输入 ① → 已有资产 ② → 方法状态 ③</text>
+<rect x="285" y="499" width="574" height="125" rx="0" fill="#fff" stroke="#232323" stroke-width="1.5"/>
+<text x="303" y="526" font-size="16" font-weight="600">新委托阅读层</text>
+<text x="303" y="553" font-size="13">要求 / 材料 / 本次方法 / 启动前检查</text>
+<text x="303" y="579" font-size="13">采用版 v1 不可执行 → 等待；v2 可候选试跑</text>
+<text x="303" y="604" font-size="12" class="muted">候选试跑需明确选择，不自动采用或改派既有 Case</text>
+<text x="961" y="107" font-size="13" class="muted">选中对象 · 详情</text>
+<text x="961" y="140" font-size="19" font-weight="600">③ 方法状态 / 下一步</text>
+<text x="961" y="165" font-size="12" class="muted">新委托范围 · 准确方法与部署</text>
+<line x1="960" y1="181" x2="1258" y2="181" stroke="#e5e5e5" stroke-width="1"/>
+<text x="961" y="211" font-size="14" font-weight="600">采用版</text>
+<text x="961" y="235" font-size="13">v1 有采用记录，但当前不可执行。</text>
+<text x="961" y="275" font-size="14" font-weight="600">候选</text>
+<text x="961" y="299" font-size="13">v2 可供显式试跑；未采用。</text>
+<text x="961" y="339" font-size="14" font-weight="600">输入冻结</text>
+<text x="961" y="363" font-size="13">启动前核对要求与材料；</text>
+<text x="961" y="384" font-size="13">第一委托保留草案 snapshot。</text>
+<text x="961" y="424" font-size="14" font-weight="600">返回</text>
+<text x="961" y="448" font-size="13">关闭阅读层恢复原图和所选 Case。</text>
+</svg>

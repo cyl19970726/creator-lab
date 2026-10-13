@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { workflow, type WorkflowDefinition, type WorkflowTerminal } from "@signal-room/workflow";
@@ -31,6 +31,8 @@ export const b3InputSchema = z.object({
   brief: briefSchema.refine(b => !!b.script, 'B3 needs a brief that already contains the accepted B2 script'),
   /** Absolute path of the episode project; created from the template when missing. */
   episodeDir: z.string().refine(p => path.isAbsolute(p), 'episodeDir must be absolute'),
+  /** Explicit private root for run-owned exports and evidence; defaults are resolved by the CLI. */
+  stateRoot: z.string().refine(p => path.isAbsolute(p), 'stateRoot must be absolute').optional(),
   templateDir: z.string().refine(p => path.isAbsolute(p), 'templateDir must be absolute'),
   /** A finished episode whose frame specs show the account's visual language. */
   referenceDir: z.string().refine(p => path.isAbsolute(p), 'referenceDir must be absolute'),
@@ -90,13 +92,13 @@ export const B3_ROLES = {
   designer: {
     id: 'b3-designer', title: '画面设计者',
     guards: '把每段稿子做成一帧真正能渲染的画面；B3 不能只登记别处做好的东西。',
-    prompt: `你是竖屏科技视频的画面设计者，在给定的视频工程目录（episodeDir）里工作。先读工程里的 frame.md（版式与视觉规范）和给出的参考帧规格（referenceSpecs，账号已发布作品的写法）。你还会收到作品档案里给你的部分：core（这一篇的核心问题、一句话答案、钩子和各节拍的画面想法）和 notesForB3（上游——B2 主编、事实核查、创作者——留给制作的话，必须逐条落实）；第一段画面要把钩子表达出来，全片画面合起来要让观众得到那句一句话答案。然后再为每一行口播写一个帧规格文件 frames-spec/NN-slug.py（NN 与 SCRIPT.md 的 Line 编号一致），格式与参考完全相同：SPEC = dict(kind="shell", name="NN-slug", cid="NN-slug", p="fNN", dur=该行配音秒数+0.6, body=..., css=..., tl=...)。页脚编号写 "NN/总段数"（总段数以 SCRIPT.md 的行数为准）。相邻或相同结构的段落不要用同一种版式（例如两段都是三张竖排卡片），每段的画面要和别的段一眼区分开。每帧从 0 秒起就要看得到这一段的主视觉：入场动画从可见状态开始（例如从 0.6 透明度或略小尺寸起步），不要从全透明或空背景开始。每帧一个主画面，主视觉占画面中部至少四成高度，不要只放一行标题或一个数字；把这一段的核心动作或对比画出来（静音也能看懂这一段在讲什么），屏幕文字用该段的 onScreenText，画面兑现该段的 visual 意图；遵守 frame.md 的安全区（内容 y≤1340，字幕带 y1390–1570 留空，右侧按钮区避让）。字体只用已有 @font-face 的：中文用工程 assets/fonts 里的 Noto Sans CJK SC；要用其他字体（如 Space Grotesk）必须在该帧 css 里写 @font-face，否则渲染时会回退成衬线并让技术检查报错。写完在 episodeDir 里运行 python3 scripts/build-frames.py --check，有错就改规格重跑，直到通过。不要自己截图、打开浏览器或调用其他应用（你的沙箱不能联网，截图工具会卡住）；只用 build-frames.py --check 自检，截图和看图由流程和成品检查者负责。改动要最小化：只动被点名的问题，避免引入文字重叠（hf-check 的 layout 检查会报 content_overlap）。收到修改请求（fixRequest：创作者的审阅意见优先级最高，其次是成品检查意见和技术检查 hf-check 的报错）时只改相关的行，改完用 --only NN 重建再跑 --check。不要改 scripts/ 下的文件，不要改 SCRIPT.md。keepSpecs 里列出的规格已经通过创作者的样片审阅，保持原样，只在检查意见点名时才改。files 只写你创建或修改的帧规格路径；如果现有帧规格已经正确、这轮只改共享组件或无需改帧，files 可以是空数组，它不表示工程没有变化。buildCheckPassed 如实填写最后一次 --check 的结果。${RENDER_SCOPE_CONTRACT}${DESIGN_AUTHORITY}${COMMON}`,
+    prompt: `你是竖屏科技视频的画面设计者，在给定的视频工程目录（episodeDir）里工作。通过 read_file（root=workspace 或 read-N）和 list_directory 工具只读工程里的 frame.md、相关组件和参考帧规格；你还会收到作品档案里给你的部分：core（这一篇的核心问题、一句话答案、钩子和各节拍的画面想法）和 notesForB3（上游——内容主编、事实核查、创作者——留给制作的话，必须逐条落实）。第一段画面要把钩子表达出来，全片画面合起来要让观众得到那句一句话答案。为每一行口播写一个帧规格文件 frames-spec/NN-slug.py（NN 与 SCRIPT.md 的 Line 编号一致），格式与参考完全相同：SPEC = dict(kind="shell", name="NN-slug", cid="NN-slug", p="fNN", dur=该行配音秒数+0.6, body=..., css=..., tl=...)。页脚编号写 "NN/总段数"（总段数以 SCRIPT.md 的行数为准）。相邻或相同结构的段落不要用同一种版式；每段画面要一眼区分。每帧从 0 秒起就要看得到主视觉，不从全透明或空背景开始；主视觉占画面中部至少四成高度，静音也能看懂这一段在讲什么，屏幕文字使用该段 onScreenText，画面兑现 visual 意图；遵守 frame.md 的安全区（内容 y≤1340，字幕带 y1390–1570 留空，右侧按钮区避让）。中文使用工程 assets/fonts 里的 Noto Sans CJK SC；其他字体必须在该帧 css 里声明 @font-face。只用 write_file 写 frames-spec/*.py（只允许该目录），不要修改 SCRIPT.md、scripts/ 或其他文件。每次写入后调用 exec_allowed，name=check_frame_specs；如果有错误，依据结果修规格并重跑直到通过。不要自行截图或打开其他应用；成品检查者会实际查看。改动要最小，keepSpecs 中列出的规格已通过创作者样片审阅，除非检查意见点名，否则保持原样。files 只列本次创建或修改的帧规格；不需要改规格时可为空。buildCheckPassed 如实填写最后一次检查结果。${RENDER_SCOPE_CONTRACT}${DESIGN_AUTHORITY}${COMMON}`,
     outputSchema: objectSchema({ files: strList, buildCheckPassed: { type: 'boolean' }, notes: str }),
   },
   inspector: {
     id: 'b3-inspector', title: '成品检查',
     guards: '替你先看成品：必须实际打开快照图逐格检查，看不到图就不许判通过。',
-    prompt: `你是成品检查，代表创作者本人看画面。你会收到快照 contact sheet 图片路径（按时间顺序：前三格是 0、0.5、1 秒，之后每格对应一行口播画面稳定后的时刻）以及每行的口播、屏幕文字和画面意图。contactSheets 列表也可能是按同样顺序排列的逐帧原图，每张只含一帧。必须用查看图片的工具逐张打开这些图（imagesOpened 写你实际打开的路径），只看 contactSheets 列表里的图，不要打开工程目录里的其他图片（可能是旧版本的残留）；任何一张打不开，verdict=blocked 并说明。按标准卡 V1–V7 逐条给 ok / weak / fail；V5/V6 要核对每格的页脚编号与段数一致；V7 要比较各格之间是否有两段版式几乎一样；V3 要做静音测试：只看这一格画面、不看口播，写下你认为这一段在讲什么，再和口播对照，对不上就是 fail；scope 为 full 时，看完所有格再对照 core.oneLineAnswer：只看画面的观众能不能得到这句话；scope 为 sample 时只检查样片这几段各自是否讲对了自己那部分，不要求样片讲完整个答案；notesForB3 里的要求没落实的要指出来；并在 issues 里写出具体是第几行（line 用 "01" 这样的编号）、违反哪条、问题是什么、怎么改（改成什么样）。只提会改变观感的问题。标准卡末尾的用户审阅记录权重最高。${RENDER_SCOPE_CONTRACT}${INSPECTION_AUTHORITY}${COMMON}`,
+    prompt: `你是成品检查，代表创作者本人看画面。你会收到快照 contact sheet 的原始绝对路径 contactSheets，以及供工具使用的相对路径 reviewImages（按时间顺序：前三格是 0、0.5、1 秒，之后每格对应一行口播画面稳定后的时刻）和每行的口播、屏幕文字和画面意图。必须逐张调用 read_image，root=workspace，path 使用 reviewImages 中的相对路径；imagesOpened 写实际打开的 contactSheets 原始路径，且只看本次列表里的图，不要打开工程目录里的其他图片。任何一张打不开，verdict=blocked 并说明。按标准卡 V1–V7 逐条给 ok / weak / fail；V5/V6 核对每格页脚编号与段数一致；V7 比较各格版式是否重复；V3 做静音测试：只看这一格画面、不看口播，写下你认为这一段在讲什么，再和口播对照，对不上就是 fail；scope 为 full 时核对画面能否传达 core.oneLineAnswer；scope 为 sample 时只检查样片片段各自是否讲对了，不要求样片讲完整答案。notesForB3 里的要求没落实的要指出来；issues 写明行号、违反标准、问题和具体改法。只提会改变观感的问题。标准卡末尾的用户审阅记录权重最高。${RENDER_SCOPE_CONTRACT}${INSPECTION_AUTHORITY}${COMMON}`,
     outputSchema: objectSchema({
       imagesOpened: strList,
       verdict: oneOf('pass', 'revise', 'blocked'),
@@ -181,32 +183,49 @@ export function locatedErrors(checkJson: unknown): Array<{ line: string; code: s
 
 export function createB3Workflow(config: B3Input, model: { worker: StageModel; judge: StageModel }): WorkflowDefinition<B3Input, WorkflowTerminal<never>> {
   const frozen = b3InputSchema.parse(config);
-  const designer = stageAgent<unknown, Design>(B3_ROLES.designer, model.judge, B3_REVISION, {
-    sandbox: 'workspace-write', additionalDirectories: [frozen.episodeDir, frozen.referenceDir],
-  });
-  const inspector = stageAgent<unknown, Inspection>(B3_ROLES.inspector, model.judge, B3_REVISION, {
-    sandbox: 'read-only', additionalDirectories: [frozen.episodeDir],
-  });
+  const designer = stageAgent<unknown, Design>(B3_ROLES.designer, model.judge, B3_REVISION);
+  const inspector = stageAgent<unknown, Inspection>(B3_ROLES.inspector, model.judge, B3_REVISION);
 
   return workflow<B3Input, WorkflowTerminal<never>>('creation.b3', { revision: B3_REVISION }, async (ctx, rawInput) => {
     const input = b3InputSchema.parse(rawInput);
     if (JSON.stringify(input) !== JSON.stringify(frozen)) throw new Error('B3 workflow configuration and input differ');
     const script = scriptSchema.parse(input.brief.script);
     const segments = input.scope === 'sample' ? script.segments.slice(0, input.sampleSegments) : script.segments;
-    const dir = input.episodeDir;
+    let dir = '';
 
     const prepared = await ctx.phase('b3-prepare', {
       title: '建工程与稿件', purpose: '从模板建视频工程，把 B2 定稿写成装配线要的 SCRIPT/STORYBOARD', order: 10,
       expectedArtifacts: [{ role: 'script-file', title: 'SCRIPT.md', required: true }],
     }, async phase => {
-      const files = await phase.task('write-project', ({ dir: target }: { dir: string }) => {
-        if (!existsSync(target)) run(path.dirname(target), 'bash', [path.join(input.templateDir, 'scripts/new-episode.sh'), path.basename(target), path.dirname(target)]);
+      const files = await phase.task('write-project', (_request: unknown, execution) => {
+        const runDir = path.resolve(input.stateRoot ?? '.local/creation', 'runs', execution.runId);
+        const target = path.join(runDir, 'episode');
+        const marker = path.join(runDir, 'workspace.json');
+        mkdirSync(runDir, { recursive: true, mode: 0o700 });
+        if (existsSync(target)) {
+          if (!existsSync(marker) || JSON.parse(readFileSync(marker, 'utf8')).sourceEpisodeDir !== input.episodeDir)
+            throw new Error('B3 run workspace exists without matching provenance; refusing to reuse it');
+        } else {
+          const staging = path.join(runDir, 'episode.staging');
+          rmSync(staging, { recursive: true, force: true });
+          if (existsSync(input.episodeDir)) {
+            cpSync(input.episodeDir, staging, { recursive: true, filter: source => path.basename(source) !== '.git' });
+          } else {
+            mkdirSync(path.dirname(staging), { recursive: true, mode: 0o700 });
+            run(path.dirname(staging), 'bash', [path.join(input.templateDir, 'scripts/new-episode.sh'), path.basename(staging), path.dirname(staging)]);
+          }
+          writeFileSync(marker, `${JSON.stringify({ sourceEpisodeDir: input.episodeDir, templateDir: input.templateDir,
+            createdAt: new Date().toISOString(), copiedTo: target }, null, 2)}\n`, { mode: 0o600 });
+          renameSync(staging, target);
+        }
+        dir = target;
         const scriptFile = scriptMarkdown(script.title, segments, input.voice);
         const storyboard = storyboardMarkdown(script.title, segments);
         writeFileSync(path.join(target, 'SCRIPT.md'), scriptFile);
         writeFileSync(path.join(target, 'STORYBOARD.md'), storyboard);
-        return { script: scriptFile, storyboard, lines: segments.length };
-      }, { dir });
+        return { dir: target, script: scriptFile, storyboard, lines: segments.length };
+      }, { sourceEpisodeDir: input.episodeDir, templateDir: input.templateDir });
+      dir = files.dir;
       const ref = await phase.publish('script-file', 'b3-script-file', { markdown: files.script, storyboard: files.storyboard, lines: files.lines }, { validation: 'valid', review: 'not_applicable' });
       await phase.bindArtifact(ref, { role: 'script-file', title: 'SCRIPT.md', primary: true });
       return { ref, lines: files.lines };
@@ -282,7 +301,7 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
           rmSync(path.join(dir, 'snapshots/settle'), { recursive: true, force: true });
           const snapshots = run(dir, 'bash', ['scripts/snapshot-review.sh']).slice(-1500);
           const sharedSheets = selectB3ReviewImages(dir);
-          const runDir = path.resolve('.local/stages', input.topicId, 'b3', execution.runId);
+          const runDir = path.resolve(input.stateRoot ?? '.local/creation', 'runs', execution.runId);
           const sheets = saveRunContactSheets(runDir, round, sharedSheets);
           return { index, retime, technical, errors, green: /→\s*GREEN/.test(technical), snapshots, sheets, settle: readFileSync(path.join(dir, 'snapshots/settle.txt'), 'utf8').trim() };
         }, { round });
@@ -308,7 +327,9 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
         expectedArtifacts: [{ role: 'inspection', title: '成品检查', required: true }],
       }, async phase => {
         const value = await phase.agent('inspect', inspector, {
-          contactSheets: assembled.report.sheets, settlePoints: assembled.report.settle, lines, technicalCheck: assembled.report.technical,
+          contactSheets: assembled.report.sheets,
+          reviewImages: assembled.report.sheets.map(file => path.relative(path.dirname(assembled.report.sheets[0]!), file).split(path.sep).join('/')),
+          settlePoints: assembled.report.settle, lines, technicalCheck: assembled.report.technical,
           standards: input.standards, scope: input.scope, renderSegmentCount: lines.length,
           ...(input.humanReview ? { humanReview: input.humanReview } : {}), ...b3InspectorContext(input.brief),
         });
@@ -345,7 +366,7 @@ export function createB3Workflow(config: B3Input, model: { worker: StageModel; j
         }, async phase => {
           const video = await phase.task('render', (_request, execution) => {
             const rendered = renderEpisodeVideo(dir, () => run(dir, 'bash', [renderScriptPath]));
-            const runDir = path.resolve('.local/stages', input.topicId, 'b3', execution.runId);
+            const runDir = path.resolve(input.stateRoot ?? '.local/creation', 'runs', execution.runId);
             mkdirSync(runDir, { recursive: true });
             const output = saveRunVideo(runDir, rendered.output, execution.stepRunId);
             return { ...rendered, output, exports: [output] };

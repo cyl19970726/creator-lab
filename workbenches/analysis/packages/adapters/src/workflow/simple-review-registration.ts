@@ -2,14 +2,14 @@ import type { CreatorArtifactStore, CreatorResearchRepository, CreatorSynthesisO
   CreatorSynthesisWorkflowStartInput, PostWorkflowStartInput, RepositoryResearchVersionRegistrar,
   SimpleRegistrationInput, VideoReconstructionOutcome } from "../../../research/index.js";
 import { artifactPayloadSha256, type ArtifactRef } from "@signal-room/workflow";
-import type { SQLiteWorkflowRunStore } from "./sqlite-run-store.js";
+import type { ResearchRunStore } from "./research-workflow-composition.js";
 import { artifactPath } from "../core/artifacts.js";
 import { assertPinnedResearchInput, fileDigest, type PinnedResearchInput } from "./research-inputs.js";
 
 type Candidate = { reportArtifactRef: string; reportSha256: string; outcome: unknown };
 
 /** Review metadata accompanies the selected candidate; it never substitutes an old evaluated outcome. */
-export function simpleReviewRegistration(store: SQLiteWorkflowRunStore, artifacts: CreatorArtifactStore,
+export function simpleReviewRegistration(store: ResearchRunStore, artifacts: CreatorArtifactStore,
   registrar: RepositoryResearchVersionRegistrar, repository: CreatorResearchRepository) {
   return async (input: SimpleRegistrationInput) => {
     const evidence = "evidence" in input.source ? input.source.evidence : input.source.frozenInputs;
@@ -57,7 +57,7 @@ export function simpleReviewRegistration(store: SQLiteWorkflowRunStore, artifact
     }
     const source = frozen.source as CreatorSynthesisWorkflowStartInput;
     // The registrar verifies the frozen source against the current run inside its transaction.
-    if (!repository.get(source.creatorRunId)) throw new Error("CREATOR_RESEARCH_RUN_NOT_FOUND");
+    if (!await repository.get(source.creatorRunId)) throw new Error("CREATOR_RESEARCH_RUN_NOT_FOUND");
     return registrar.registerCreatorVersion({ creatorRunId: source.creatorRunId,
       source: { reconstructionBatchArtifactRef: source.reconstructionBatchArtifactRef,
         portfolioArtifactRef: source.portfolioArtifactRef, portfolioAnnotationsArtifactRef: source.portfolioAnnotationsArtifactRef,

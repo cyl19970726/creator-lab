@@ -1,0 +1,319 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "文件如何成为 Workflow 的准确输入与产物",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": ".archify/architecture-storage-harness-20261010-212400/workflow-storage.html",
+    "repository": {
+      "url": "https://github.com/cyl19970726/creator-lab.git",
+      "revision": "b713d530af185eb20a2f5a6767373d8e6dbb898c",
+      "link_mode": "local-only"
+    }
+  },
+  "lanes": [
+    {
+      "id": "intake",
+      "label": "资料入库"
+    },
+    {
+      "id": "execution",
+      "label": "冻结与执行"
+    },
+    {
+      "id": "publication",
+      "label": "提交与读取"
+    },
+    {
+      "id": "reading",
+      "label": "复用与阅读"
+    },
+    {
+      "id": "recovery",
+      "label": "失败与对账",
+      "variant": "exception"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "upload",
+      "lane": "intake",
+      "col": 0,
+      "type": "frontend",
+      "label": "CLI 上传附件",
+      "sublabel": "真实字节 · 已认证",
+      "width": 160,
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/space-api/server.ts",
+          "line": 334,
+          "end_line": 358
+        }
+      ]
+    },
+    {
+      "id": "verify",
+      "lane": "intake",
+      "col": 1,
+      "type": "cloud",
+      "label": "R2 写入与校验",
+      "sublabel": "同内容 key 不覆盖",
+      "width": 160,
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/blob-store.ts",
+          "line": 60,
+          "end_line": 83
+        }
+      ]
+    },
+    {
+      "id": "manifest",
+      "lane": "intake",
+      "col": 2,
+      "type": "database",
+      "label": "登记 BlobManifest",
+      "sublabel": "SHA · size · mediaType",
+      "width": 160,
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/service.ts",
+          "line": 479,
+          "end_line": 505
+        }
+      ]
+    },
+    {
+      "id": "import",
+      "lane": "intake",
+      "col": 3,
+      "type": "backend",
+      "label": "导入资产版本",
+      "sublabel": "schema · 来源 · 附件",
+      "width": 160,
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/service.ts",
+          "line": 432,
+          "end_line": 469
+        }
+      ]
+    },
+    {
+      "id": "freeze",
+      "lane": "execution",
+      "col": 3,
+      "type": "database",
+      "label": "冻结 Case 输入",
+      "sublabel": "准确方法与资产版本",
+      "width": 160,
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/service.ts",
+          "line": 374,
+          "end_line": 400
+        }
+      ]
+    },
+    {
+      "id": "context",
+      "lane": "execution",
+      "col": 4,
+      "type": "backend",
+      "label": "准备节点上下文",
+      "sublabel": "输入槽 · 投影 · attempt",
+      "width": 160,
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/service.ts",
+          "line": 560,
+          "end_line": 613
+        }
+      ]
+    },
+    {
+      "id": "execute",
+      "lane": "execution",
+      "col": 5,
+      "type": "backend",
+      "label": "Agent / 程序执行",
+      "sublabel": "限定客户端与工具",
+      "width": 160,
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/runtime.ts",
+          "line": 248,
+          "end_line": 280
+        }
+      ]
+    },
+    {
+      "id": "submit",
+      "lane": "publication",
+      "col": 5,
+      "type": "database",
+      "label": "提交准确产物",
+      "sublabel": "校验后 PG 原子提交",
+      "width": 160,
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/service.ts",
+          "line": 690,
+          "end_line": 729
+        }
+      ]
+    },
+    {
+      "id": "read",
+      "lane": "reading",
+      "col": 5,
+      "type": "frontend",
+      "label": "下游 / 工作台读取",
+      "sublabel": "版本 → 附件 → 校验字节",
+      "width": 160,
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/space-api/server.ts",
+          "line": 375,
+          "end_line": 385
+        }
+      ]
+    },
+    {
+      "id": "failure",
+      "lane": "recovery",
+      "col": 1,
+      "type": "backend",
+      "label": "对象已写 · 记账失败",
+      "sublabel": "不生成可用资产",
+      "width": 160,
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/service.ts",
+          "line": 479,
+          "end_line": 505
+        }
+      ]
+    },
+    {
+      "id": "retry",
+      "lane": "recovery",
+      "col": 2,
+      "type": "backend",
+      "label": "原内容重新提交",
+      "sublabel": "同 key 校验后对账",
+      "width": 160,
+      "sources": [
+        {
+          "path": "vendor/agent-workflow/packages/spaces/service.ts",
+          "line": 479,
+          "end_line": 505
+        }
+      ]
+    }
+  ],
+  "mainPath": [
+    "upload",
+    "verify",
+    "manifest",
+    "import",
+    "freeze",
+    "context",
+    "execute",
+    "submit",
+    "read"
+  ],
+  "edges": [
+    {
+      "id": "main-0",
+      "from": "upload",
+      "to": "verify",
+      "variant": "emphasis"
+    },
+    {
+      "id": "main-1",
+      "from": "verify",
+      "to": "manifest",
+      "variant": "emphasis"
+    },
+    {
+      "id": "main-2",
+      "from": "manifest",
+      "to": "import",
+      "variant": "emphasis"
+    },
+    {
+      "id": "main-3",
+      "from": "import",
+      "to": "freeze",
+      "variant": "emphasis"
+    },
+    {
+      "id": "main-4",
+      "from": "freeze",
+      "to": "context",
+      "variant": "emphasis"
+    },
+    {
+      "id": "main-5",
+      "from": "context",
+      "to": "execute",
+      "variant": "emphasis"
+    },
+    {
+      "id": "main-6",
+      "from": "execute",
+      "to": "submit",
+      "variant": "emphasis"
+    },
+    {
+      "id": "main-7",
+      "from": "submit",
+      "to": "read",
+      "variant": "emphasis"
+    },
+    {
+      "id": "object-db-failure",
+      "from": "verify",
+      "to": "failure",
+      "label": "记账失败",
+      "variant": "dashed",
+      "role": "error"
+    },
+    {
+      "id": "retry-object",
+      "from": "failure",
+      "to": "retry",
+      "label": "同内容重试",
+      "variant": "dashed"
+    },
+    {
+      "id": "reconcile-manifest",
+      "from": "retry",
+      "to": "manifest",
+      "label": "校验再记账",
+      "variant": "dashed",
+      "role": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Workflow 固定的是准确版本",
+      "items": [
+        "Run 固定方法、入口、InputManifest 和配置；输入不会跟随资产 head 漂移。",
+        "产物记录实际输入依赖、生产 context / step / attempt 与输出槽。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "提交与恢复边界",
+      "items": [
+        "submit 的 PG 事务覆盖资产、依赖、绑定、会话事件和步骤收据；R2 字节须先准备。",
+        "产物含新附件时先走上传校验；无附件的结构化产物只需 PG。",
+        "重试不等于重跑模型。原响应、失败记录与已发布资产分别保存；孤儿对象清理待建设。"
+      ]
+    }
+  ]
+}

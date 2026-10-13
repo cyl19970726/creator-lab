@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760">
+<rect width="1280" height="760" fill="#fff"/>
+<style>text{font-family:Arial,"PingFang SC","Noto Sans CJK SC",sans-serif;fill:#232323} .muted{fill:#666}</style>
+<rect x="0" y="0" width="215" height="760" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="20" y="30" font-size="18" font-weight="600">SPACE / 内容创作</text>
+<text x="20" y="57" font-size="13" class="muted">目的：形成可交付内容</text>
+<text x="19" y="100" font-size="14">业务目标与问题</text>
+<text x="19" y="145" font-size="14">▾ 工作流 · CONTENT</text>
+<text x="32" y="181" font-size="14">版本总览</text>
+<text x="32" y="215" font-size="14">版本遗传图谱</text>
+<text x="32" y="253" font-size="14">▾ 当前查看 v2  [切换]</text>
+<text x="45" y="289" font-size="14">设计目标与改动</text>
+<text x="45" y="323" font-size="14">方法与产出图</text>
+<text x="45" y="357" font-size="14">案例与资产</text>
+<text x="45" y="391" font-size="14">评价与分析</text>
+<rect x="8" y="405" width="198" height="29" rx="0" fill="#ececec" stroke="none" stroke-width="1"/>
+<text x="45" y="425" font-size="14" font-weight="600">调优与后续版本</text>
+<text x="32" y="469" font-size="14">服务与复盘</text>
+<text x="19" y="513" font-size="14">全部业务案例</text>
+<text x="19" y="551" font-size="14">资产库</text>
+<line x1="16" y1="592" x2="199" y2="592" stroke="#e5e5e5" stroke-width="1"/>
+<text x="20" y="620" font-size="12" class="muted">查看 v2 ≠ 采用 v2</text>
+<text x="20" y="640" font-size="11" class="muted">最新发布 / 采用 / 可执行分列</text>
+<rect x="215" y="0" width="1065" height="72" rx="0" fill="none" stroke="#b6b6b6" stroke-width="1"/>
+<text x="239" y="31" font-size="21" font-weight="600">v2 · 调优与后续版本</text>
+<text x="239" y="57" font-size="13" class="muted">当前 v2 的后续判断；尚无已记录的后继候选</text>
+<text x="1258" y="56" font-size="11" class="muted" text-anchor="end">合成线框示意 · 非实测</text>
+<line x1="940" y1="72" x2="940" y2="760" stroke="#b6b6b6" stroke-width="1"/>
+<text x="239" y="105" font-size="17" font-weight="600">沿用 Archify 画布 · 后续工作</text>
+<text x="239" y="126" font-size="12" class="muted">实线=已发现缺口；虚线=待证假设与未编号提议</text>
+<line x1="239" y1="139" x2="916" y2="139" stroke="#e5e5e5" stroke-width="1"/>
+<rect x="255" y="203" width="154" height="67" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="267" y="226" font-size="15" font-weight="600">1  验证缺口</text>
+<text x="267" y="248" font-size="12" class="muted">R3未评 / B未开始</text>
+<rect x="479" y="186" width="183" height="67" rx="4" fill="#f0f0f0" stroke="#232323" stroke-width="1.5"/>
+<text x="491" y="209" font-size="15" font-weight="600">2a  原因假设 A</text>
+<text x="491" y="231" font-size="12" class="muted">评价覆盖不足</text>
+<rect x="479" y="274" width="183" height="67" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="491" y="297" font-size="15" font-weight="600">2b  原因假设 B</text>
+<text x="491" y="319" font-size="12" class="muted">输入差异</text>
+<line x1="409" y1="235" x2="479" y2="220" stroke="#232323" stroke-width="1.3" stroke-dasharray="5 4"/>
+<path d="M 472 216 L 479 220 L 472 224" fill="none" stroke="#232323" stroke-width="1.3"/>
+<line x1="409" y1="235" x2="479" y2="308" stroke="#232323" stroke-width="1.3" stroke-dasharray="5 4"/>
+<path d="M 472 304 L 479 308 L 472 312" fill="none" stroke="#232323" stroke-width="1.3"/>
+<rect x="737" y="203" width="157" height="67" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="749" y="226" font-size="15" font-weight="600">3  改动提议</text>
+<text x="749" y="248" font-size="12" class="muted">尚未形成后继版</text>
+<line x1="662" y1="220" x2="737" y2="235" stroke="#232323" stroke-width="1.3" stroke-dasharray="5 4"/>
+<path d="M 730 231 L 737 235 L 730 239" fill="none" stroke="#232323" stroke-width="1.3"/>
+<rect x="255" y="417" width="154" height="67" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="267" y="440" font-size="15" font-weight="600">4  验证要求</text>
+<text x="267" y="462" font-size="12" class="muted">A/B 可比条件</text>
+<rect x="479" y="417" width="183" height="67" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="491" y="440" font-size="15" font-weight="600">5  近期动作</text>
+<text x="491" y="462" font-size="12" class="muted">先补 v2 评价</text>
+<rect x="737" y="417" width="157" height="67" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="749" y="440" font-size="15" font-weight="600">6  当前决定</text>
+<text x="749" y="462" font-size="12" class="muted">暂不改 / 待证</text>
+<line x1="409" y1="450" x2="479" y2="450" stroke="#232323" stroke-width="1.3"/>
+<path d="M 472 446 L 479 450 L 472 454" fill="none" stroke="#232323" stroke-width="1.3"/>
+<line x1="662" y1="450" x2="737" y2="450" stroke="#232323" stroke-width="1.3"/>
+<path d="M 730 446 L 737 450 L 730 454" fill="none" stroke="#232323" stroke-width="1.3"/>
+<line x1="815" y1="270" x2="332" y2="417" stroke="#232323" stroke-width="1" stroke-dasharray="5 4"/>
+<rect x="254" y="547" width="640" height="73" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="270" y="574" font-size="14" font-weight="600">其他分支：不改 / 补证据或校准判者 / dogfood issue</text>
+<text x="270" y="599" font-size="12" class="muted">项目 issue 关闭后仍需业务复验；提议不等于已发布版本</text>
+<text x="961" y="107" font-size="13" class="muted">选中对象 · 详情</text>
+<text x="961" y="140" font-size="19" font-weight="600">②a 待证假设 A</text>
+<text x="961" y="165" font-size="12" class="muted">关联缺口 ①；不是已证实原因</text>
+<line x1="960" y1="181" x2="1258" y2="181" stroke="#e5e5e5" stroke-width="1"/>
+<text x="961" y="211" font-size="14" font-weight="600">现有证据</text>
+<text x="961" y="235" font-size="13">A/v2 R3 完成未评；B/v2 尚未开始。</text>
+<text x="961" y="275" font-size="14" font-weight="600">竞争解释</text>
+<text x="961" y="299" font-size="13">输入、判者或标准差异也可能影响比较。</text>
+<text x="961" y="339" font-size="14" font-weight="600">下一步</text>
+<text x="961" y="363" font-size="13">先补 v2 评价，核对计划 P 的可比条件。</text>
+<text x="961" y="403" font-size="14" font-weight="600">状态</text>
+<text x="961" y="427" font-size="13">改动只是一项未编号提议，尚无后继版。</text>
+</svg>

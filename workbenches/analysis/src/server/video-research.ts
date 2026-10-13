@@ -16,6 +16,7 @@ import {
 } from "../../packages/research/index.js";
 import { videoResearchSchema, type VideoResearch } from "../shared/video-research.js";
 import { projectPostSourceFacts } from "./post-source-facts.js";
+import { assertFinalSummaryPerformance } from "../../packages/adapters/src/platform/video/video-final-summary.js";
 
 function record(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function text(value: unknown, fallback = ""): string { return typeof value === "string" ? value : fallback; }
@@ -44,10 +45,15 @@ function ocrEvidenceEntries(rootPath: string, rootRef: string): Array<[string, V
   const ocrPath = path.join(rootPath, "targeted-evidence", "ocr-evidence.json");
   if (!fs.existsSync(ocrPath)) return [];
   const ocr = record(JSON.parse(fs.readFileSync(ocrPath, "utf8")) as unknown);
+  const sourceFrameBase = text(ocr.sourceFrameBase);
   return list(ocr.frames).flatMap((raw) => {
     const frame = record(raw); const sourceFrame = text(frame.sourceFrame);
-    const safeFrame = sourceFrame && !path.isAbsolute(sourceFrame) && !sourceFrame.split(/[\\/]/).includes("..");
-    const artifactRef = safeFrame ? `${rootRef}targeted-evidence/${sourceFrame}` : null;
+    const safeRelative = /^[A-Za-z0-9._/-]+$/u.test(sourceFrame) && !sourceFrame.split("/").some(part => part === "." || part === "..");
+    const relative = sourceFrameBase === "candidate-root"
+      ? /^(?:evidence|targeted-evidence)\/frames\/[A-Za-z0-9._/-]+\.(?:jpg|jpeg|png)$/u.test(sourceFrame) && safeRelative ? sourceFrame : null
+      : sourceFrameBase === "" && /^frames\/[A-Za-z0-9._/-]+\.(?:jpg|jpeg|png)$/u.test(sourceFrame) && safeRelative
+        ? `targeted-evidence/${sourceFrame}` : null;
+    const artifactRef = relative ? `${rootRef}${relative}` : null;
     return list(frame.lines).flatMap((line) => {
       const value = record(line); const id = text(value.id); const content = text(value.text).trim();
       if (!id || !content) return [];
@@ -119,20 +125,23 @@ function safeThreeLens(batchItem: { threeLensEvaluationArtifactRef: string | nul
 
 function readJson(reference: string): unknown { return JSON.parse(fs.readFileSync(artifactPath(reference), "utf8")) as unknown; }
 
-function researchOwnerId(run: ReturnType<CreatorResearchService["list"]>[number]): string {
+function researchOwnerId(run: Awaited<ReturnType<CreatorResearchService["list"]>>[number]): string {
   return run.creatorId ?? run.canonicalSlug ?? `run-${run.id}`;
 }
 
-export function loadVideoResearch(service: CreatorResearchService, creatorId: string, videoId: string, requestedRunId?: string): VideoResearch | null {
+export async function loadVideoResearch(service: CreatorResearchService, creatorId: string, videoId: string, requestedRunId?: string): Promise<VideoResearch | null> {
   return loadVideoResearchSource(service, creatorId, videoId, requestedRunId);
 }
 
 /** Read an immutable workflow candidate without promoting it over the current report. */
-export function loadWorkflowVideoResearch(service: CreatorResearchService, runId: string, postId: string,
-  candidate: { reportArtifactRef: string; reportSha256: string; outcome: Record<string, unknown> }): VideoResearch | null {
-  const run = service.get(runId);
-  const original = service.portfolio(runId)?.reconstructionBatch?.items.find((item) => item.postExternalId === postId);
-  if (!run || !original || !candidate.reportArtifactRef.startsWith(`/artifacts/${runId}/workflow-reconstructions/`)) return null;
+export async function loadWorkflowVideoResearch(service: CreatorResearchService, runId: string, postId: string,
+  candidate: { reportArtifactRef: string; reportSha256: string; outcome: Record<string, unknown> }): Promise<VideoResearch | null> {
+  const run = await service.get(runId);
+  const original = (await service.portfolio(runId))?.reconstructionBatch?.items.find((item) => item.postExternalId === postId);
+  if (!run || !original || ![
+    `/artifacts/${runId}/workflow-reconstructions/`,
+    `/artifacts/${runId}/workflow-responses/`
+  ].some((prefix) => candidate.reportArtifactRef.startsWith(prefix))) return null;
   if (createHash("sha256").update(fs.readFileSync(artifactPath(candidate.reportArtifactRef))).digest("hex") !== candidate.reportSha256) {
     throw new Error("CANDIDATE_REVISION_CHANGED");
   }
@@ -146,17 +155,17 @@ export function loadWorkflowVideoResearch(service: CreatorResearchService, runId
   return loadVideoResearchSource(service, researchOwnerId(run), postId, runId, item);
 }
 
-export function listLatestVideoResearch(service: CreatorResearchService) {
-  const latestRuns = new Map<string, ReturnType<CreatorResearchService["list"]>[number]>();
-  for (const run of service.list(100)) {
+export async function listLatestVideoResearch(service: CreatorResearchService) {
+  const latestRuns = new Map<string, Awaited<ReturnType<CreatorResearchService["list"]>>[number]>();
+  for (const run of await service.list(100)) {
     const ownerId = researchOwnerId(run);
     if (!latestRuns.has(ownerId)) latestRuns.set(ownerId, run);
   }
-  return [...latestRuns.values()].flatMap((run) => {
+  const groups = await Promise.all([...latestRuns.values()].map(async (run) => {
     const ownerId = researchOwnerId(run);
-    const batch = service.portfolio(run.id)?.reconstructionBatch?.items ?? [];
-    return batch.flatMap((item) => {
-      const report = loadVideoResearchSource(service, ownerId, item.postExternalId, run.id);
+    const batch = (await service.portfolio(run.id))?.reconstructionBatch?.items ?? [];
+    const reports = await Promise.all(batch.map(async (item) => {
+      const report = await loadVideoResearchSource(service, ownerId, item.postExternalId, run.id);
       if (!report) return [];
       return [{
         creatorId: report.creatorId,
@@ -166,17 +175,19 @@ export function listLatestVideoResearch(service: CreatorResearchService) {
         runId: run.id,
         href: `/creators/${encodeURIComponent(report.creatorId)}/videos/${encodeURIComponent(report.id)}?run=${encodeURIComponent(run.id)}`
       }];
-    });
-  });
+    }));
+    return reports.flat();
+  }));
+  return groups.flat();
 }
 
-function loadVideoResearchSource(service: CreatorResearchService, creatorId: string, videoId: string, requestedRunId?: string,
-  candidateItem?: VideoReconstructionBatch["items"][number]): VideoResearch | null {
+async function loadVideoResearchSource(service: CreatorResearchService, creatorId: string, videoId: string, requestedRunId?: string,
+  candidateItem?: VideoReconstructionBatch["items"][number]): Promise<VideoResearch | null> {
   const run = requestedRunId
-    ? service.get(requestedRunId)
-    : service.list(100).find((item) => researchOwnerId(item) === creatorId) ?? null;
+    ? await service.get(requestedRunId)
+    : (await service.list(100)).find((item) => researchOwnerId(item) === creatorId) ?? null;
   if (!run || researchOwnerId(run) !== creatorId) return null;
-  const portfolio = service.portfolio(run.id);
+  const portfolio = await service.portfolio(run.id);
   const batchItem = candidateItem ?? portfolio?.reconstructionBatch?.items.find((item) => item.postExternalId === videoId);
   if (!batchItem?.reconstructionArtifactRef) return null;
   const selection = portfolio?.selection?.items.find((item) => item.externalId === videoId);
@@ -201,7 +212,7 @@ function loadVideoResearchSource(service: CreatorResearchService, creatorId: str
     list(builderVisual.carriers).length > 0 && list(builderVisual.claims).length > 0 &&
     list(builderVisual.shotSemantics).length > 0 && list(builderVisual.rhythm).length > 0;
   if (!hasBuilderThreeLenses) return null;
-  const rootRef = batchItem.reconstructionArtifactRef.replace(/reconstruction\.json$/, "");
+  const rootRef = `${path.posix.dirname(batchItem.reconstructionArtifactRef)}/`;
   const rootPath = path.dirname(artifactPath(batchItem.reconstructionArtifactRef));
   const articlePath = batchItem.articleArtifactRef ? artifactPath(batchItem.articleArtifactRef) : path.join(rootPath, "article.md");
   const article = fs.existsSync(articlePath) ? readReportSource(articlePath).text : null;
@@ -396,6 +407,13 @@ function loadVideoResearchSource(service: CreatorResearchService, creatorId: str
     collections: number(selectionRecord.collections), comments: number(selectionRecord.comments), shares: number(selectionRecord.shares),
     sourceRefs: [run.inventoryArtifactRef, run.detailArtifactRef, run.mediaManifestArtifactRef]
   });
+  if (reconstruction.summaryContractVersion === "single-post-summary@1" && !builderLenses.finalSummary) {
+    throw new Error("Final summary contract marker is present without Builder finalSummary");
+  }
+  if (builderLenses.finalSummary) {
+    if (!frozenSource?.facts) throw new Error("Builder finalSummary requires frozen post-source-input facts");
+    assertFinalSummaryPerformance(builderLenses.finalSummary, sourceFacts);
+  }
   const inventory = run.inventoryArtifactRef ? creatorInventorySchema.safeParse(readJson(run.inventoryArtifactRef)) : null;
   const observation = buildPostPerformance({ externalId: videoId, ...sourceFacts.metrics },
     inventory?.success ? inventory.data.posts : [], sourceFacts.capturedAt,
@@ -421,6 +439,7 @@ function loadVideoResearchSource(service: CreatorResearchService, creatorId: str
     title: sourceFacts.title ?? "标题未识别", sourceHref: sourceFacts.sourceUrl,
     sourceLabel: `video-content-reconstruction · ${batchItem.state}`,
     sourceFacts,
+    finalSummary: builderLenses.finalSummary ?? null,
     thesis,
     sourceRevision: sourceRead.revision,
     overview: sourceRead.revision ? { state: "stale", overview: null } : loadReportOverview(artifactPath(batchItem.reconstructionArtifactRef)),

@@ -38,6 +38,7 @@ test('API validates scope, immutable sources, exact-version comments and explici
   const service = {
     list: async () => [],
     getRun: () => ({ id: 'run' }),
+    assertWritable: async () => {},
     start: async (input: any) => {
       assert.equal(input.sources[0].content, 'evidence');
       startCount++;
@@ -55,16 +56,29 @@ test('API validates scope, immutable sources, exact-version comments and explici
       return { runId: 'repair' };
     },
   };
+  const storedEvents: any[] = [];
+  const collaboration = {
+    async append(runId: string, item: any, _key: string, fields: any) {
+      const event = { id: `event-${storedEvents.length}`, runId, identity: item, actor: 'user', createdAt: new Date().toISOString(), ...fields };
+      storedEvents.push(event);
+      return event;
+    },
+    async list(runId: string, item: any) {
+      return storedEvents.filter(event => event.runId === runId && JSON.stringify(event.identity) === JSON.stringify(item));
+    },
+  };
   const app = await createApp(
     {
       projectRoot: dir,
       stateRoot: join(dir, 'state'),
       contentRoot: join(dir, 'content'),
       artifactRoot: join(dir, 'assets'),
+      databaseUrl: 'postgresql://unused',
       port: 4317,
       mediaRoot: undefined,
     },
     service,
+    { collaboration: collaboration as any },
   );
   try {
     let r = await app.inject({

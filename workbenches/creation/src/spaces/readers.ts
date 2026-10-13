@@ -1,5 +1,6 @@
 import type { AssetReader, AssetVersion } from '@signal-room/workflow-spaces';
 import {contentBusinessAssetReaders} from './content-business-readers.js';
+import {contentDraftAgentOutputSchema} from '../stages/content.js';
 
 /** Returned strings are untrusted stored data; render them as text, never markup. */
 const obj = (value: unknown): Record<string, unknown> =>
@@ -18,8 +19,8 @@ const routeLabels: Record<string, string> = { pass: '等待创作者判断', rew
 const resultLabels: Record<string, string> = { ok: '满足', weak: '薄弱', fail: '未满足' };
 const problemLabels: Record<string, string> = { wrong: '与材料不符', overclaim: '表述超出证据', unsupported: '缺少材料支持' };
 
-const manuscript: AssetReader = asset => {
-  const draft = data(asset), decision = obj(draft.decision), script = obj(draft.script);
+const manuscriptPayload = (payload: unknown) => {
+  const draft = obj(payload), decision = obj(draft.decision), script = obj(draft.script);
   const segments = arr(script.segments).map(obj), beats = arr(decision.beats).map(obj);
   return { title: str(script.title) || '完整稿件', sections: [
     section('内容目标', [field('核心问题', decision.coreQuestion), field('一句话回答', decision.oneLineAnswer),
@@ -39,6 +40,17 @@ const manuscript: AssetReader = asset => {
     {...section('来源标识', bullets(script.sourcesUsed, '未列出来源标识；请查看准确绑定的研究与材料。'), 'evidence'),sourceRefs:arr(script.sourcesUsed).map(str).filter(Boolean)},
     section('作者自述的改动', str(script.changesFromPrevious) || str(decision.changesFromPrevious) || '未填写', 'evidence'),
   ] };
+};
+
+const manuscript: AssetReader = asset => manuscriptPayload(asset.payload);
+
+/** Display only: schema-shaped model output is still unpublished and citation validity is not asserted. */
+export const readContentDraftResponse = (output: unknown) => {
+  const parsed = contentDraftAgentOutputSchema.safeParse(output);
+  if (!parsed.success) return null;
+  const reading = manuscriptPayload(parsed.data);
+  reading.sections[0]!.text += `\n\n开场切入：${parsed.data.decision.hook}\n\n主线：${parsed.data.decision.beats.map(beat => beat.says).join(' → ')}`;
+  return reading;
 };
 
 const research: AssetReader = asset => {

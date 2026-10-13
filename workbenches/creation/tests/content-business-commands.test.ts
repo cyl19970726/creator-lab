@@ -39,12 +39,34 @@ function fixture(){
     runStatus:vi.fn(async()=>({binding:{runId:'run-1',spaceId,caseId:'case-1',entrypoint:'content',workflowVersionId:versionId,inputManifestId:'manifest-1'},run:{state:'queued',metadata:undefined as {commandKey:string}|undefined},draftVersionId:undefined as string|undefined})),
     methodAvailability:vi.fn(async()=>({available:true,reason:null})),
   };
-  const options={spaceId,principalId,models:{worker:{model:'gpt-5.6-luna',reasoningEffort:'high'},judge:{model:'gpt-5.6-luna',reasoningEffort:'high'}},
+  const options={spaceId,principalId,models:{worker:{model:'gpt-6-luna',reasoningEffort:'high'},judge:{model:'gpt-6-luna',reasoningEffort:'high'}},
     loadRelease:vi.fn(async()=>null),verifyExclusive:vi.fn(async()=>true),service,workbench} as unknown as ContentBusinessCommandOptions;
   return {commands:createContentBusinessCommands(options),options,service,workbench,cases,assets,importAsset};
 }
 
 describe('ordinary CONTENT commands',()=>{
+  it('uses an explicit one-revision budget in the frozen input and preparation',async()=>{
+    const f=fixture();
+    f.service.readWorkflowVersion.mockResolvedValue({spaceId,id:versionId,revision:'explanatory-v1',
+      entrypoints:{content:{workflowId:'content.explanatory-method'}}});
+    const commands=createContentBusinessCommands({...f.options,workflowId:'content.explanatory-method',maxRevisions:1});
+    const prepared=await commands.prepare({spaceId,key:'two-business-rounds',versionId,values});
+    expect(f.workbench.freezeInput.mock.calls[0]?.[0].input).toMatchObject({maxRevisions:1,webResearch:false});
+    expect(prepared.sections.find(section=>section.title==='冻结输入契约')?.text).toContain('maxRevisions：1');
+    expect(prepared.conditions).toContain('最多修订 1 轮');
+  });
+  it('supports an explicitly scoped independent method without treating it as ordinary CONTENT',async()=>{
+    const f=fixture();f.service.readWorkflowVersion.mockResolvedValue({spaceId,id:versionId,revision:'first-method-v1',entrypoints:{content:{workflowId:'content.first-method'}}});
+    const commands=createContentBusinessCommands({...f.options,workflowId:'content.first-method',extraConditions:['执行器：SIWC Responses','成本估算未记录']});
+    const prepared=await commands.prepare({spaceId,key:'independent-request',versionId,values});
+    expect(prepared.conditions).toContain('执行器：SIWC Responses');
+    expect(f.service.caseRunsPage).toHaveBeenCalledWith(spaceId,prepared.caseId,'content.first-method','content',undefined,101);
+    await expect(f.commands.prepare({spaceId,key:'wrong-scope',versionId,values})).rejects.toMatchObject({code:'RELATION_MISMATCH'});
+  });
+  it('rejects an online option before creating or freezing the Case',async()=>{
+    const f=fixture();await expect(f.commands.prepare({spaceId,key:'online-request',versionId,values:{...values,webResearch:true}})).rejects.toMatchObject({status:400,code:'INVALID_REQUEST'});
+    expect(f.workbench.createCase).not.toHaveBeenCalled();expect(f.workbench.startFromManifest).not.toHaveBeenCalled();expect(f.importAsset).not.toHaveBeenCalled();
+  });
   it('freezes an explicit request with sources and survives a second host instance',async()=>{
     const f=fixture();const first=await f.commands.prepare({spaceId,key:'request-1',versionId,values});
     expect(first.caseId).toMatch(/^content-business-/);

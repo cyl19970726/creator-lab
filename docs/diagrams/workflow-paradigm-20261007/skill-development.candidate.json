@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Agent Skill：从任务实践提炼方法知识",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/diagrams/workflow-paradigm-20261007/skill-development.html"
+  },
+  "lanes": [
+    { "id": "practice", "label": "真实任务与实践" },
+    { "id": "knowledge", "label": "机制解释与知识提炼" },
+    { "id": "skill", "label": "Skill 候选与独立试用" },
+    { "id": "feedback", "label": "按试用结果决定" },
+    { "id": "use", "label": "实际使用反馈" }
+  ],
+  "nodes": [
+    { "id": "task", "lane": "practice", "col": 0, "type": "external", "label": "真实任务／样例", "sublabel": "明确目标与使用情境", "width": 146 },
+    { "id": "history", "lane": "knowledge", "col": 0, "type": "database", "label": "已有样例与经验", "sublabel": "成功、失败及其边界", "width": 146 },
+    { "id": "v1", "lane": "practice", "col": 1, "type": "backend", "label": "初版方法", "sublabel": "可先有 skill 草案", "width": 142 },
+    { "id": "execute", "lane": "practice", "col": 2, "type": "cloud", "label": "执行与观察", "sublabel": "真实成果、困难与补救", "width": 146 },
+    { "id": "explain", "lane": "knowledge", "col": 3, "type": "backend", "label": "解释机制与失败边界", "sublabel": "何以有效／何时失效", "width": 166 },
+    { "id": "extract", "lane": "knowledge", "col": 4, "type": "database", "label": "提炼可复用知识与动作", "sublabel": "适用条件、判断、做法", "width": 174 },
+    { "id": "candidate", "lane": "skill", "col": 5, "type": "backend", "label": "Skill 候选", "sublabel": "触发／步骤判断／工具", "tag": "参考与验证", "width": 156, "yOffset": -66 },
+    { "id": "trial", "lane": "skill", "col": 5, "type": "security", "label": "另一案例独立试用", "sublabel": "看能否迁移且可理解", "width": 156, "yOffset": 66 },
+    { "id": "revise", "lane": "feedback", "col": 4, "type": "backend", "label": "按结果修订", "sublabel": "改知识、边界或步骤", "width": 152 },
+    { "id": "accept", "lane": "feedback", "col": 5, "type": "security", "label": "接受并实际使用", "sublabel": "可复用，但仍会演进", "width": 154, "yOffset": -60 },
+    { "id": "realfeedback", "lane": "use", "col": 5, "type": "database", "label": "实际使用反馈", "sublabel": "新证据回流方法理解", "width": 154 }
+  ],
+  "edges": [
+    { "id": "s01", "from": "task", "to": "v1" },
+    { "id": "s00", "from": "history", "to": "v1", "label": "借鉴历史" },
+    { "id": "s02", "from": "v1", "to": "execute" },
+    { "id": "s03", "from": "execute", "to": "explain" },
+    { "id": "s04", "from": "explain", "to": "extract" },
+    { "id": "s05", "from": "extract", "to": "candidate" },
+    { "id": "s06", "from": "candidate", "to": "trial" },
+    { "id": "s07", "from": "trial", "to": "accept", "label": "可迁移", "variant": "emphasis" },
+    { "id": "s08", "from": "trial", "to": "revise", "label": "发现偏差", "variant": "dashed", "role": "branch" },
+    { "id": "s10", "from": "accept", "to": "realfeedback", "label": "使用中继续检验", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "violet", "title": "Skill 是什么", "items": ["给 Agent 使用的可复用方法知识：何时触发、怎样判断与行动、用哪些工具和参考、怎样验收。", "初版方法可先写成 skill 草案，再经实践与异例试用修正；格式通过不等于成熟。"] },
+    { "dot": "amber", "title": "回流与修订", "items": ["独立试用发现偏差时，回到机制解释和知识提炼，再生成候选并复试。", "接受后仍从实际使用收集证据，回流下一轮方法理解。"] },
+    { "dot": "cyan", "title": "与另外两层的区别", "items": ["Workflow 组织执行职责及产物／控制关系；Skill 帮 Agent 做好其中可复用的判断与动作。", "Harness 提供工具、资产、上下文和执行记录；新增 Skill 不会自动训练模型权重。"] },
+    { "dot": "slate", "title": "阅读说明", "items": ["这是 Skill 知识开发范式，不是现有自动化能力或界面任务清单。", "依据：用户提出的 Skill 生命周期，以及 docs/product-understanding.md 与 vendor/agent-workflow 产品／架构文档。"] }
+  ]
+}

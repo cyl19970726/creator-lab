@@ -1,0 +1,16 @@
+{
+  "kind": "isolated diagram evidence snapshot; not a commit to creator-lab or agent-workflow",
+  "sourceHead": "6dabb99bdccf27c2db4c5298f358da4ecd8b55b0",
+  "revision": "b713d530af185eb20a2f5a6767373d8e6dbb898c",
+  "files": {
+    "vendor/agent-workflow/packages/spaces/service.ts": "3bbef6c1ba8d67c9967f0c41d8fb43bf809bb78772aec87cc497f486b9568a90",
+    "vendor/agent-workflow/packages/spaces/blob-store.ts": "edf946f8f26e1abf66db4ce855fd96076809988b6f6b1de9beaf87ee172d6b4d",
+    "vendor/agent-workflow/packages/spaces/runtime.ts": "eeafd0266dcfe831dd203a10604f23d3a5702276d49409971399b181696ab1b7",
+    "vendor/agent-workflow/packages/spaces/migration.ts": "2a2484b28ad749e780337bc59cd04495d6fe6841360fc85374383ebdef3ccb99",
+    "vendor/agent-workflow/packages/postgres/postgres-run-store.ts": "e67e54a39bf2186a01f516704672b2c0a68702e0caba275c16995808e5815b05",
+    "vendor/agent-workflow/packages/spaces/operator-cli.ts": "4b8e659a39335bc96392fe803adf2571b9042046eac09da28b6e49a52ef7be19",
+    "vendor/agent-workflow/packages/space-api/server.ts": "ed4c475de5a4c6457b5b8745647e5322146b0842325f97062050c5ebbd657728",
+    "vendor/agent-workflow/packages/workbench-ui/src/asset-attachments.tsx": "641a40985cfc5a9596c05808ba85cf1a4abffb0b0df8af607722eac3b8653640",
+    "workbenches/creation/src/spaces/blob-configuration.ts": "7c319d82c3560e782a253bc90eb306d92ae3bdf7b4292f1f80a3938013232f5c"
+  }
+}

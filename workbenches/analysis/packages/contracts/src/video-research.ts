@@ -42,6 +42,31 @@ const postQualitySchema = z.object({
   })
 });
 
+export const finalSummarySchema = z.object({
+  conclusion: z.string().min(1),
+  contentSynthesis: z.string().min(1),
+  directingSynthesis: z.string().min(1),
+  editingSynthesis: z.string().min(1),
+  reusableLessons: z.array(z.object({
+    lesson: z.string().min(1), conditions: z.string().min(1), action: z.string().min(1),
+    evidenceRefs: z.array(z.string().min(1)).min(1)
+  })).min(1),
+  limits: z.array(z.string().min(1)).min(1),
+  performance: z.object({
+    observedAt: z.string().nullable(),
+    publishedLabel: z.string().nullable(),
+    observedMetrics: z.array(z.object({
+      metric: z.enum(["likes", "collections", "comments", "shares"]),
+      value: z.number().nonnegative().nullable()
+    })).length(4),
+    interpretation: z.string().min(1),
+    comparison: z.string().nullable(),
+    limitations: z.array(z.string().min(1)).min(1),
+    evidenceRefs: z.array(z.string().min(1)).min(1)
+  })
+});
+export type FinalSummary = z.infer<typeof finalSummarySchema>;
+
 const defaultQuality = {
   buildState: "missing" as const,
   evaluationState: "skipped" as const,
@@ -86,6 +111,7 @@ export const videoResearchSchema = z.object({
     strengths: [], limitations: [], reusableStructure: [], representativeFrame: null
   }),
   reportFormat: z.literal("builder_lenses"),
+  finalSummary: finalSummarySchema.nullable().default(null),
   sourceRevision: z.string().nullable().default(null),
   contentBlocks: z.array(z.object({
     id: z.string(),

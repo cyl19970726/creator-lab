@@ -2,7 +2,7 @@
 
 Creator Lab 把三个工作台放在一个仓库里，各自独立使用，共享一份 agent-workflow。共享项目正在从现有执行包扩展为工作流执行与迭代底座：PostgreSQL 资产管理、一般 Agent SDK、评价比较与通用工作台都属于它的目标范围。creation 提供业务流程与扩展；研究和分析保留当前实现，不在本轮强制迁移。
 
-完整理解先读[产品认知、核心机制与设计推导](product-understanding.md)：业务方法为什么要这样形成，workflow 与 skill 如何开发和持续演化，由此需要哪些产品机制，再怎样组织使用。正式要求见[产品定义](../vendor/agent-workflow/docs/product.md)，人的使用方式见[工作台交互](../vendor/agent-workflow/docs/workbench-presentation.md)，实现分工见[架构](../vendor/agent-workflow/docs/architecture.md)，实际完成情况只查[建设状态](../vendor/agent-workflow/docs/harness-roadmap.md)。当前整体产品仍在整改，不将历史局部验收视为完整交付。
+Agent Workflow 从[产品全貌与任务导览](../vendor/agent-workflow/docs/documentation.md)开始，按任务进入目标、产品架构、交互、系统、方法指南或接入；[产品认知](product-understanding.md)保存推导与检验依据，[产品设计](product-design/README.md)保存布局、线框和具体路径。正式产品要求见[产品定义](../vendor/agent-workflow/docs/product.md)，人的使用方式与交互合同见[工作台交互](../vendor/agent-workflow/docs/workbench-presentation.md)，实现分工见[架构](../vendor/agent-workflow/docs/architecture.md)，实际完成情况只查[建设状态](../vendor/agent-workflow/docs/harness-roadmap.md)。认知和设计文档解释推导过程，不替代这些权威来源；当前整体产品仍在整改，不将历史局部验收视为完整交付。
 
 | 工作台 | 做什么 | 从这里读 |
 | --- | --- | --- |
@@ -11,6 +11,8 @@ Creator Lab 把三个工作台放在一个仓库里，各自独立使用，共�
 | 分析 | 单帖内容还原、编导与画面分析；单博主作品研究 | [分析工作台](../workbenches/analysis/README.md) |
 
 三者没有必经的先后顺序。流程图见[三个工作台](overview.md)，安装与启动见[仓库使用说明](../README.md)。
+
+系统架构从[总览](../vendor/agent-workflow/docs/architecture.md)开始，依次说明 Space 合同、方法与实际资产关系、执行 harness、存储一致性、工作台与 API；读到需要接入时再进入调用指南。整理前的长篇讨论和设计原文保留在历史区，不作为现行入口。
 
 ## 核心思想
 
@@ -23,12 +25,13 @@ Creator Lab 把三个工作台放在一个仓库里，各自独立使用，共�
 
 ## 文档怎么组织
 
-通用产品和技术合同在 agent-workflow 维护；业务文档说明领域流程、schema、阅读器、标准与接入。整体论证顺序是**产品认知与范式 → 方法形成和生命周期 → 产品责任与机制 → 信息架构与交互 → 技术实现 → 当前证据与阶段取舍**。按问题直接进入相应文档，不要求每次全部通读。现行定义修订在原页，日期化计划和实施记录保留历史证据，避免每轮对话都在旧叙事后追加另一套答案。
+通用产品和技术合同在 agent-workflow 维护；业务文档说明领域流程、schema、阅读器、标准与接入。整体论证顺序是**产品认知与范式 → 方法形成和生命周期 → 产品责任与机制 → 产品设计与场景走查 → 技术实现 → 当前证据与阶段取舍**。认知和设计分开维护，按问题直接进入相应文档，不要求每次全部通读。现行定义修订在原页，日期化计划和实施记录保留历史证据，避免每轮对话都在旧叙事后追加另一套答案。
 
 | 要回答的问题 | 唯一主要入口 |
 | --- | --- |
 | 产品是什么、为谁解决什么问题 | [product.md](../vendor/agent-workflow/docs/product.md) |
-| 核心范式、skill/workflow 生命周期怎样推导产品机制与使用结构 | [产品认知与设计推导](product-understanding.md) |
+| 核心范式、方法生命周期、场景责任与学习机制怎样推导 | [产品认知](product-understanding.md)及其分主题页面 |
+| 认知如何落成整体布局和具体使用路径 | [产品设计](product-design/README.md)及其分主题页面 |
 | 实际怎样形成首版、评价方法、验证并采用改法 | [设计](../vendor/agent-workflow/docs/designing-workflows.md)、[评估](../vendor/agent-workflow/docs/evaluating-workflows.md)、[优化](../vendor/agent-workflow/docs/optimizing-workflows.md)与[调优循环](../vendor/agent-workflow/docs/tuning-loop.md) |
 | Space 长什么样、图与各类对象如何使用 | [workbench-presentation.md](../vendor/agent-workflow/docs/workbench-presentation.md) |
 | 模块、包、服务与业务如何分工 | [architecture.md](../vendor/agent-workflow/docs/architecture.md) |
@@ -38,7 +41,7 @@ Creator Lab 把三个工作台放在一个仓库里，各自独立使用，共�
 
 | 部分 | 源文件 |
 | --- | --- |
-| 仓库 | `docs/`（本页、[三个工作台](overview.md)、[迁移记录](migration.md)）和根目录 `README.md` |
+| 仓库与产品推导 | `docs/`（本页、[三个工作台](overview.md)、[迁移记录](migration.md)、[产品认知](product-understanding.md)与[产品设计](product-design/README.md)）和根目录 `README.md` |
 | 创作 | `workbenches/creation/docs/` |
 | agent-workflow | `vendor/agent-workflow/README.md` 与 `docs/` |
 | 研究、分析 | 各自的 `README.md` 与 `docs/` |
@@ -50,4 +53,4 @@ pnpm docs:build   # 生成 docs/site/，检查所有站内链接和锚点
 pnpm docs:serve   # 在仓库根目录起本机服务
 ```
 
-然后打开 `http://127.0.0.1:4340/docs/site/index.html`。`docs/site/` 不进仓库。新增文档页面时，把它加进 `scripts/build-docs.mjs` 的 `NAV`；链接到不在 `NAV` 里的 Markdown 页面会导致生成失败。
+然后打开 `http://127.0.0.1:4340/docs/site/index.html`。`docs/site/` 不进仓库。新增文档页面时，把它加进 `scripts/build-docs.mjs` 的 `NAV`；产品认知和产品设计的目录由该分组内的可展开子目录维护，分别登记概览页与主题页。链接到不在 `NAV` 里的 Markdown 页面会导致生成失败。

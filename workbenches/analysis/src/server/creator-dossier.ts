@@ -27,7 +27,7 @@ type CorpusIntegrity = {
   stopReason?: "explicit_end" | "quiescent_incomplete" | "budget_reached";
 };
 
-type PortfolioAnnotations = NonNullable<ReturnType<CreatorResearchService["portfolio"]>>["annotations"];
+type PortfolioAnnotations = NonNullable<Awaited<ReturnType<CreatorResearchService["portfolio"]>>>["annotations"];
 
 function evidenceStatus(reconstructed: { state: string; researchReview?: {
   reviewStatus: "completed_no_findings" | "completed_with_findings" | "failed";
@@ -154,21 +154,21 @@ function corpusHealth(analysis: { metricCoverage: { rate: number } } & CorpusInt
   return health(status, `${coverageReason}${integrityReason}`, capturedAt);
 }
 
-function chooseRun(service: CreatorResearchService, id: string): CreatorResearchRun | null {
-  return service.get(id) ?? service.list(100).find((run) => run.creatorId === id || run.canonicalSlug === id) ?? null;
+async function chooseRun(service: CreatorResearchService, id: string): Promise<CreatorResearchRun | null> {
+  return await service.get(id) ?? (await service.list(100)).find((run) => run.creatorId === id || run.canonicalSlug === id) ?? null;
 }
 
-export function projectRunDossier(service: CreatorResearchService, requestedId: string): CreatorDossier | null {
-  const activeRun = chooseRun(service, requestedId);
+export async function projectRunDossier(service: CreatorResearchService, requestedId: string): Promise<CreatorDossier | null> {
+  const activeRun = await chooseRun(service, requestedId);
   if (!activeRun) return null;
-  const sameCreator = service.list(100).filter((run) => run.creatorId && run.creatorId === activeRun.creatorId);
-  const explicitRunRequest = service.get(requestedId)?.id === requestedId;
+  const sameCreator = (await service.list(100)).filter((run) => run.creatorId && run.creatorId === activeRun.creatorId);
+  const explicitRunRequest = (await service.get(requestedId))?.id === requestedId;
   const candidates = [...new Map([activeRun, ...sameCreator].map((run) => [run.id, run])).values()];
   const sourceRun = explicitRunRequest
     ? candidates.find((run) => run.id === activeRun.id && run.portfolioArtifactRef && run.selectionArtifactRef) ?? activeRun
     : candidates.find((run) => ["ready", "reviewable"].includes(run.status) && run.synthesisArtifactRef && run.portfolioArtifactRef && run.selectionArtifactRef)
       ?? candidates.find((run) => Boolean(run.portfolioArtifactRef && run.selectionArtifactRef)) ?? activeRun;
-  const data = service.portfolio(sourceRun.id);
+  const data = await service.portfolio(sourceRun.id);
   const synthesis = data?.synthesis ?? null;
   const analysis = data?.analysis ?? null;
   const annotations = data?.annotations ?? null;
@@ -346,9 +346,9 @@ export function projectRunDossier(service: CreatorResearchService, requestedId: 
   });
 }
 
-export function loadCreatorDossier(service: CreatorResearchService, id: string): CreatorDossier | null {
-  const runProjection = projectRunDossier(service, id);
+export async function loadCreatorDossier(service: CreatorResearchService, id: string): Promise<CreatorDossier | null> {
+  const runProjection = await projectRunDossier(service, id);
   if (!runProjection) return null;
-  const batch = runProjection.run ? service.portfolio(runProjection.run.id)?.reconstructionBatch ?? null : null;
+  const batch = runProjection.run ? (await service.portfolio(runProjection.run.id))?.reconstructionBatch ?? null : null;
   return creatorDossierSchema.parse({ ...runProjection, pipeline: buildCreatorResearchPipeline(runProjection.run, runProjection, batch) });
 }

@@ -3,7 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { Pool } from 'pg';
 import { SiwcAuth } from '@signal-room/workflow-agent-sdk';
-import { migrateWorkflowSpaces, PostgresBlobStore, WorkflowSpaceService } from '@signal-room/workflow-spaces';
+import { migrateWorkflowSpaces, WorkflowSpaceService } from '@signal-room/workflow-spaces';
+import {openConfiguredContentBlobs} from './blob-configuration.js';
 import { createContentWorkbench } from './content-workbench.js';
 import { contentSiwcExecutorManifest, createContentSiwcRunner } from './content-runner.js';
 import { registerContentPresentation } from './presentation-registration.js';
@@ -29,14 +30,13 @@ export async function openContentHost(initialize = false) {
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const databaseUrl = process.env.WORKFLOW_DATABASE_URL ?? config.databaseUrl;
   if (!databaseUrl) throw new Error('Set WORKFLOW_DATABASE_URL or a private CONTENT_WORKBENCH_CONFIG file.');
-  const model = process.env.WORKFLOW_SIWC_MODEL ?? config.model;
-  if (!model) throw new Error('Set WORKFLOW_SIWC_MODEL explicitly.');
+  const model = process.env.WORKFLOW_SIWC_MODEL ?? config.model ?? 'gpt-6-luna';
   const principal = { id: process.env.WORKFLOW_SPACE_PRINCIPAL ?? config.principal ?? 'local-owner', kind: 'human' as const };
   const spaceId = process.env.WORKFLOW_SPACE_ID ?? config.spaceId ?? 'creator-content';
   const pool = new Pool({ connectionString: databaseUrl });
   try {
-    const blobs = new PostgresBlobStore(pool);
-    if (initialize) { await migrateWorkflowSpaces(pool); await blobs.migrate(); }
+    const {blobs,legacy} = await openConfiguredContentBlobs(pool);
+    if (initialize) { await migrateWorkflowSpaces(pool); await legacy.migrate(); }
     let service:WorkflowSpaceService;
     service = new WorkflowSpaceService(pool, blobs, principal, {readerIds:Object.keys(creationAssetReaders),resultRoleIds:['final-draft','research','cold-read','fact-check','editorial-review'],
       processResolvers:{'creation.content':input=>createContentProcessResolver(service)(input)}});

@@ -31,9 +31,9 @@ flowchart TB
 
 ## 接受与版本
 
-`pnpm stage:accept <topic> <runId> --verdict accept --reviewer <name>` 从该运行的冻结输入、最终 `content-draft`、研究和审阅生成不可变的 `brief/v<n>.json`；采用时更新 `brief/latest.json`。失败、阻塞或未收敛的内容不能作为通过的内容交接。
+旧 `stage:accept` 文件入口已退役。当前在 CONTENT Space 中记录准确内容版本及创作者决定；给 B3 的输入显式携带被接受的版本化 brief。失败、阻塞或未收敛的内容不能作为通过的内容交接。
 
-评估用 `--keep-current` 仍生成独立版本，但不修改当前采用。B3 输入写 `"briefFrom": "<topic>"`，运行时读取并冻结完整 brief；也可显式提供某个已保存的 `brief`。默认标准同样冻结进运行输入。
+评估基线与新版本保存在 Space，不覆盖采用指针。B3 的严格输入须含完整 `brief` 字段，workflow 在开始时冻结并核验它；默认标准同样冻结进运行输入。
 
 ## B3 读取什么
 

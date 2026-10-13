@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760">
+<rect width="1280" height="760" fill="#fff"/>
+<style>text{font-family:Arial,"PingFang SC","Noto Sans CJK SC",sans-serif;fill:#232323} .muted{fill:#666}</style>
+<rect x="0" y="0" width="215" height="760" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="20" y="30" font-size="18" font-weight="600">SPACE / 内容创作</text>
+<text x="20" y="57" font-size="13" class="muted">目的：形成可交付内容</text>
+<text x="19" y="100" font-size="14">业务目标与问题</text>
+<text x="19" y="145" font-size="14">▾ 工作流 · CONTENT</text>
+<text x="32" y="181" font-size="14">版本总览</text>
+<text x="32" y="215" font-size="14">版本遗传图谱</text>
+<text x="32" y="253" font-size="14">▾ 当前查看 v2  [切换]</text>
+<text x="45" y="289" font-size="14">设计目标与改动</text>
+<text x="45" y="323" font-size="14">方法与产出图</text>
+<rect x="8" y="337" width="198" height="29" rx="0" fill="#ececec" stroke="none" stroke-width="1"/>
+<text x="45" y="357" font-size="14" font-weight="600">案例与资产</text>
+<text x="45" y="391" font-size="14">评价与分析</text>
+<text x="45" y="425" font-size="14">调优与后续版本</text>
+<text x="32" y="469" font-size="14">服务与复盘</text>
+<text x="19" y="513" font-size="14">全部业务案例</text>
+<text x="19" y="551" font-size="14">资产库</text>
+<line x1="16" y1="592" x2="199" y2="592" stroke="#e5e5e5" stroke-width="1"/>
+<text x="20" y="620" font-size="12" class="muted">查看 v2 ≠ 采用 v2</text>
+<text x="20" y="640" font-size="11" class="muted">最新发布 / 采用 / 可执行分列</text>
+<rect x="215" y="0" width="1065" height="72" rx="0" fill="none" stroke="#b6b6b6" stroke-width="1"/>
+<text x="239" y="31" font-size="21" font-weight="600">Case A · 案例与资产</text>
+<text x="239" y="57" font-size="13" class="muted">跨版本范围：v1 / v2；每个 run 与资产保留准确方法身份</text>
+<text x="1258" y="56" font-size="11" class="muted" text-anchor="end">合成线框示意 · 非实测</text>
+<line x1="940" y1="72" x2="940" y2="760" stroke="#b6b6b6" stroke-width="1"/>
+<text x="239" y="105" font-size="17" font-weight="600">沿用 Archify 画布 · Case 实际资产关系</text>
+<text x="239" y="126" font-size="12" class="muted">关系节选；资产与运行记录分型，完整资产由列表/数量继续到达</text>
+<line x1="239" y1="139" x2="916" y2="139" stroke="#e5e5e5" stroke-width="1"/>
+<rect x="246" y="158" width="668" height="42" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="258" y="185" font-size="13" font-weight="600">A / 跨版：R1·v1失败   R2·v1完成有评   R3·v2完成未评</text>
+<rect x="257" y="245" width="150" height="68" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="269" y="268" font-size="15" font-weight="600">1  Abrief</text>
+<text x="269" y="290" font-size="12" class="muted">R1 / v1 初始输入</text>
+<rect x="475" y="245" width="172" height="68" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="487" y="268" font-size="15" font-weight="600">2  补充材料</text>
+<text x="487" y="290" font-size="12" class="muted">R2 / v1 后来新增</text>
+<rect x="728" y="245" width="159" height="68" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="740" y="268" font-size="15" font-weight="600">3  R1 运行记录</text>
+<text x="740" y="290" font-size="12" class="muted">失败 / 无主稿</text>
+<path d="M 407 279 V 218 H 807 V 245" fill="none" stroke="#232323" stroke-width="1.3"/>
+<path d="M 803 238 L 807 245 L 811 238" fill="none" stroke="#232323" stroke-width="1.3"/>
+<text x="565" y="212" font-size="11" class="muted">R1 输入交付</text>
+<rect x="475" y="378" width="172" height="68" rx="4" fill="#f0f0f0" stroke="#232323" stroke-width="1.5"/>
+<text x="487" y="401" font-size="15" font-weight="600">4  稿件 v1.2</text>
+<text x="487" y="423" font-size="12" class="muted">R2 / v1 完成</text>
+<rect x="728" y="378" width="159" height="68" rx="4" fill="#fff" stroke="#b6b6b6" stroke-width="1"/>
+<text x="740" y="401" font-size="15" font-weight="600">5  成果 v2.1</text>
+<text x="740" y="423" font-size="12" class="muted">R3 / v2 完成</text>
+<line x1="561" y1="313" x2="561" y2="378" stroke="#232323" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="647" y="359" font-size="11" class="muted">后续输入</text>
+<rect x="258" y="500" width="629" height="87" rx="0" fill="#fafafa" stroke="#b6b6b6" stroke-width="1"/>
+<text x="275" y="528" font-size="13">R1 仅 Abrief 等早期输入且失败；R2 补材完成有评，但在计划 P 外。</text>
+<text x="275" y="556" font-size="13">R3 完成未评；跨版本范围不把 R2 的评价归给 v2。</text>
+<text x="961" y="107" font-size="13" class="muted">选中对象 · 详情</text>
+<text x="961" y="140" font-size="19" font-weight="600">④ 稿件 v1.2 · 正文</text>
+<text x="961" y="165" font-size="12" class="muted">Case A / v1 / R2 / 准确资产版本</text>
+<line x1="960" y1="181" x2="1258" y2="181" stroke="#e5e5e5" stroke-width="1"/>
+<text x="961" y="211" font-size="14" font-weight="600">内容</text>
+<text x="961" y="235" font-size="13">稿件正文阅读区；长文可扩大阅读。</text>
+<text x="961" y="275" font-size="14" font-weight="600">来源</text>
+<text x="961" y="299" font-size="13">Abrief ① 与 R2 新增材料 ② 分开。</text>
+<text x="961" y="339" font-size="14" font-weight="600">评价</text>
+<text x="961" y="363" font-size="13">本 run 有评价；R2 不属于计划 P。</text>
+<text x="961" y="403" font-size="14" font-weight="600">关系</text>
+<text x="961" y="427" font-size="13">生产方法 v1；点边看交付与使用记录。</text>
+</svg>

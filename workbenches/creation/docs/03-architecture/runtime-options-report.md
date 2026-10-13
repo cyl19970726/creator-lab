@@ -1,5 +1,7 @@
 # 创作如何接入共享底座
 
+> 历史架构导航。Codex/SQLite 本地原型已于 2026-10-12 退役；PG/官方 Agents SDK 的当前实现见[运行与历史数据边界](business-workbench.md)和[当前架构](README.md)。本页余文记录迁移前职责设想，不代表当前代码或运行状态。
+
 此 URL 曾是一份覆盖服务器、harness、执行器、存储、评价和工作台的长篇创作方案。那些要求属于可复用的 agent-workflow 产品，已归到共享 [产品与动机](../../../../vendor/agent-workflow/docs/product.md)、[分层架构](../../../../vendor/agent-workflow/docs/architecture.md)及[目标与差距](../../../../vendor/agent-workflow/docs/harness-roadmap.md)。保留本页作为旧链接的导航，不再在创作文档内维护第二套通用方案。
 
 创作接入共享底座时只需提供：

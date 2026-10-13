@@ -87,80 +87,87 @@ export function createApp({
   registerEvidenceRoutes(app, evidenceAccess);
   if (creatorResearchBatchService) registerCreatorResearchBatchRoutes(app, creatorResearchBatchService);
 
-  app.get("/api/creators", (_request, response) => {
-    response.json({ creators: loadCreatorSummaries(creatorResearchService) });
+  app.get("/api/creators", async (_request, response) => {
+    response.json({ creators: await loadCreatorSummaries(creatorResearchService) });
   });
 
-  app.get("/api/creator-runs", (request, response) => {
+  app.get("/api/creator-runs", async (request, response) => {
     const limit = Math.min(100, Math.max(1, Number(request.query.limit ?? 50)));
-    response.json({ runs: creatorResearchService.list(limit) });
+    response.json({ runs: await creatorResearchService.list(limit) });
   });
 
-  app.get("/api/creator-run-operations", (request, response) => {
+  app.get("/api/creator-run-operations", async (request, response) => {
     const limit = Math.min(100, Math.max(1, Number(request.query.limit ?? 50)));
-    const runs = creatorResearchService.list(limit);
+    const runs = await creatorResearchService.list(limit);
+    const readings = new Map(await Promise.all(runs.map(async (run) => {
+      const portfolio = await creatorResearchService.portfolio(run.id);
+      return [run.id, { reconstructionBatch: portfolio?.reconstructionBatch ?? null,
+        synthesisGate: portfolio?.synthesisGate ?? null, events: await creatorResearchService.events(run.id),
+        builderContractRevision: builderIntegrityContractRevision() }] as const;
+    })));
     const operations = buildCreatorRunOperations(runs, (run) => {
-      const portfolio = creatorResearchService.portfolio(run.id);
-      return {
-        reconstructionBatch: portfolio?.reconstructionBatch ?? null,
-        synthesisGate: portfolio?.synthesisGate ?? null,
-        events: creatorResearchService.events(run.id),
-        builderContractRevision: builderIntegrityContractRevision()
-      };
+      return readings.get(run.id)!;
     });
     response.json({ operations });
   });
 
-  app.get("/api/creator-runs/:id", (request, response) => {
-    const run = creatorResearchService.get(request.params.id);
+  app.get("/api/creator-runs/:id", async (request, response) => {
+    const run = await creatorResearchService.get(request.params.id);
     if (!run) return response.status(404).json({ error: "博主分析任务不存在" });
     return response.json(run);
   });
 
-  app.get("/api/creator-runs/:id/events", (request, response) => {
-    const run = creatorResearchService.get(request.params.id);
+  app.get("/api/creator-runs/:id/events", async (request, response) => {
+    const run = await creatorResearchService.get(request.params.id);
     if (!run) return response.status(404).json({ error: "博主分析任务不存在" });
     const after = Math.max(0, Number(request.query.after ?? 0));
-    return response.json({ events: creatorResearchService.events(run.id, Number.isFinite(after) ? after : 0) });
+    return response.json({ events: await creatorResearchService.events(run.id, Number.isFinite(after) ? after : 0) });
   });
 
-  app.get("/api/creator-runs/:id/events/stream", (request, response) => {
-    const run = creatorResearchService.get(request.params.id);
+  app.get("/api/creator-runs/:id/events/stream", async (request, response) => {
+    const run = await creatorResearchService.get(request.params.id);
     if (!run) return response.status(404).json({ error: "博主分析任务不存在" });
     response.setHeader("Content-Type", "text/event-stream");
     response.setHeader("Cache-Control", "no-cache, no-transform");
     response.setHeader("Connection", "keep-alive");
     response.flushHeaders();
-    const existing = creatorResearchService.events(run.id, 0);
+    const existing = await creatorResearchService.events(run.id, 0);
     let cursor = request.query.after === undefined
       ? existing.at(-1)?.sequence ?? 0
       : Math.max(0, Number(request.query.after));
     if (!Number.isFinite(cursor)) cursor = 0;
-    const emit = () => {
-      for (const event of creatorResearchService.events(run.id, cursor)) {
+    let emitting = false;
+    const emit = async () => {
+      if (emitting || response.writableEnded) return;
+      emitting = true;
+      try {
+      for (const event of await creatorResearchService.events(run.id, cursor)) {
         cursor = event.sequence;
         response.write(`id: ${event.sequence}\n`);
         response.write("event: creator-research-event\n");
         response.write(`data: ${JSON.stringify(event)}\n\n`);
       }
       response.write(": keepalive\n\n");
+      } catch (error) {
+        response.destroy(error instanceof Error ? error : new Error(String(error)));
+      } finally { emitting = false; }
     };
-    emit();
-    const timer = setInterval(emit, 1_500);
+    void emit();
+    const timer = setInterval(() => { void emit(); }, 1_500);
     request.once("close", () => clearInterval(timer));
     return undefined;
   });
 
-  app.get("/api/creator-runs/:id/portfolio", (request, response) => {
-    const portfolio = creatorResearchService.portfolio(request.params.id);
+  app.get("/api/creator-runs/:id/portfolio", async (request, response) => {
+    const portfolio = await creatorResearchService.portfolio(request.params.id);
     if (!portfolio) return response.status(404).json({ error: "博主分析任务不存在" });
     return response.json(portfolio);
   });
 
-  app.post("/api/creator-runs", (request, response) => {
+  app.post("/api/creator-runs", async (request, response) => {
     try {
       const input = createCreatorResearchRunInputSchema.parse(request.body);
-      return response.status(202).json(creatorResearchService.create(input.profileUrl, input.adapter));
+      return response.status(202).json(await creatorResearchService.create(input.profileUrl, input.adapter));
     } catch (error) {
       const message = error instanceof z.ZodError
         ? error.issues[0]?.message ?? "输入无效"
@@ -182,27 +189,27 @@ export function createApp({
     }
   });
 
-  app.post("/api/creator-runs/:id/resume", (request, response) => {
+  app.post("/api/creator-runs/:id/resume", async (request, response) => {
     try {
-      return response.status(202).json(creatorResearchService.resume(request.params.id));
+      return response.status(202).json(await creatorResearchService.resume(request.params.id));
     } catch (error) {
       const message = error instanceof Error ? error.message : "无法恢复博主分析";
       return response.status(message.includes("不存在") ? 404 : 409).json({ error: message });
     }
   });
 
-  app.post("/api/creator-runs/:id/rebuild-selection", (request, response) => {
+  app.post("/api/creator-runs/:id/rebuild-selection", async (request, response) => {
     try {
-      return response.status(202).json(creatorResearchService.rebuildSelection(request.params.id));
+      return response.status(202).json(await creatorResearchService.rebuildSelection(request.params.id));
     } catch (error) {
       const message = error instanceof Error ? error.message : "无法重算博主选样";
       return response.status(message.includes("不存在") ? 404 : 409).json({ error: message });
     }
   });
 
-  app.post("/api/creator-runs/:id/retry-failed-videos", (request, response) => {
+  app.post("/api/creator-runs/:id/retry-failed-videos", async (request, response) => {
     try {
-      return response.status(202).json(creatorResearchService.retryFailedReconstructions(
+      return response.status(202).json(await creatorResearchService.retryFailedReconstructions(
         request.params.id, builderIntegrityContractRevision()
       ));
     } catch (error) {
@@ -211,10 +218,10 @@ export function createApp({
     }
   });
 
-  app.post("/api/creator-runs/:id/evaluate-videos", (request, response) => {
+  app.post("/api/creator-runs/:id/evaluate-videos", async (request, response) => {
     try {
       const postExternalIds = z.array(z.string().min(1)).min(1).max(12).parse(request.body?.postExternalIds);
-      return response.status(202).json(creatorResearchService.evaluateBuiltVideos(request.params.id, postExternalIds));
+      return response.status(202).json(await creatorResearchService.evaluateBuiltVideos(request.params.id, postExternalIds));
     } catch (error) {
       const message = error instanceof z.ZodError
         ? error.issues[0]?.message ?? "输入无效"
@@ -223,58 +230,58 @@ export function createApp({
     }
   });
 
-  app.post("/api/creator-runs/:id/continue-with-media-gaps", (request, response) => {
+  app.post("/api/creator-runs/:id/continue-with-media-gaps", async (request, response) => {
     try {
-      return response.status(202).json(creatorResearchService.continueWithBoundedMediaGaps(request.params.id));
+      return response.status(202).json(await creatorResearchService.continueWithBoundedMediaGaps(request.params.id));
     } catch (error) {
       const message = error instanceof Error ? error.message : "无法在媒体缺口边界下继续研究";
       return response.status(message.includes("不存在") ? 404 : 409).json({ error: message });
     }
   });
 
-  app.post("/api/creator-runs/:id/revalidate-synthesis", (request, response) => {
+  app.post("/api/creator-runs/:id/revalidate-synthesis", async (request, response) => {
     try {
-      return response.status(202).json(creatorResearchService.revalidateSynthesis(request.params.id));
+      return response.status(202).json(await creatorResearchService.revalidateSynthesis(request.params.id));
     } catch (error) {
       const message = error instanceof Error ? error.message : "无法重验博主综合";
       return response.status(message.includes("不存在") ? 404 : 409).json({ error: message });
     }
   });
 
-  app.post("/api/creator-runs/:id/resynthesize", (request, response) => {
+  app.post("/api/creator-runs/:id/resynthesize", async (request, response) => {
     try {
-      return response.status(202).json(creatorResearchService.resynthesize(request.params.id));
+      return response.status(202).json(await creatorResearchService.resynthesize(request.params.id));
     } catch (error) {
       const message = error instanceof Error ? error.message : "无法重新生成博主综合";
       return response.status(message.includes("不存在") ? 404 : 409).json({ error: message });
     }
   });
 
-  app.post("/api/creator-runs/:id/portfolio-annotations/rebuild", (request, response) => {
+  app.post("/api/creator-runs/:id/portfolio-annotations/rebuild", async (request, response) => {
     try {
       const resynthesize = request.body?.resynthesize !== false;
-      return response.status(202).json(creatorResearchService.annotatePortfolio(request.params.id, resynthesize));
+      return response.status(202).json(await creatorResearchService.annotatePortfolio(request.params.id, resynthesize));
     } catch (error) {
       const message = error instanceof Error ? error.message : "无法生成全量作品表层标注";
       return response.status(message.includes("不存在") ? 404 : 409).json({ error: message });
     }
   });
 
-  app.get("/api/v1/creators/:id", (request, response) => {
-    const dossier = loadCreatorDossier(creatorResearchService, request.params.id);
+  app.get("/api/v1/creators/:id", async (request, response) => {
+    const dossier = await loadCreatorDossier(creatorResearchService, request.params.id);
     if (!dossier) return response.status(404).json({ error: "博主研究档案不存在" });
     return response.json(dossier);
   });
 
-  app.get("/api/v1/creators/:id/videos/:videoId", (request, response) => {
+  app.get("/api/v1/creators/:id/videos/:videoId", async (request, response) => {
     const requestedRunId = typeof request.query.run === "string" ? request.query.run : undefined;
-    const evidence = loadVideoResearch(creatorResearchService, request.params.id, request.params.videoId, requestedRunId);
+    const evidence = await loadVideoResearch(creatorResearchService, request.params.id, request.params.videoId, requestedRunId);
     if (!evidence) return response.status(404).json({ error: "视频研究证据不存在" });
     return response.json(evidence);
   });
 
-  app.get("/api/v1/video-research/latest", (_request, response) => {
-    return response.json({ items: listLatestVideoResearch(creatorResearchService) });
+  app.get("/api/v1/video-research/latest", async (_request, response) => {
+    return response.json({ items: await listLatestVideoResearch(creatorResearchService) });
   });
 
   const retiredSinglePost = (_request: express.Request, response: express.Response) => response.status(410).json({

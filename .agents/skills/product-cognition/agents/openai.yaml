@@ -1,4 +1,4 @@
 interface:
   display_name: "产品认知与整体设计"
-  short_description: "从业务目的与使用场景建立整体产品理解，用实际成果修正设计和优先级"
-  default_prompt: "使用 $product-cognition 建立或更新这个产品的整体理解，并说明当前最值得解决的问题及其依据。"
+  short_description: "建立业务因果与判断模型，推导必要关系，用真实任务检验设计和取舍"
+  default_prompt: "使用 $product-cognition 建立或修正这个产品的因果模型，主动推导关键判断及必要关系，并据此说明当前设计与取舍。"
