@@ -6,7 +6,7 @@ import {Pool} from 'pg';
 import {PostgresWorkflowRunStore} from '@signal-room/workflow-postgres';
 import {WorkflowSpaceService,PostgresBlobStore,migrateWorkflowSpaces,createBusinessUnderstandingStore,createMethodDesignStore,createRunDispositionStore,createRunDiagnosisStore,createExternalAgentObservationStore,type SpacePrincipal} from '@signal-room/workflow-spaces';
 import {createSpaceWorkbenchApp} from '@signal-room/workflow-space-api/workbench-server';
-import {provisionDesignWorkbenchCredential,readDesignWorkbenchCredential} from '@signal-room/workflow-space-api/workbench-credentials';
+import {provisionDesignWorkbenchCredential} from '@signal-room/workflow-space-api/workbench-credentials';
 import {compileLapianMethod,lapianMethodDesignHost} from '../packages/adapters/src/harness/design.js';
 import {importLapianHistory,HISTORY_SCHEMA} from '../packages/adapters/src/harness/history.js';
 import {importFailedBuilderDrafts} from '../packages/adapters/src/harness/failed-drafts.js';
@@ -15,16 +15,20 @@ import {lapianReaders} from '../packages/adapters/src/harness/readers.js';
 import {analysisPostProcessResolvers} from '../packages/adapters/src/harness/process.js';
 import {prepareSpaceExecution,bindSpaceExecution,syncSpaceExecution} from '../packages/adapters/src/harness/space-execution.js';
 import {createBoundedPostExecutionProvider} from '../packages/adapters/src/harness/execution.js';
+import {implementationCredentialFile,observerCredentialFile,provisionLapianObserverCredential,
+ readLapianCredentials} from './lapian-credentials.js';
+import {lapianHostMode} from './lapian-host-mode.js';
 
 const analysisRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const root=path.resolve(analysisRoot,'../..');
 const runtime=path.resolve(process.env.LAPIAN_HARNESS_DIR??path.join(root,'.local/lapian-harness'));
 const spaceId=process.env.LAPIAN_SPACE_ID??'lapian-harness-20261014';
 const sourceWorkspaceId=process.env.SELF_MEDIA_WORKSPACE_ID??'creator-lab-analysis';
-const credentialFile=path.join(runtime,'agent.json');
+const credentialFile=implementationCredentialFile(runtime);
+const readOnly=process.env.LAPIAN_HARNESS_READ_ONLY==='true';
 const command=process.argv[2]??'help';
 if(command==='help'){
- console.log('lapian:harness setup | import ROOT_RUN_ID TITLE | document RUN_ID ABS_FILE | method | serve | status PREPARED_ID | follow PREPARED_ID\nReads existing private SELF_MEDIA_DATABASE_URL and SELF_MEDIA_RUNTIME_DIR. setup explicitly creates a separate Space; import preserves historical identity and does not run models. Execution is through the authenticated Operator CLI method-command.');process.exit(0);
+ console.log('lapian:harness setup | observer-setup | import ROOT_RUN_ID TITLE | document RUN_ID ABS_FILE | method | serve | status PREPARED_ID | follow PREPARED_ID\nReads existing private SELF_MEDIA_DATABASE_URL and SELF_MEDIA_RUNTIME_DIR. setup explicitly creates a separate Space; observer-setup grants only a separate observer on the existing Space and does not migrate or run models. LAPIAN_HARNESS_READ_ONLY=true serves evidence and observer assessments without execution or design mutation.');process.exit(0);
 }
 fs.mkdirSync(runtime,{recursive:true,mode:0o700});
 const pool=new Pool({connectionString:process.env.SELF_MEDIA_DATABASE_URL,max:6});
@@ -63,6 +67,14 @@ try{
   await createRunDispositionStore(service).ensure(spaceId);await createRunDiagnosisStore(service).ensure(spaceId);await createExternalAgentObservationStore(service).ensure(spaceId);
   const [schema]=await service.registerSchemas(spaceId,[HISTORY_SCHEMA]);
   console.log(JSON.stringify({spaceId,credentialFile,schema,modelsRun:0}));
+ }else if(command==='observer-setup'){
+  if(!process.env.SELF_MEDIA_DATABASE_URL)throw new Error('Private SELF_MEDIA_DATABASE_URL is required');
+  if(!(await service.listSpaces()).some(space=>space.id===spaceId))throw new Error('Existing owner Space required for observer-setup');
+  const observer=await provisionLapianObserverCredential(runtime,spaceId);
+  await service.grant(spaceId,observer.principal.id,'operator');
+  console.log(JSON.stringify({spaceId,credentialFile:observerCredentialFile(runtime),principalId:observer.principal.id,
+   agentId:observer.principal.externalAgent.id,sessionId:observer.principal.externalAgent.sessionId,
+   credentialRole:'observer',spaceRole:'operator',modelsRun:0}));
  }else if(command==='method'){
   const host=lapianMethodDesignHost(service,spaceId);const design=await host.current(spaceId);if(!design)throw new Error('Save sourced design through Operator CLI first');const preview=await host.preview(spaceId,design.id);console.log(JSON.stringify(await host.publish(spaceId,{designRevisionId:design.id,expectedCandidateId:preview.versionId})));
  }else if(command==='import'){
@@ -81,17 +93,18 @@ try{
   }
  }
  else if(command==='serve'){
-  const credential=await readDesignWorkbenchCredential(credentialFile);if(!credential)throw new Error('Private Agent credential missing or invalid');
+  const credentials=await readLapianCredentials(runtime,spaceId);
   const port=Number(process.env.LAPIAN_HARNESS_PORT??4417);
-  const app=createSpaceWorkbenchApp({principal:owner,publicOrigin:`http://127.0.0.1:${port}`,trustedLoopback:true,credentials:[credential],spaceId,
+  const app=createSpaceWorkbenchApp({principal:owner,publicOrigin:`http://127.0.0.1:${port}`,trustedLoopback:true,credentials,spaceId,
    webRoot:path.join(root,'workbenches/creation/apps/space-workbench/web/dist'),
    listSpaces:async principal=>serviceFor(principal).listSpaces(),
    hostFor:async principal=>{
     const s=serviceFor(principal);const understanding=createBusinessUnderstandingStore(s),disposition=createRunDispositionStore(s),diagnosis=createRunDiagnosisStore(s);
-    return {service:s,scope:{workflowId:'post.analyze',entrypoint:'post',auxiliaryWorkflowIds:['post.build','post.review','post.repair','post.source-check','research.input','post.prepare','post-review-benchmark.seed'],assessmentWorkflowIds:['post.build','post.review','post.repair','post.source-check']},displayTimeZone:'Asia/Taipei',readers:lapianReaders,
+    const methodDesign=lapianMethodDesignHost(s,spaceId,service);
+    return {service:s,scope:{workflowId:'post.analyze',entrypoint:'post',defaultVersionId:process.env.LAPIAN_DEFAULT_METHOD_VERSION_ID,auxiliaryWorkflowIds:['post.build','post.review','post.repair','post.source-check','research.input','post.prepare','post-review-benchmark.seed'],assessmentWorkflowIds:['post.build','post.review','post.repair','post.source-check']},displayTimeZone:'Asia/Taipei',readers:lapianReaders,
      importedAssetScope:async({asset})=>{const p=asset.payload as {rootRunId?:string;source?:{rootRunId?:string}};const id=p.source?.rootRunId??p.rootRunId;if(!id)return null;const r=await s.readRun(spaceId,id);return {caseId:r.caseId,runId:r.runId,versionId:r.workflowVersionId};},
-     understanding:{current:understanding.current,read:understanding.read,history:understanding.history,save:understanding.save},methodDesign:lapianMethodDesignHost(s,spaceId,service),runDisposition:disposition,runDiagnosis:diagnosis,
-     availability:async versionId=>{const version=await s.readWorkflowVersion(spaceId,versionId);return version.config?.historical===true?({state:'unavailable' as const,reason:'历史运行观察仅供追溯'}):version.config?.observedNativeRun===true?({state:'unavailable' as const,reason:'本次辅助流程观察供阅读成果与记录，不提供独立执行入口'}):({state:'available' as const,reason:'通过CLI显式准备并启动有界流程；当前额度见execution-state'});},
+     runDisposition:disposition,runDiagnosis:diagnosis,
+     availability:async versionId=>{const version=await s.readWorkflowVersion(spaceId,versionId);return readOnly?({state:'unavailable' as const,reason:'当前为独立阅读验收服务；保留成果阅读与评价，不提供执行入口'}):version.config?.historical===true?({state:'unavailable' as const,reason:'历史运行观察仅供追溯'}):version.config?.observedNativeRun===true?({state:'unavailable' as const,reason:'本次辅助流程观察供阅读成果与记录，不提供独立执行入口'}):({state:'available' as const,reason:'通过CLI显式准备并启动有界流程；当前额度见execution-state'});},
      runSummary:async({run})=>{
       const native=await store.getRun(run.runId);if(!native)return {state:'unknown',reason:'原生运行不可读取'};
       const receipt=executionReceipts().find(r=>r?.nativeWorkflowRunId===run.runId);if(receipt?.state==='failed')return {state:'failed',reason:native.error??receipt.failure??(native.state==='queued'?'执行在模型前绑定阶段停止；未进入原生工作流':'执行宿主记录失败；查看执行收据与原生账本'),startedAt:receipt.startedAt};
@@ -102,7 +115,8 @@ try{
      },
      runExecutionMode:async({runId})=>(await s.readRun(spaceId,runId)).executionMode??null,
      reviewStandard:async()=>({id:'lapian-evidence-standard',revision:'1',content:'按原片与冻结证据判断内容还原是否连续准确，编导和剪辑因果是否有依据，综合总结是否完整且数据口径准确。区分主文、Reviewer、修订后未复核、外部审计；空findings与技术完成不等于质量通过。'}),
-     methodExecution:{status:async()=>({spaceId,receipts:executionReceipts().map(receipt=>{const file=path.join(runtime,'execution',`${receipt!.id}.binding.json`);return {...receipt,linkedSpaceBinding:fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null};}),retryAuthorization:fs.existsSync(path.join(runtime,'full-retry-authorization.json'))?JSON.parse(fs.readFileSync(path.join(runtime,'full-retry-authorization.json'),'utf8')):null,release:'lapian-initial-20261014',limits:{full:1,reviewer:1,fullMinutes:60,reviewerMinutes:15},operations:['inputs-freeze','start'],note:'不自动运行，不采用；准备与开始均需准确对象。'}),command:async(_space,input)=>{
+     ...lapianHostMode(readOnly,{understanding:{current:understanding.current,read:understanding.read,history:understanding.history,save:understanding.save},methodDesign,
+      methodExecution:{status:async()=>({spaceId,receipts:executionReceipts().map(receipt=>{const file=path.join(runtime,'execution',`${receipt!.id}.binding.json`);return {...receipt,linkedSpaceBinding:fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null};}),retryAuthorization:fs.existsSync(path.join(runtime,'full-retry-authorization.json'))?JSON.parse(fs.readFileSync(path.join(runtime,'full-retry-authorization.json'),'utf8')):null,release:'lapian-initial-20261014',limits:{full:1,reviewer:1,fullMinutes:60,reviewerMinutes:15},operations:readOnly?[]:['inputs-freeze','start'],note:readOnly?'观察服务不提供执行命令；仅保留历史状态阅读与独立评价。':'不自动运行，不采用；准备与开始均需准确对象。'}),command:async(_space,input)=>{
       try{
       if(input.operation==='inputs-freeze'){
        let executionInput={...input.input,scopeKey:'lapian-initial-20261014'} as Parameters<typeof execution.prepare>[0];let retryCaseId:string|undefined;
@@ -129,11 +143,11 @@ try{
       }
       throw new Error('Unsupported lapian operation');
       }catch(error){fs.writeFileSync(path.join(runtime,'last-command-error.json'),JSON.stringify({message:(error instanceof Error?error.message:String(error)).replace(/sk-[A-Za-z0-9_-]+/g,'[redacted]'),stack:error instanceof Error?error.stack:undefined},null,2),{mode:0o600});throw error;}
-     }}
+     }}})
     };
    }});
-  const poll=setInterval(()=>{for(const r of executionReceipts())if(r?.nativeWorkflowRunId)void syncOne(r.id);},4000);poll.unref();
+  const poll=readOnly?undefined:setInterval(()=>{for(const r of executionReceipts())if(r?.nativeWorkflowRunId)void syncOne(r.id);},4000);poll?.unref();
   const server=app;server.listen(port,'127.0.0.1',()=>console.log(`http://127.0.0.1:${port}/space-workbench/${spaceId}`));
-  await new Promise<void>(resolve=>{process.on('SIGTERM',()=>{clearInterval(poll);server.close(()=>resolve());});process.on('SIGINT',()=>{clearInterval(poll);server.close(()=>resolve());});});
+  await new Promise<void>(resolve=>{process.on('SIGTERM',()=>{if(poll)clearInterval(poll);server.close(()=>resolve());});process.on('SIGINT',()=>{if(poll)clearInterval(poll);server.close(()=>resolve());});});
  }else throw new Error('Unknown command');
 }finally{await pool.end();}

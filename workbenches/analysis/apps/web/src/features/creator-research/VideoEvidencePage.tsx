@@ -12,6 +12,7 @@ import { DirectingStoryReport } from "./DirectingStoryReport";
 import { VideoReaderHero } from "./VideoReaderHero";
 import { VisualEditingReport } from "./VisualEditingReport";
 import { ResearchAuditAppendix } from "./ResearchAuditAppendix";
+import { PostFinalSummary } from "./PostFinalSummary";
 import { LensWorkspace, type LensOutlineItem } from "./LensWorkspace";
 import { timestamp, stageReadingLabel } from "./video-reader-utils";
 import { startFreshPostWorkflow } from "../../shared/api/post-workflows";
@@ -19,14 +20,15 @@ import { getOptionalBatchVideoResearch, getPostCandidateReader, getPostWorkflowR
 import { PostWorkflowReadingPanel, workflowIsActive, workflowReviewLabel } from "./PostWorkflowReadingPanel";
 import "./video-reader-report.css";
 
-type Lens = "content" | "opening" | "directing" | "visual" | "audit";
+type Lens = "content" | "opening" | "directing" | "visual" | "audit" | "summary";
 
 const lensLabels: Array<{ id: Lens; label: string; hash: string }> = [
   { id: "content", label: "内容还原", hash: "content" },
   { id: "opening", label: "开头与包装", hash: "opening" },
   { id: "directing", label: "编导结构", hash: "directing" },
   { id: "visual", label: "画面与剪辑", hash: "visual-editing" },
-  { id: "audit", label: "研究审计", hash: "audit" }
+  { id: "audit", label: "研究审计", hash: "audit" },
+  { id: "summary", label: "综合总结", hash: "summary" }
 ];
 
 function lensHref(search: URLSearchParams, lens: Lens, hash: string) {
@@ -35,9 +37,9 @@ function lensHref(search: URLSearchParams, lens: Lens, hash: string) {
   return `?${next.toString()}#${hash}`;
 }
 
-function ReaderNavigation({ current, search }: { current: Lens; search: URLSearchParams }) {
+function ReaderNavigation({ current, search, hasSummary }: { current: Lens; search: URLSearchParams; hasSummary: boolean }) {
   return <nav className="reader-navigation" aria-label="报告章节">
-    {lensLabels.map((lens) => <Link key={lens.id} to={lensHref(search, lens.id, lens.hash)} aria-current={lens.id === current ? "page" : undefined}>{lens.label}</Link>)}
+    {lensLabels.filter((lens) => lens.id !== "summary" || hasSummary).map((lens) => <Link key={lens.id} to={lensHref(search, lens.id, lens.hash)} aria-current={lens.id === current ? "page" : undefined}>{lens.label}</Link>)}
   </nav>;
 }
 
@@ -81,7 +83,23 @@ function outlineFor(data: VideoResearch, lens: Lens): LensOutlineItem[] {
     ...(data.visualEditing.omissionRisks.length ? [{ href: "#visual-risks", label: "遗漏与误读风险" }] : []),
     ...(data.visualEditing.notes.length ? [{ href: "#visual-notes", label: "Builder 说明" }] : [])
   ];
+  if (lens === "summary") return [{ href: "#summary", label: "综合总结" }];
   return [{ href: "#audit", label: "研究审计" }];
+}
+
+export function ReportChapters({ data, current, search, reviewLabel }: { data: VideoResearch; current: Lens; search: URLSearchParams; reviewLabel?: string }) {
+  const activeLens = current === "summary" && !data.finalSummary ? "content" : current;
+  return <>
+    <ReaderNavigation current={activeLens} search={search} hasSummary={Boolean(data.finalSummary)}/>
+    <LensWorkspace label={lensLabels.find((lens) => lens.id === activeLens)?.label ?? "报告"} items={outlineFor(data, activeLens)}>
+      {activeLens === "content" && <ContentStory data={data}/>}
+      {activeLens === "opening" && <section className="reader-section" id="opening"><header><span>02</span><div><p>开头与包装</p><h2>怎样建立期待，又如何兑现</h2></div></header><OpeningReport data={data}/><PackagingReport data={data}/></section>}
+      {activeLens === "directing" && <DirectingStoryReport data={data}/>}
+      {activeLens === "visual" && <VisualEditingReport data={data}/>}
+      {activeLens === "audit" && <ResearchAuditAppendix data={data} defaultOpen workflowReviewLabel={reviewLabel}/>}
+      {activeLens === "summary" && <div id="summary"><PostFinalSummary data={data}/></div>}
+    </LensWorkspace>
+  </>;
 }
 
 export default function VideoEvidencePage() {
@@ -106,8 +124,8 @@ export default function VideoEvidencePage() {
   const requestedVersion = search.get("version") === "original" ? "original" : "candidate";
   const requestedLens = search.get("lens");
   const legacyOpening = location.hash === "#visual-opening" || location.hash === "#directing-packaging";
-  const currentLens: Lens = legacyOpening ? "opening" : requestedLens === "opening" || requestedLens === "content" || requestedLens === "directing" || requestedLens === "visual" || requestedLens === "audit"
-    ? requestedLens : location.hash.startsWith("#directing") ? "directing" : location.hash.startsWith("#visual") ? "visual" : location.hash.startsWith("#audit") ? "audit" : "content";
+  const currentLens: Lens = legacyOpening ? "opening" : requestedLens === "opening" || requestedLens === "content" || requestedLens === "directing" || requestedLens === "visual" || requestedLens === "audit" || requestedLens === "summary"
+    ? requestedLens : location.hash.startsWith("#directing") ? "directing" : location.hash.startsWith("#visual") ? "visual" : location.hash.startsWith("#audit") ? "audit" : location.hash.startsWith("#summary") ? "summary" : "content";
 
   useEffect(() => {
     let active = true;
@@ -250,14 +268,7 @@ export default function VideoEvidencePage() {
       </div>}
       {data && displayed === data && <ReportStatusNotice data={data}/>}
       {data && displayed === data && <ReportOverview data={data}/>}
-      <ReaderNavigation current={currentLens} search={search}/>
-      <LensWorkspace label={lensLabels.find((lens) => lens.id === currentLens)?.label ?? "报告"} items={outlineFor(displayed, currentLens)}>
-        {currentLens === "content" && <ContentStory data={displayed}/>}
-        {currentLens === "opening" && <section className="reader-section" id="opening"><header><span>02</span><div><p>开头与包装</p><h2>怎样建立期待，又如何兑现</h2></div></header><OpeningReport data={displayed}/><PackagingReport data={displayed}/></section>}
-        {currentLens === "directing" && <DirectingStoryReport data={displayed}/>}
-        {currentLens === "visual" && <VisualEditingReport data={displayed}/>}
-        {currentLens === "audit" && <ResearchAuditAppendix data={displayed} defaultOpen workflowReviewLabel={visibleVersion === "candidate" ? displayedStatus : undefined}/>}
-      </LensWorkspace>
+      <ReportChapters data={displayed} current={currentLens} search={search} reviewLabel={visibleVersion === "candidate" ? displayedStatus : undefined}/>
       <footer className="reader-footer"><Link to={returnTo}>返回{returnLabel}</Link><span>这是一份证据约束下的内容研究，不等同于效果或事实背书。</span></footer>
     </article>
   </main>;

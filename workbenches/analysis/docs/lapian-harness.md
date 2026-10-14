@@ -20,6 +20,21 @@ Operator CLI 使用 `WORKFLOW_OPERATOR_BASE_URL`、`WORKFLOW_OPERATOR_SPACE_ID`�
 
 `import` 接收准确原生根 run ID。它保留历史 run、方法版本和 artifact 身份，失败运行会尽力导入原有 Builder 未发布草稿；缺失材料会作为缺口记录。导入不会调用模型。`serve` 后可在 `http://127.0.0.1:4417/space-workbench/lapian-harness-20261014` 阅读 Space。历史方法只在真实保存字节与 hash 对得上时恢复 prompt；无法恢复时保持未知。
 
+## 独立读取复验
+
+既有 Space 可为认知负责人单独配置 observer，不需要再次 `setup` 或迁移数据库：
+
+```sh
+pnpm --dir workbenches/analysis lapian:harness observer-setup
+LAPIAN_HARNESS_READ_ONLY=true pnpm --dir workbenches/analysis lapian:harness serve
+```
+
+`observer-setup` 必须使用既有有效 implementation 凭据，新增私有 `observer.json`，只给既有 Space 的独立身份授予 `operator`。原凭据保留；observer 的 agent 为 `lapian-cognition-owner`，session 为认知负责人的既有会话。Operator 使用此文件作为 `WORKFLOW_OPERATOR_TOKEN_FILE` 后，可独立读取并保存观察、评价、处置和诊断，不能执行或发布方法。不得以 implementation 或无认证本机身份替代独立观察者。
+
+读取模式停止周期同步并移除执行、业务理解保存、方法保存和发布入口，保留现有状态、证据与观察评价接口，不启动模型或重跑流程。恢复服务时使用本机私有环境文件与原运行目录；启动器、日志和凭据留在被忽略的私有目录。专业报告前端与 API 分开核验，健康 API 不必重启；API 初始化可能迁移或 materialize 资产，不能把重新启动 API 当作纯读取恢复。
+
+宿主可用 `LAPIAN_DEFAULT_METHOD_VERSION_ID` 指定准确已登记的主方法作为阅读默认值。API 校验它属于主 workflow 和 entrypoint，并排除历史/执行观察和辅助方法；此显示偏好不修改最新登记版本或采用记录。显式观察版本链接仍打开原快照；业务理解的“阅读准确方法”明确跳主方法，避免最新运行快照只有一个观察节点时遮住真实设计。
+
 ## 准备并发布当前方法
 
 先读 `space`、`understanding`、`cases`，选定真实案例后用 `case ID`、`run-evidence RUN_ID`、`asset ID` 和 `process RUN_ID` 阅读原始输入、完整子流程、产物及失败证据。业务理解应有材料来源，不要根据时间或历史结果猜测它何时被采用。
