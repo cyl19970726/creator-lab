@@ -97,6 +97,10 @@ it("routes unread frozen source and exact frame refs through bounded final corre
     JSON.stringify({ frames: [{ id: "TARGET-0001" }] })));
   tools.addGenerated("OPEN-0002", put("evidence/OPEN-0002.jpg", Buffer.from("test image bytes")));
   tools.addGenerated("TARGET-0001", put("targeted-evidence/frames/TARGET-0001.jpg", Buffer.from("target image bytes")));
+  tools.addGenerated("targeted-evidence/ocr-evidence.json", put("targeted-evidence/ocr-evidence.json",
+    JSON.stringify({ lines: "unread later OCR entries ".repeat(3_000) })));
+  const openingPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/0XcAAAAASUVORK5CYII=", "base64");
+  tools.addGenerated("evidence/opening-contact.jpg", put("evidence/opening-contact.png", openingPng));
   const read = tools.tools().find(tool => tool.name === "read_evidence")!;
   const inspect = tools.tools().find(tool => tool.name === "inspect_image")!;
   const receipt = { schemaVersion: "research-review@1", kind: "post", candidate: candidateRef,
@@ -111,10 +115,13 @@ it("routes unread frozen source and exact frame refs through bounded final corre
     const instructions = args[3] as string;
     const validate = args[4] as (value: unknown) => unknown;
     const readinessTools = args[5] as Array<{ name: string; execute: () => Promise<unknown> }>;
+    const comparison = (readinessTools as Array<{ name: string; execute: (args: unknown, signal: AbortSignal) => Promise<unknown> }>)
+      .find(tool => tool.name === "compare_review_finding")!;
     const feedback = args[6] as (error: unknown) => string | null;
+    expect(instructions).toContain("Call read_reviewer_context with {} once");
     expect(instructions).toContain("post-source-input.json");
-    expect(instructions).toContain("evidence/evidence-pack.json");
-    expect(instructions).toContain("targeted-evidence/targeted-evidence.json");
+    const context = readinessTools.find(tool => tool.name === "read_reviewer_context")!;
+    expect(context).toBeDefined();
     const readiness = readinessTools.find(tool => tool.name === "check_review_evidence_readiness")!;
     const first = await readiness.execute() as { ready: boolean; missingText: Array<{ ref: string; nextOffset: number }> };
     expect(first.ready).toBe(false);
@@ -130,12 +137,26 @@ it("routes unread frozen source and exact frame refs through bounded final corre
       while (!tools.fullyRead(ref)) await read.execute({ ref, offset: tools.readProgress(ref).nextOffset, length: 32768 }, new AbortController().signal);
     }
     await inspect.execute({ ref: "TARGET-0001" }, new AbortController().signal);
+    await read.execute({ ref: "targeted-evidence/ocr-evidence.json", length: 32768 }, new AbortController().signal);
+    expect(() => validate(receipt)).toThrow("targeted-evidence/ocr-evidence.json read_evidence offset=32768");
+    const beforeBatch = await readiness.execute() as { ready: boolean; missingImages: string[] };
+    expect(beforeBatch.missingImages).toContain("inspect_image evidence/opening-contact.jpg; test onset claims against the opening sequence");
+    const batch = await context.execute() as { kind: string; value: {
+      text: Array<{ ref: string }>; imageRefs: Array<{ ref: string }>;
+      readiness: { ready: boolean; missingText: unknown[]; missingImages: string[] } } };
+    expect(batch.kind).toBe("siwc_visual_tool_result");
+    expect(batch.value.text.map(item => item.ref)).toEqual(expect.arrayContaining([
+      reportRef, "post-source-input.json", "evidence/evidence-pack.json",
+      "targeted-evidence/targeted-evidence.json", "targeted-evidence/ocr-evidence.json"]));
+    expect(batch.value.imageRefs.map(item => item.ref)).toContain("evidence/opening-contact.jpg");
+    expect(batch.value.readiness).toMatchObject({ ready: true, missingText: [], missingImages: [] });
     error = undefined;
     try { validate(receipt); } catch (caught) { error = caught; }
     expect(String(error)).toContain("finding=F-1");
     expect(String(error)).toContain("ref=OPEN-0002");
     expect(feedback(error)).toContain("inspect_image");
     await inspect.execute({ ref: "OPEN-0002" }, new AbortController().signal);
+    await comparison.execute({ finding: receipt.findings[0] }, new AbortController().signal);
     expect(await validate(receipt)).toEqual(receipt);
     return receipt;
   });
@@ -153,7 +174,8 @@ it("rejects unbound evidence refs and locations that do not point into the candi
   const reportRef = artifactRef(creatorRunId, "reconstruction.json");
   const reportFile = artifactPath(reportRef);
   fs.mkdirSync(path.dirname(reportFile), { recursive: true });
-  const report = { builderLenses: { contentRestoration: { title: "候选主张" } } };
+  const report = { builderLenses: { contentRestoration: { title: "候选主张" } },
+    wideContainer: { body: "x".repeat(8_001) }, longBody: "y".repeat(9_001) };
   fs.writeFileSync(reportFile, JSON.stringify(report));
   const candidateRef = { id: randomUUID(), revision: "1", sha256: "c".repeat(64) };
   const prior = { kind: "post" as const, evidence: candidateRef, reportArtifactRef: reportRef,
@@ -169,25 +191,31 @@ it("rejects unbound evidence refs and locations that do not point into the candi
   const tools = new ResponsesEvidenceTools([boundArtifact(reportRef)], directory);
   const generatedTextRefs: Array<[string, string, unknown]> = [
     ["post-source-input.json", "post-source-input.json", { title: "source" }],
-    ["evidence/evidence-pack.json", "evidence/evidence-pack.json", { cues: [] }],
+    ["evidence/evidence-pack.json", "evidence/evidence-pack.json", { cues: [{ details: "冻结证据文字" }] }],
     ["targeted-evidence/targeted-evidence.json", "targeted-evidence/targeted-evidence.json", { frames: [] }],
   ];
   for (const [ref, filename, value] of generatedTextRefs) tools.addGenerated(ref, put(filename, value));
   const image = path.join(directory, "OPEN-0002.jpg");
   fs.writeFileSync(image, "image bytes");
   tools.addGenerated("OPEN-0002", image);
+  const targetImage = path.join(directory, "TARGET-0001.jpg");
+  fs.writeFileSync(targetImage, "target image bytes");
+  tools.addGenerated("TARGET-0001", targetImage);
   const read = tools.tools().find(tool => tool.name === "read_evidence")!;
   const inspect = tools.tools().find(tool => tool.name === "inspect_image")!;
   for (const ref of [reportRef, "post-source-input.json", "evidence/evidence-pack.json", "targeted-evidence/targeted-evidence.json"]) {
     await read.execute({ ref }, new AbortController().signal);
   }
   await inspect.execute({ ref: "OPEN-0002" }, new AbortController().signal);
+  await inspect.execute({ ref: "TARGET-0001" }, new AbortController().signal);
   const runner = new ResponsesResearchRunner({} as never, {} as never) as unknown as {
     model: (...args: unknown[]) => Promise<unknown>;
     review: (...args: unknown[]) => Promise<unknown>;
   };
   vi.spyOn(runner, "model").mockImplementation(async (...args: unknown[]) => {
     const validate = args[4] as (value: unknown) => unknown;
+    const comparison = (args[5] as Array<{ name: string; execute: (args: unknown, signal: AbortSignal) => Promise<unknown> }>)
+      .find(tool => tool.name === "compare_review_finding")!;
     const feedback = args[6] as (error: unknown) => string | null;
     const unbound = { schemaVersion: "research-review@1", kind: "post", candidate: candidateRef,
       candidateReportSha256: prior.reportSha256, summary: "存在真实问题", findings: [{ id: "F-2",
@@ -197,18 +225,133 @@ it("rejects unbound evidence refs and locations that do not point into the candi
     try { validate(unbound); } catch (caught) { error = caught; }
     expect(String(error)).toContain("ref=source-video.mp4");
     expect(String(error)).toContain("not bound");
-    expect(feedback(error)).toContain("do not delete a real finding");
+    expect(feedback(error)).toContain("Never remove a finding just to bypass this technical check");
+    expect(feedback(error)).toContain("withdraw a finding if the issue cannot be verified");
+    expect(feedback(error)).toContain("candidate already contains the correction");
     const badPointer = { ...unbound, findings: [{ ...unbound.findings[0]!, location: "/builderLenses/noSuchField", evidenceRefs: ["OPEN-0002"] }] };
     error = undefined;
     try { validate(badPointer); } catch (caught) { error = caught; }
     expect(String(error)).toContain("location=/builderLenses/noSuchField");
     expect(feedback(error)).toContain("exact refs listed in Bound evidence refs");
+    const invalidCandidate = await comparison.execute({ finding: badPointer.findings[0] }, new AbortController().signal) as {
+      comparisonRecorded: boolean; semanticVerdict: string; error: string; nextAction: string;
+    };
+    expect(invalidCandidate).toMatchObject({ comparisonRecorded: false, semanticVerdict: "not_evaluated",
+      error: expect.stringContaining("RESPONSES_REVIEW_COMPARISON_CANDIDATE_POINTER_INVALID"),
+      nextAction: expect.stringContaining("candidate.location") });
+    const tooBroad = await comparison.execute({ finding: { ...badPointer.findings[0]!, location: "/wideContainer", evidenceRefs: [] } },
+      new AbortController().signal) as { comparisonRecorded: boolean; error: string; nextAction: string };
+    expect(tooBroad).toMatchObject({ comparisonRecorded: false,
+      error: expect.stringContaining("RESPONSES_REVIEW_COMPARISON_POINTER_TOO_BROAD"),
+      nextAction: expect.stringContaining("more specific JSON Pointer") });
+    const longBody = await comparison.execute({ finding: { ...badPointer.findings[0]!, location: "/longBody", evidenceRefs: [] } },
+      new AbortController().signal) as { candidate: { value: string } };
+    expect(longBody.candidate.value).toBe("y".repeat(9_001));
     const corrected = { schemaVersion: "research-review@1", kind: "post", candidate: candidateRef,
       candidateReportSha256: prior.reportSha256, summary: "保留有证据支撑的问题", findings: [{ ...unbound.findings[0]!,
-        location: "/builderLenses/contentRestoration/title", evidenceRefs: ["OPEN-0002"] }] };
+        location: "/builderLenses/contentRestoration/title",
+        evidenceRefs: ["evidence/evidence-pack.json#/cues/0/details", "TARGET-0001", "OPEN-0002"] }] };
+    error = undefined;
+    try { validate(corrected); } catch (caught) { error = caught; }
+    expect(String(error)).toContain("RESPONSES_REVIEW_COMPARISON_REQUIRED");
+    expect(feedback(error)).toContain("compare_review_finding");
+    const invalidEvidencePointer = await comparison.execute({ finding: { ...corrected.findings[0]!,
+      evidenceRefs: ["evidence/evidence-pack.json#/cues/1/missing"] } }, new AbortController().signal) as {
+      comparisonRecorded: boolean; semanticVerdict: string; error: string; nextAction: string;
+    };
+    expect(invalidEvidencePointer).toMatchObject({ comparisonRecorded: false, semanticVerdict: "not_evaluated",
+      error: expect.stringContaining("RESPONSES_REVIEW_COMPARISON_POINTER_INVALID"),
+      nextAction: expect.stringContaining("Correct the JSON Pointer") });
+    const compared = await comparison.execute({ finding: corrected.findings[0] }, new AbortController().signal) as {
+      kind: string; value: { semanticVerdict: string; candidate: { location: string; value: unknown };
+        referencedValues: Array<{ value: unknown }>; imageIndexToRef: Array<{ index: number; ref: string }> };
+      images: Array<{ base64: string }>;
+    };
+    expect(compared).toMatchObject({ kind: "siwc_visual_tool_result", value: {
+      semanticVerdict: "not_evaluated",
+      candidate: { location: "/builderLenses/contentRestoration/title", value: "候选主张" },
+      referencedValues: [{ ref: "evidence/evidence-pack.json", pointer: "/cues/0/details", value: "冻结证据文字" }],
+      imageIndexToRef: [{ index: 0, ref: "TARGET-0001" }, { index: 1, ref: "OPEN-0002" }],
+    }, images: [{ base64: "dGFyZ2V0IGltYWdlIGJ5dGVz" }, { base64: "aW1hZ2UgYnl0ZXM=" }] });
     expect(await validate(corrected)).toEqual(corrected);
+    const edited = { ...corrected, findings: [{ ...corrected.findings[0]!, issue: "修改后的问题" }] };
+    expect(() => validate(edited)).toThrow("RESPONSES_REVIEW_COMPARISON_REQUIRED");
+    const noFindings = { ...corrected, summary: "复核后没有需修订的问题", findings: [] };
+    expect(validate(noFindings)).toEqual(noFindings);
     return corrected;
   });
   await runner.review({ input: { candidate: candidateRef }, signal: new AbortController().signal } as never,
     {} as never, prior as never, candidateRef, tools, true);
+});
+
+it("requires JSON evidence pointers to resolve in a fully read frozen JSON ref", async () => {
+  const runtime = fs.mkdtempSync(path.join(os.tmpdir(), "responses-review-json-pointers-"));
+  roots.push(runtime);
+  process.env.SELF_MEDIA_RUNTIME_DIR = runtime;
+  const creatorRunId = randomUUID();
+  const reportRef = artifactRef(creatorRunId, "creator-analysis.json");
+  const report = { claim: "candidate claim" };
+  const reportFile = artifactPath(reportRef);
+  fs.mkdirSync(path.dirname(reportFile), { recursive: true });
+  fs.writeFileSync(reportFile, JSON.stringify(report));
+  const candidateRef = { id: randomUUID(), revision: "1", sha256: "d".repeat(64) };
+  const prior = { kind: "creator" as const, evidence: candidateRef, reportArtifactRef: reportRef,
+    reportSha256: fileDigest(reportFile), report, relativeRoot: "test", outcome: {} };
+  const directory = path.join(runtime, "review-attempt");
+  fs.mkdirSync(directory, { recursive: true });
+  const put = (name: string, contents: string | Buffer) => {
+    const file = path.join(directory, name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, contents);
+    return file;
+  };
+  const jsonRef = "support.json";
+  const jsonFile = put(jsonRef, JSON.stringify({ cues: [{ text: "supporting text" }], "a/b~c": "escaped key" }));
+  const noteRef = "support.txt";
+  const noteFile = put(noteRef, "plain note");
+  const imageRef = "support-image";
+  const imageFile = put("support.png", Buffer.from("image bytes"));
+  const tools = new ResponsesEvidenceTools([boundArtifact(reportRef),
+    { ref: jsonRef, path: jsonFile, sha256: fileDigest(jsonFile) },
+    { ref: noteRef, path: noteFile, sha256: fileDigest(noteFile) },
+    { ref: imageRef, path: imageFile, sha256: fileDigest(imageFile) }], directory);
+  const read = tools.tools().find(tool => tool.name === "read_evidence")!;
+  const inspect = tools.tools().find(tool => tool.name === "inspect_image")!;
+  await read.execute({ ref: reportRef }, new AbortController().signal);
+  await read.execute({ ref: jsonRef, offset: 0, length: 10 }, new AbortController().signal);
+  await read.execute({ ref: noteRef }, new AbortController().signal);
+  await inspect.execute({ ref: imageRef }, new AbortController().signal);
+
+  const runner = new ResponsesResearchRunner({} as never, {} as never) as unknown as {
+    model: (...args: unknown[]) => Promise<unknown>;
+    review: (...args: unknown[]) => Promise<unknown>;
+  };
+  vi.spyOn(runner, "model").mockImplementation(async (...args: unknown[]) => {
+    const validate = args[4] as (value: unknown) => unknown;
+    const base = { schemaVersion: "research-review@1", kind: "creator", candidate: candidateRef,
+      candidateReportSha256: prior.reportSha256, summary: "核对引用范围", findings: [{ id: "F-JSON",
+        location: "/claim", issue: "结论需要核对", evidenceRefs: ["support.json#/cues/0/text"],
+        suggestedChange: "按冻结材料修订", priority: "major", kind: "content" }] };
+    const attempt = (evidenceRef: string) => {
+      const value = { ...base, findings: [{ ...base.findings[0]!, evidenceRefs: [evidenceRef] }] };
+      let error: unknown;
+      try { validate(value); } catch (caught) { error = caught; }
+      return String(error);
+    };
+    expect(attempt("support.json#/cues/0/text")).toContain("has not been fully read");
+    while (!tools.fullyRead(jsonRef)) {
+      await read.execute({ ref: jsonRef, offset: tools.readProgress(jsonRef).nextOffset }, new AbortController().signal);
+    }
+    expect(attempt("support.json#/missing")).toContain("does not resolve");
+    expect(attempt("support.json#/cues/0~2text")).toContain("does not resolve");
+    expect(attempt("support.txt#/anything")).toContain("require a bound JSON ref");
+    expect(attempt("support-image#/anything")).toContain("require a bound JSON ref");
+    expect(attempt("support.json#/a~1b~0c")).toBe("undefined");
+    const valid = { ...base, findings: [{ ...base.findings[0]!, evidenceRefs: ["support.json#/a~1b~0c"] }] };
+    expect(validate(valid)).toEqual(valid);
+    return valid;
+  });
+  const result = await runner.review({ input: { candidate: candidateRef }, signal: new AbortController().signal } as never,
+    {} as never, prior as never, candidateRef, tools, false);
+  expect(result).toBeDefined();
 });

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { assembleHostOwnedReconstruction } from "./video-reconstruction-host-assembler.js";
+import { assembleHostOwnedReconstruction, frozenReconstructionTranscriptFromEvidencePack } from "./video-reconstruction-host-assembler.js";
 
 const fixtures = path.join(process.cwd(), ".agents", "skills", "video-content-reconstruction", "tests", "fixtures", "valid");
 
@@ -16,6 +16,19 @@ function createFixture(): string {
 }
 
 describe("Host-owned video reconstruction assembly", () => {
+  it("projects only complete frozen cue fields and rejects a malformed frozen source", () => {
+    const pack = JSON.parse(fs.readFileSync(path.join(fixtures, "evidence-pack.json"), "utf8")) as Record<string, unknown>;
+    const projected = frozenReconstructionTranscriptFromEvidencePack(pack);
+    expect(projected).toEqual({ origin: "fixture", cues: [
+      { id: "CUE-001", start: 0, end: 5, text: "先打开设置", representativeFrame: "frames/cues/cue-001.jpg", overlappingShots: ["SHOT-001"] },
+      { id: "CUE-002", start: 5, end: 10, text: "然后得到结果", representativeFrame: "frames/cues/cue-002.jpg", overlappingShots: ["SHOT-002"] }
+    ] });
+    expect(() => frozenReconstructionTranscriptFromEvidencePack({ transcript: { cues: [{ id: "CUE-1" }] } }))
+      .toThrow("HOST_ASSEMBLY_FROZEN_TRANSCRIPT_CUE_INVALID:0");
+    expect(() => frozenReconstructionTranscriptFromEvidencePack({ transcript: {} }))
+      .toThrow("HOST_ASSEMBLY_FROZEN_TRANSCRIPT_MISSING");
+  });
+
   it("restores frozen cue fields and normalizes mechanical carrier state without changing semantic units", () => {
     const root = createFixture();
     try {
@@ -23,6 +36,7 @@ describe("Host-owned video reconstruction assembly", () => {
       const reconstruction = JSON.parse(fs.readFileSync(reconstructionPath, "utf8"));
       const originalUnits = structuredClone(reconstruction.knowledgeUnits);
       const originalAccountability = structuredClone(reconstruction.coverageMatrix.cueAccountability);
+      reconstruction.transcript.origin = "model-supplied placeholder";
       reconstruction.transcript.cues[0].representativeFrame = "invented-frame-id";
       reconstruction.coverageMatrix.channels[0] = {
         ...reconstruction.coverageMatrix.channels[0], available: false, inspected: false,
@@ -35,11 +49,32 @@ describe("Host-owned video reconstruction assembly", () => {
       const report = assembleHostOwnedReconstruction(root);
       const assembled = JSON.parse(fs.readFileSync(reconstructionPath, "utf8"));
       expect(report.transcriptCuesRestored).toBe(2);
+      expect(assembled.transcript.origin).toBe("fixture");
       expect(assembled.transcript.cues[0].representativeFrame).toBe("frames/cues/cue-001.jpg");
       expect(assembled.coverageMatrix.channels[0]).toMatchObject({ available: true, inspected: true, inspectionStatus: "checked_readable" });
       expect(assembled.metaGate).toMatchObject({ questionId: "uncovered_information_audit", question: "Localized display question" });
       expect(assembled.knowledgeUnits).toEqual(originalUnits);
       expect(assembled.coverageMatrix.cueAccountability).toEqual(originalAccountability);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the explicit frozen-pack fallback when transcript origin is absent", () => {
+    const root = createFixture();
+    try {
+      const packPath = path.join(root, "evidence/evidence-pack.json");
+      const reconstructionPath = path.join(root, "reconstruction.json");
+      const pack = JSON.parse(fs.readFileSync(packPath, "utf8"));
+      const reconstruction = JSON.parse(fs.readFileSync(reconstructionPath, "utf8"));
+      delete pack.transcript.origin;
+      reconstruction.transcript.origin = "invented by model";
+      fs.writeFileSync(packPath, JSON.stringify(pack));
+      fs.writeFileSync(reconstructionPath, JSON.stringify(reconstruction));
+      assembleHostOwnedReconstruction(root);
+      const assembled = JSON.parse(fs.readFileSync(reconstructionPath, "utf8"));
+      expect(assembled.transcript.origin).toBe("frozen_evidence_pack");
+      expect(assembled.transcript.cues).toHaveLength(2);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

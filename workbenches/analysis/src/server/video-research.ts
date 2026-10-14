@@ -16,6 +16,7 @@ import {
 } from "../../packages/research/index.js";
 import { videoResearchSchema, type VideoResearch } from "../shared/video-research.js";
 import { projectPostSourceFacts } from "./post-source-facts.js";
+import { assertFinalSummaryPerformance } from "../../packages/adapters/src/platform/video/video-final-summary.js";
 
 function record(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function text(value: unknown, fallback = ""): string { return typeof value === "string" ? value : fallback; }
@@ -44,10 +45,15 @@ function ocrEvidenceEntries(rootPath: string, rootRef: string): Array<[string, V
   const ocrPath = path.join(rootPath, "targeted-evidence", "ocr-evidence.json");
   if (!fs.existsSync(ocrPath)) return [];
   const ocr = record(JSON.parse(fs.readFileSync(ocrPath, "utf8")) as unknown);
+  const sourceFrameBase = text(ocr.sourceFrameBase);
   return list(ocr.frames).flatMap((raw) => {
     const frame = record(raw); const sourceFrame = text(frame.sourceFrame);
-    const safeFrame = sourceFrame && !path.isAbsolute(sourceFrame) && !sourceFrame.split(/[\\/]/).includes("..");
-    const artifactRef = safeFrame ? `${rootRef}targeted-evidence/${sourceFrame}` : null;
+    const safeRelative = /^[A-Za-z0-9._/-]+$/u.test(sourceFrame) && !sourceFrame.split("/").some(part => part === "." || part === "..");
+    const relative = sourceFrameBase === "candidate-root"
+      ? /^(?:evidence|targeted-evidence)\/frames\/[A-Za-z0-9._/-]+\.(?:jpg|jpeg|png)$/u.test(sourceFrame) && safeRelative ? sourceFrame : null
+      : sourceFrameBase === "" && /^frames\/[A-Za-z0-9._/-]+\.(?:jpg|jpeg|png)$/u.test(sourceFrame) && safeRelative
+        ? `targeted-evidence/${sourceFrame}` : null;
+    const artifactRef = relative ? `${rootRef}${relative}` : null;
     return list(frame.lines).flatMap((line) => {
       const value = record(line); const id = text(value.id); const content = text(value.text).trim();
       if (!id || !content) return [];
@@ -401,6 +407,13 @@ async function loadVideoResearchSource(service: CreatorResearchService, creatorI
     collections: number(selectionRecord.collections), comments: number(selectionRecord.comments), shares: number(selectionRecord.shares),
     sourceRefs: [run.inventoryArtifactRef, run.detailArtifactRef, run.mediaManifestArtifactRef]
   });
+  if (reconstruction.summaryContractVersion === "single-post-summary@1" && !builderLenses.finalSummary) {
+    throw new Error("Final summary contract marker is present without Builder finalSummary");
+  }
+  if (builderLenses.finalSummary) {
+    if (!frozenSource?.facts) throw new Error("Builder finalSummary requires frozen post-source-input facts");
+    assertFinalSummaryPerformance(builderLenses.finalSummary, sourceFacts);
+  }
   const inventory = run.inventoryArtifactRef ? creatorInventorySchema.safeParse(readJson(run.inventoryArtifactRef)) : null;
   const observation = buildPostPerformance({ externalId: videoId, ...sourceFacts.metrics },
     inventory?.success ? inventory.data.posts : [], sourceFacts.capturedAt,
@@ -426,6 +439,7 @@ async function loadVideoResearchSource(service: CreatorResearchService, creatorI
     title: sourceFacts.title ?? "标题未识别", sourceHref: sourceFacts.sourceUrl,
     sourceLabel: `video-content-reconstruction · ${batchItem.state}`,
     sourceFacts,
+    finalSummary: builderLenses.finalSummary ?? null,
     thesis,
     sourceRevision: sourceRead.revision,
     overview: sourceRead.revision ? { state: "stale", overview: null } : loadReportOverview(artifactPath(batchItem.reconstructionArtifactRef)),

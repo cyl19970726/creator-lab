@@ -15,6 +15,42 @@ type EvidencePack = {
   transcript?: { origin?: string; cues?: Array<Record<string, unknown>> };
 };
 
+export type FrozenReconstructionTranscript = {
+  origin: string;
+  cues: Array<{
+    id: string;
+    start: number;
+    end: number;
+    text: string;
+    representativeFrame: string;
+    overlappingShots: string[];
+  }>;
+};
+
+/** The single host-owned cue projection used before validation and during final assembly. */
+export function frozenReconstructionTranscriptFromEvidencePack(value: unknown): FrozenReconstructionTranscript {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("HOST_ASSEMBLY_FROZEN_TRANSCRIPT_MISSING");
+  const transcript = (value as EvidencePack).transcript;
+  if (!transcript || !Array.isArray(transcript.cues)) throw new Error("HOST_ASSEMBLY_FROZEN_TRANSCRIPT_MISSING");
+  const cues = transcript.cues.map((cue, index) => {
+    if (!cue || typeof cue !== "object" || Array.isArray(cue)) {
+      throw new Error(`HOST_ASSEMBLY_FROZEN_TRANSCRIPT_CUE_INVALID:${index}`);
+    }
+    const { id, start, end, text, representativeFrame, overlappingShots } = cue;
+    if (typeof id !== "string" || typeof start !== "number" || !Number.isFinite(start)
+      || typeof end !== "number" || !Number.isFinite(end) || typeof text !== "string"
+      || typeof representativeFrame !== "string" || !Array.isArray(overlappingShots)
+      || overlappingShots.some(shot => typeof shot !== "string")) {
+      throw new Error(`HOST_ASSEMBLY_FROZEN_TRANSCRIPT_CUE_INVALID:${index}`);
+    }
+    return { id, start, end, text, representativeFrame, overlappingShots: [...overlappingShots] };
+  });
+  return {
+    origin: typeof transcript.origin === "string" && transcript.origin.trim() ? transcript.origin : "frozen_evidence_pack",
+    cues
+  };
+}
+
 type Probe = {
   carrierSweep?: Array<{ id?: string }>;
   informationCarriers?: Carrier[];
@@ -120,7 +156,8 @@ export function assembleHostOwnedReconstruction(outputDir: string): HostAssembly
   const evidence = readJson<EvidencePack>(evidencePath);
   const probe = readJson<Probe>(probePath);
   const reconstruction = readJson<Reconstruction>(reconstructionPath);
-  const frozenCues = evidence.transcript?.cues ?? [];
+  const frozenTranscript = frozenReconstructionTranscriptFromEvidencePack(evidence);
+  const frozenCues = frozenTranscript.cues;
   const reconstructionCarriers = (reconstruction.coverageMatrix?.channels ?? []).map(normalizeCarrier);
   const reconstructionCarriersById = new Map(reconstructionCarriers
     .filter((carrier): carrier is Carrier & { id: string } => Boolean(carrier.id))
@@ -210,17 +247,7 @@ export function assembleHostOwnedReconstruction(outputDir: string): HostAssembly
   }
 
   probe.informationCarriers = probeCarriers;
-  reconstruction.transcript = {
-    origin: reconstruction.transcript?.origin ?? evidence.transcript?.origin ?? "frozen_evidence_pack",
-    cues: frozenCues.map((cue) => ({
-      id: cue.id,
-      start: cue.start,
-      end: cue.end,
-      text: cue.text,
-      representativeFrame: cue.representativeFrame,
-      overlappingShots: cue.overlappingShots
-    }))
-  };
+  reconstruction.transcript = frozenTranscript;
   reconstruction.coverageMatrix = {
     ...(reconstruction.coverageMatrix ?? {}),
     channels: reconstructionCarriers,

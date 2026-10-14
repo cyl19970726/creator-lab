@@ -2,7 +2,8 @@
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, unlinkSync } from "node:fs";
-import { ensureInputFile, extractFrame, parseArgs, probeMedia, readJson, requireArg, round, uniqueTimes, writeContactSheet, writeJson } from "./lib.mjs";
+import { ensureInputFile, extractFrame, parseArgs, probeMedia, readJson, requireArg, round, writeContactSheet, writeJson } from "./lib.mjs";
+import { planCaptureProtocol } from "./capture-plan.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const video = requireArg(args, "video");
@@ -22,6 +23,9 @@ const frameByContentHash = new Map();
 let exactTimeReuses = 0;
 let exactContentReuses = 0;
 const maxTotalFrames = Number(args["max-total-frames"] || 180);
+const maxFramesPerAction = Number(args["max-frames-per-action"] || 60);
+const plan = planCaptureProtocol(protocol, media.duration, { maxFramesPerAction, maxTotalFrames });
+if (!plan.pass) throw new Error(plan.errors.map(error => `${error.path}: ${error.message}`).join("; "));
 
 function attach(actionId, frameId) {
   const ids = actionFrameIds.get(actionId) || [];
@@ -29,29 +33,9 @@ function attach(actionId, frameId) {
   actionFrameIds.set(actionId, ids);
 }
 
-function timeKey(time) {
-  return round(time, 2).toFixed(2);
-}
+function timeKey(time) { return round(time, 2).toFixed(2); }
 
-for (const action of protocol.captureActions || []) {
-  const start = Number(action.range?.start ?? 0);
-  const end = Number(action.range?.end ?? start);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || end > media.duration + 0.25) throw new Error(`Invalid range for ${action.id}`);
-  let times = [];
-  if (action.times?.length) times = action.times;
-  else if (action.mode === "exact_times") throw new Error(`exact_times action ${action.id} requires times`);
-  else if (action.mode === "before_during_after") times = [start, (start + end) / 2, end];
-  else {
-    const fallback = action.mode === "motion_sequence" ? 0.2 : action.mode === "ocr_review" || action.mode === "ui_state_review" ? 0.25 : 0.5;
-    const density = Number(action.densitySeconds || fallback);
-    for (let time = start; time <= end + 0.0001; time += density) times.push(time);
-    times.push(end);
-  }
-  const selected = uniqueTimes(times, media.duration);
-  const maxFramesPerAction = Number(args["max-frames-per-action"] || 60);
-  if (selected.length > maxFramesPerAction) throw new Error(`${action.id} requests ${selected.length} frames; refine the protocol or raise --max-frames-per-action explicitly`);
-  const newExactTimes = selected.filter((time) => !frameByExactTime.has(timeKey(time)));
-  if (frames.length + newExactTimes.length > maxTotalFrames) throw new Error(`Protocol exceeds ${maxTotalFrames} total unique times; merge overlaps or raise --max-total-frames explicitly`);
+for (const { action, selected } of plan.actions) {
   selected.forEach((time, index) => {
     const existingAtTime = frameByExactTime.get(timeKey(time));
     if (existingAtTime) {

@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { basename, join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { buildEditingCutEvidence, cutSheetPages } from "./cut-evidence.mjs";
 import {
   detectSceneCuts, ensureInputFile, extractFrame, overlap, parseArgs, parseSrt,
   probeMedia, requireArg, round, uniqueTimes, writeJson
@@ -50,6 +53,34 @@ const transcriptCues = cues.map((cue) => {
   };
 });
 
+const cutEvidence = buildEditingCutEvidence(shots, cuts, transcriptCues);
+const extractedCutTimes = new Map();
+for (const frame of cutEvidence.frames) {
+  const existing = extractedCutTimes.get(frame.time);
+  if (existing) frame.frame = existing;
+  else {
+    extractFrame(video, frame.time, join(out, frame.frame));
+    extractedCutTimes.set(frame.time, frame.frame);
+  }
+}
+const cutFrameIndex = new Map(cutEvidence.frames.map((frame) => [frame.id, frame]));
+const cutContactSheets = cutSheetPages(cutEvidence.records);
+for (const sheet of cutContactSheets) {
+  const rows = sheet.cutIds.map((cutId) => {
+    const cut = cutEvidence.records.find((record) => record.id === cutId);
+    const before = cutFrameIndex.get(cut.beforeFrame.id);
+    const after = cutFrameIndex.get(cut.afterFrame.id);
+    return {
+      id: cut.id, boundary: cut.boundary, fromShot: cut.fromShot, toShot: cut.toShot,
+      before: { id: before.id, time: before.time, path: join(out, before.frame) },
+      after: { id: after.id, time: after.time, path: join(out, after.frame) }
+    };
+  });
+  mkdirSync(join(out, "contact"), { recursive: true });
+  execFileSync("python3", [fileURLToPath(new URL("./render-cut-contact.py", import.meta.url)),
+    JSON.stringify(rows), join(out, sheet.frame)]);
+}
+
 const denseInterval = Number(args["dense-seconds"] || (duration <= 30 ? 0.75 : duration <= 120 ? 1.5 : duration <= 300 ? 2.5 : 4));
 const denseTimes = [];
 for (let time = 0; time <= safeEnd; time += denseInterval) denseTimes.push(time);
@@ -64,6 +95,7 @@ const denseFrames = uniqueTimes(denseTimes, duration).map((time, index) => {
 const frameIndex = [
   ...shots.map((shot) => ({ id: `FRAME-${shot.id}`, time: shot.representativeTime, frame: shot.representativeFrame, purpose: "shot_representative" })),
   ...transcriptCues.map((cue) => ({ id: `FRAME-${cue.id}`, time: cue.representativeTime, frame: cue.representativeFrame, purpose: "cue_representative" })),
+  ...cutEvidence.frames,
   ...denseFrames
 ];
 
@@ -79,6 +111,7 @@ const pack = {
   media,
   sceneDetection: { threshold: Number(args["scene-threshold"] || 0.24), cuts },
   shots,
+  editingCuts: { basis: "scene_detection_candidates", cuts: cutEvidence.records, contactSheets: cutContactSheets },
   transcript: {
     origin: subtitleOrigin,
     cueCount: transcriptCues.length,
@@ -95,4 +128,4 @@ const pack = {
 
 const output = join(out, "evidence-pack.json");
 writeJson(output, pack);
-process.stdout.write(`${JSON.stringify({ output, duration, shots: shots.length, cues: transcriptCues.length, denseFrames: denseFrames.length })}\n`);
+process.stdout.write(`${JSON.stringify({ output, duration, shots: shots.length, editingCuts: cutEvidence.records.length, cues: transcriptCues.length, denseFrames: denseFrames.length })}\n`);

@@ -1,8 +1,43 @@
 import { openingAnalysisSchema, packagingAnalysisSchema } from "../../../../contracts/index.js";
 
+type PostSource = { facts: { title: string | null; coverHref: string | null }; cover?: unknown } | null;
+
+/** Source identity can be checked when directingLogic is staged; index registration is checked after assembly. */
+export function depthPackagingSourceDiagnostics(directingLogic: unknown, source: PostSource,
+  derivedSourceIds?: ReadonlySet<string>): string[] {
+  const packaging = packagingAnalysisSchema.safeParse((directingLogic as { packagingAnalysis?: unknown } | null)?.packagingAnalysis);
+  if (!packaging.success) return [];
+  const errors: string[] = [];
+  for (const [key, required, exists, code] of [
+    ["cover", "POST-COVER", Boolean(source?.facts.coverHref && source?.cover), "INDEPENDENT_COVER"],
+    ["title", "POST-TITLE", Boolean(source?.facts.title), "TITLE_SOURCE"]
+  ] as const) {
+    const surface = packaging.data[key];
+    if (surface.state !== "available") continue;
+    const field = `builderLenses.directingLogic.packagingAnalysis.${key}`;
+    if (!exists) {
+      errors.push(`BUILDER_INTEGRITY_DEPTH_${code}:${field}.state received="available" but frozen post source has no ${key === "cover" ? "cover image/coverHref" : "title"}; do not mark this source available or register ${required} without frozen source evidence`);
+      continue;
+    }
+    const mismatches: string[] = [];
+    if (surface.sourceRef !== required) mismatches.push(`${field}.sourceRef received=${JSON.stringify(surface.sourceRef)} required=${JSON.stringify(required)}`);
+    if (!surface.evidenceRefs.includes(required)) mismatches.push(`${field}.evidenceRefs received=${JSON.stringify(surface.evidenceRefs)} must include ${JSON.stringify(required)}`);
+    if (derivedSourceIds && !derivedSourceIds.has(required)) {
+      mismatches.push(`derivedSources missing id=${JSON.stringify(required)}; register the existing frozen source in the reconstruction index`);
+    }
+    if (mismatches.length) {
+      errors.push(`BUILDER_INTEGRITY_DEPTH_${code}:${mismatches.join("; ")}; correct the directingLogic lens with revise_builder_lens slot=directingLogic useLatest:true, then validate_reconstruction_draft useLatestBuilderLenses:true; changing only the index cannot correct a lens binding`);
+    }
+  }
+  return errors;
+}
+
 export function validateVideoDepth(input: unknown, duration: number, ids: Set<string>, frames: Map<string, number>,
-  source: { facts: { title: string | null; coverHref: string | null }; cover?: unknown } | null) {
-  const root = input as { depthContractVersion?: string; builderLenses?: { visualEditing?: { openingAnalysis?: unknown }; directingLogic?: { packagingAnalysis?: unknown } } };
+  source: PostSource) {
+  const root = input as { depthContractVersion?: string; derivedSources?: Array<{ id?: string; path?: string }>;
+    builderLenses?: { visualEditing?: { openingAnalysis?: unknown }; directingLogic?: { packagingAnalysis?: unknown };
+      finalSummary?: { reusableLessons?: Array<{ evidenceRefs?: string[] }>;
+        performance?: { evidenceRefs?: string[] } } } };
   const fail = (reason: string, detail?: string): never => {
     throw new Error(`BUILDER_INTEGRITY_DEPTH_${reason}${detail ? `:${detail}` : ""}`);
   };
@@ -12,6 +47,9 @@ export function validateVideoDepth(input: unknown, duration: number, ids: Set<st
   const packagingResult = packagingAnalysisSchema.safeParse(root.builderLenses?.directingLogic?.packagingAnalysis);
   if (!openingResult.success || !packagingResult.success) return fail("SCHEMA");
   const opening = openingResult.data, packaging = packagingResult.data;
+  const sourceErrors = depthPackagingSourceDiagnostics(root.builderLenses?.directingLogic,
+    source, new Set((root.derivedSources ?? []).map(item => item.id).filter((id): id is string => Boolean(id))));
+  if (sourceErrors.length) throw new Error(sourceErrors.join("\n"));
   if (!Number.isFinite(duration) || Math.abs(opening.duration - Math.min(10, duration)) > 0.02) fail("DURATION");
   const invalidReferenceDetails: string[] = [];
   const checkRefs = (refs: string[], location: string) => {
@@ -54,14 +92,30 @@ export function validateVideoDepth(input: unknown, duration: number, ids: Set<st
       if (!surface.sourceRef || !surface.evidenceRefs.length) fail("SOURCE_REFERENCE");
       checkRefs(surface.evidenceRefs, `builderLenses.directingLogic.packagingAnalysis.${key}.evidenceRefs`);
       checkRefs([surface.sourceRef!], `builderLenses.directingLogic.packagingAnalysis.${key}.sourceRef`);
-      if (key === "cover" && (!source?.facts.coverHref || !source.cover || surface.sourceRef !== "POST-COVER")) fail("INDEPENDENT_COVER");
-      if (key === "title" && (!source?.facts.title || surface.sourceRef !== "POST-TITLE")) fail("TITLE_SOURCE");
       if (key === "firstFrame" && (frames.get(surface.sourceRef!) ?? Infinity) > 0.5) fail("FIRST_FRAME");
     }
   }
   for (const [index, item] of packaging.fulfillment.entries()) {
     checkRefs(item.bodyEvidenceRefs, `builderLenses.directingLogic.packagingAnalysis.fulfillment[${index}].bodyEvidenceRefs`);
     if ((item.status === "fulfilled" || item.status === "partial") && !item.bodyEvidenceRefs.length) fail("FULFILLMENT_EVIDENCE");
+  }
+  const summary = root.builderLenses?.finalSummary;
+  if (summary) {
+    for (const [index, lesson] of (summary.reusableLessons ?? []).entries()) {
+      if (Array.isArray(lesson.evidenceRefs)) {
+        checkRefs(lesson.evidenceRefs, `builderLenses.finalSummary.reusableLessons[${index}].evidenceRefs`);
+      }
+    }
+    const performanceRefs = summary.performance?.evidenceRefs;
+    if (Array.isArray(performanceRefs)) {
+      checkRefs(performanceRefs, "builderLenses.finalSummary.performance.evidenceRefs");
+      const frozenSourceIds = new Set((root.derivedSources ?? [])
+        .filter(item => item.path === "post-source-input.json" && item.id && ids.has(item.id))
+        .map(item => item.id));
+      if (!performanceRefs.some(ref => frozenSourceIds.has(ref))) {
+        fail("FINAL_SUMMARY_PERFORMANCE_SOURCE", `builderLenses.finalSummary.performance.evidenceRefs=${JSON.stringify(performanceRefs)} must include a derivedSources ID whose path is exactly post-source-input.json`);
+      }
+    }
   }
   if (invalidReferenceDetails.length > 0) fail("REFERENCE", invalidReferenceDetails.join("\n"));
 }

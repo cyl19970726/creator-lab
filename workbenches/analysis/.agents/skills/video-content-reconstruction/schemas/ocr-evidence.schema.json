@@ -6,6 +6,7 @@
   "required": ["schemaVersion", "generatedAt", "manifest", "recognitionLanguages", "frames"],
   "properties": {
     "schemaVersion": { "const": "ocr-evidence-1.0" },
+    "sourceFrameBase": { "const": "candidate-root" },
     "generatedAt": { "type": "string" },
     "manifest": { "type": "string" },
     "recognitionLanguages": { "type": "array", "items": { "type": "string" } },
@@ -17,6 +18,7 @@
         "properties": {
           "frameId": { "type": "string" },
           "actionId": { "type": "string" },
+          "actionIds": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
           "time": { "type": "number" },
           "sourceFrame": { "type": "string" },
           "status": { "enum": ["processed", "failed"] },

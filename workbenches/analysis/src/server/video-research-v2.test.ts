@@ -7,6 +7,7 @@ import type { CreatorResearchService } from "../../packages/research/index.js";
 import { sourceDigest } from "./report-source-revision.js";
 import { firstEvidenceEntryById, loadVideoResearch, loadWorkflowVideoResearch } from "./video-research.js";
 import { createHash } from "node:crypto";
+import { missingPostSourceFacts } from "../../packages/contracts/index.js";
 
 const runIds: string[] = [];
 const originalRevisions = process.env.SELF_MEDIA_REPORT_REVISIONS_DIR;
@@ -170,6 +171,23 @@ describe("video reconstruction V2 projection", () => {
     expect(b01?.media.map(item => item.ref)).toEqual(["OPEN0014"]);
     expect(b01?.supplementalMedia?.map(item => item.ref)).toEqual(b01Refs.slice(1));
     expect(result?.evidenceIndex.find((item) => item.id === "OCR-00025")).toMatchObject({ kind: "ocr", label: "可读 OCR 文本", artifactRef: expect.stringContaining("targeted-evidence/frames/during.jpg") });
+    const legacyOcrPath = path.join(root, "targeted-evidence", "ocr-evidence.json");
+    const legacyOcr = fs.readFileSync(legacyOcrPath);
+    fs.writeFileSync(legacyOcrPath, JSON.stringify({ sourceFrameBase: "candidate-root", frames: [
+      { sourceFrame: "evidence/frames/dense/dense-001.jpg", lines: [{ id: "OCR-SOURCE", text: "原帧字幕" }] },
+      { sourceFrame: "targeted-evidence/frames/during.jpg", lines: [{ id: "OCR-TARGET", text: "目标帧字幕" }] },
+      { sourceFrame: "../outside.jpg", lines: [{ id: "OCR-ESCAPE", text: "不可链接" }] },
+      { sourceFrame: "/tmp/outside.jpg", lines: [{ id: "OCR-ABS", text: "不可链接" }] }
+    ] }));
+    const expanded = await loadVideoResearch(service, "fixture-creator", videoId, runId);
+    const rootRef = `/artifacts/${runId}/video-reconstructions/${videoId}/`;
+    expect(expanded?.evidenceIndex.find(item => item.id === "OCR-SOURCE")?.artifactRef)
+      .toBe(`${rootRef}evidence/frames/dense/dense-001.jpg`);
+    expect(expanded?.evidenceIndex.find(item => item.id === "OCR-TARGET")?.artifactRef)
+      .toBe(`${rootRef}targeted-evidence/frames/during.jpg`);
+    expect(expanded?.evidenceIndex.find(item => item.id === "OCR-ESCAPE")?.artifactRef).toBeNull();
+    expect(expanded?.evidenceIndex.find(item => item.id === "OCR-ABS")?.artifactRef).toBeNull();
+    fs.writeFileSync(legacyOcrPath, legacyOcr);
     expect(result?.directingLogic.stages).toHaveLength(2);
     expect(result?.directingLogic.activatedQuestion).toBe("入口在哪里？");
     expect(result?.visualEditing.shotSemantics).toHaveLength(1);
@@ -187,6 +205,34 @@ describe("video reconstruction V2 projection", () => {
     expect(result?.readerSummary.representativeFrame?.src).toContain("before.jpg");
     expect(result?.evidenceHealth.ocr).toBe(true);
     expect(result?.evidenceHealth.audio).toBe(false);
+
+    const frozenFacts = { ...missingPostSourceFacts, sourceUrl: "https://example.com/video",
+      capturedAt: "2026-10-13T04:00:00.000Z", publishedLabel: "2026-10-01",
+      metrics: { likes: 23, collections: 4, comments: null, shares: 0 } };
+    const finalSummary = { conclusion: "完整综合判断。", contentSynthesis: "内容原文。",
+      directingSynthesis: "编导原文。", editingSynthesis: "剪辑原文。",
+      reusableLessons: [{ lesson: "可复用的动作", conditions: "明确结果时", action: "展示结果", evidenceRefs: ["TARGET-0001"] }],
+      limits: ["剪辑不能解释互动原因。"], performance: {
+        observedAt: frozenFacts.capturedAt, publishedLabel: frozenFacts.publishedLabel,
+        observedMetrics: [{ metric: "likes", value: 23 }, { metric: "collections", value: 4 },
+          { metric: "comments", value: null }, { metric: "shares", value: 0 }],
+        interpretation: "可见点赞和收藏，缺少曝光分母。", comparison: null,
+        limitations: ["没有浏览量、留存和可比样本。"], evidenceRefs: ["POST-SOURCE-INPUT"]
+      } };
+    reconstruction.summaryContractVersion = "single-post-summary@1";
+    rawLenses.finalSummary = finalSummary;
+    fs.writeFileSync(path.join(root, "post-source-input.json"), JSON.stringify({ facts: frozenFacts }));
+    fs.writeFileSync(path.join(root, "reconstruction.json"), JSON.stringify(reconstruction));
+    expect((await loadVideoResearch(service, "fixture-creator", videoId, runId))?.finalSummary).toEqual(finalSummary);
+    rawLenses.finalSummary!.performance = { ...finalSummary.performance, observedMetrics: [
+      { metric: "likes", value: 24 }, ...finalSummary.performance.observedMetrics.slice(1)
+    ] };
+    fs.writeFileSync(path.join(root, "reconstruction.json"), JSON.stringify(reconstruction));
+    await expect(loadVideoResearch(service, "fixture-creator", videoId, runId)).rejects.toThrow("field=/performance/observedMetrics/likes/value frozenExpected=23 received=24");
+    delete rawLenses.finalSummary;
+    delete reconstruction.summaryContractVersion;
+    fs.rmSync(path.join(root, "post-source-input.json"));
+    fs.writeFileSync(path.join(root, "reconstruction.json"), JSON.stringify(reconstruction));
 
     // An unavailable frame must not erase the Builder's explanation or step reference.
     lenses.contentRestoration.blocks[0]!.visuals = [{

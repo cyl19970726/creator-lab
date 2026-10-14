@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { AgentRunRequest, AgentRunResult, AgentRunner, ArtifactPayloadReader, ArtifactRef, RunStore } from "@signal-room/workflow";
-import { OpenAIAgentsSdkRunner, SiwcAuth, type SiwcRunnerOptions, type SiwcTool } from "@signal-room/workflow-agent-sdk";
+import { OpenAIAgentsSdkRunner, SiwcAuth, type SiwcRunnerOptions, type SiwcTool, type SiwcVisualToolResult } from "@signal-room/workflow-agent-sdk";
 import {
   assertValidCrossPostResearch, creatorCorpusSchema, creatorPortfolioAnalysisSchema, creatorSynthesisSchema,
   researchReviewReceiptSchema, sourceConsistencyCheckV2Schema, validateAdaptivePortfolioClassification,
@@ -14,11 +14,15 @@ import {
 } from "../../../research/index.js";
 import type { ResearchReviewReceipt } from "../../../research/src/workflows/simple-review-contract.js";
 import { artifactPath, artifactRef } from "../core/artifacts.js";
+import { postSourceFactsSchema } from "../../../contracts/index.js";
 import { projectRoot, runArtifactDir } from "../core/config.js";
 import { runFile } from "../core/process.js";
 import { prepareBuilderInputs } from "../platform/video/video-reconstruction-media-preparer.js";
-import { validateBuilderIntegrity } from "../platform/video/video-builder-integrity.js";
-import { assembleHostOwnedReconstruction } from "../platform/video/video-reconstruction-host-assembler.js";
+import { assertCompleteOcrResult, preflightOcrInputUnion, writeOcrInputManifest } from "../platform/video/video-ocr-input-manifest.js";
+import { contentBlockTemporalDiagnostics, contentBlockVisualDiagnostics, validateBuilderIntegrity } from "../platform/video/video-builder-integrity.js";
+import { depthPackagingSourceDiagnostics } from "../platform/video/video-depth-integrity.js";
+import { assertFinalSummaryPerformance } from "../platform/video/video-final-summary.js";
+import { assembleHostOwnedReconstruction, frozenReconstructionTranscriptFromEvidencePack } from "../platform/video/video-reconstruction-host-assembler.js";
 import { freezePostSourceInput } from "../platform/video/video-post-source-input.js";
 import { assembleReuseCandidateFromFixed, assertReuseBaseBindings, creatorSynthesisResearchDraftSchema,
   loadReuseBase, prepareReuseFixedFields } from "../platform/synthesis/creator-synthesis-reuse.js";
@@ -29,6 +33,9 @@ import { collectOpeningFrameDiagnostics } from "./opening-frame-diagnostics.js";
 import { assertPinnedResearchInput, fileDigest, type PinnedResearchInput } from "./research-inputs.js";
 import { boundArtifact, ResponsesEvidenceTools } from "./responses-tools.js";
 import { bindCreatorEvidenceViews, creatorEvidenceReadiness } from "./creator-evidence.js";
+import { createReviewFindingComparisonTool, reviewFindingHash } from "./review-finding-comparison.js";
+import { BuilderLensDrafts, builderLensDraftToolParameters, builderLensIndexSchema, builderLensSchema, builderLensSlots, type BuilderLensSlot } from "./builder-lens-drafts.js";
+import { createEvidenceWindowTool, indexedEvidenceFrames } from "./evidence-window.js";
 
 type Store = RunStore & ArtifactPayloadReader;
 type CandidatePayload = { kind: "post" | "creator"; evidence: ArtifactRef; report: unknown;
@@ -117,7 +124,7 @@ export class ResponsesResearchRunner implements AgentRunner {
     if (prior && !bound.some(item => item.ref === prior.reportArtifactRef)) bound.push(boundArtifact(prior.reportArtifactRef, prior.reportSha256));
     if (prior?.kind === "post") bindPostCandidateFiles(bound, prior, pinned.source.creatorRunId);
     const media = post ? artifactPath((pinned.source as PostWorkflowStartInput).sourceMediaArtifactRef) : undefined;
-    const tools = new ResponsesEvidenceTools(bound, directory, repair ? undefined : media);
+    const tools = new ResponsesEvidenceTools(bound, directory, repair || reviewer ? undefined : media);
     let result: unknown;
     if (id === "post-source-checker") result = await this.sourceCheck(activeRequest, frozen, pinned, directory);
     else if (reviewer) result = await this.review(activeRequest, pinned, prior!, input.candidate, tools, post);
@@ -145,7 +152,8 @@ export class ResponsesResearchRunner implements AgentRunner {
 
   private async model<I>(request: AgentRunRequest<I>, role: Role, tools: ResponsesEvidenceTools,
     extra: string, validate: (value: unknown) => unknown | Promise<unknown>, extraTools: readonly SiwcTool[] = [],
-    outputValidationFeedback?: (error: unknown) => string | null): Promise<unknown> {
+    outputValidationFeedback?: (error: unknown) => string | null,
+    finishOnPassingDraftTools?: readonly string[]): Promise<unknown> {
     const promptFile = path.join(projectRoot, "prompts", promptNames[role]);
     const method = fs.readFileSync(promptFile, "utf8");
     const instructions = `${method}\n\n${extra}\n\nBound evidence refs: ${JSON.stringify(tools.list())}. Only use the bound tools. Return one JSON object, no Markdown.`;
@@ -158,6 +166,7 @@ export class ResponsesResearchRunner implements AgentRunner {
       tools: () => toolSet, timeoutMs: this.options.timeoutMs?.[role] ?? defaultTimeout[role],
       maxTurns: 100, maxToolCalls: 100, enforceJsonObject: true,
       validateOutput: validate,
+      ...(finishOnPassingDraftTools?.length ? { finishOnPassingDraftTools } : {}),
       ...(outputValidationFeedback ? { maxOutputValidationCorrections: 2,
         outputValidationFeedback: (error: unknown) => outputValidationFeedback(error) } : {}),
       ...(this.options.fetch ? { fetch: this.options.fetch } : {}) };
@@ -212,29 +221,56 @@ export class ResponsesResearchRunner implements AgentRunner {
       const inputSha256 = shaText(stable(base));
       const inputName = `source-consistency-input-round-${round}.json`;
       writeJson(directory, inputName, { ...base, inputSha256 });
+      const inputFileSha256 = fileDigest(path.join(directory, inputName));
       const roundTools = new ResponsesEvidenceTools([], directory);
       for (const item of items) roundTools.addGenerated(item.ref, path.join(directory, item.ref));
       roundTools.addGenerated(inputName, path.join(directory, inputName));
+      const allowed = new Set(items.map(item => item.ref));
+      const imageRefs = new Set(images);
+      const validateRoundOutput = (value: unknown) => {
+        ensure(value && typeof value === "object", "RESPONSES_SOURCE_CHECK_INVALID");
+        const missingAccess: string[] = [];
+        if (!roundTools.fullyRead(inputName)) {
+          const progress = roundTools.readProgress(inputName);
+          missingAccess.push(`read_evidence ${inputName} offset=${progress.nextOffset} total=${progress.totalCharacters}`);
+        }
+        if (!roundTools.fullyRead("post-source-input.json")) {
+          const progress = roundTools.readProgress("post-source-input.json");
+          missingAccess.push(`read_evidence post-source-input.json offset=${progress.nextOffset} total=${progress.totalCharacters}`);
+        }
+        for (const ref of images) if (!roundTools.inspectedImages.has(ref)) missingAccess.push(`inspect_image ${ref}`);
+        if (missingAccess.length) throw new Error(`RESPONSES_SOURCE_ROUND_EVIDENCE_UNREAD: ${missingAccess.join("; ")}`);
+        const check = sourceConsistencyCheckV2Schema.parse({ ...(value as Record<string, unknown>), inputSha256,
+          provenance: { model: request.definition.model, reasoningEffort: request.definition.reasoningEffort,
+            methodSha256, threadId: null } });
+        const missingRefs = check.comparisons.flatMap((comparison, index) => comparison.evidenceRefs.map(ref => {
+          if (!allowed.has(ref)) return `comparison[${index}] ref=${ref} is not bound; allowed=${[...allowed].join(",")}`;
+          const read = imageRefs.has(ref) ? roundTools.inspectedImages.has(ref) : roundTools.fullyRead(ref);
+          return read ? null : `comparison[${index}] ref=${ref} was not fully read; use ${imageRefs.has(ref) ? "inspect_image" : "read_evidence"} on that exact ref`;
+        })).filter((problem): problem is string => problem !== null);
+        if (missingRefs.length) throw new Error(`RESPONSES_SOURCE_EVIDENCE_NOT_INSPECTED: ${missingRefs.join("; ")}`);
+        if (check.verdict !== "uncertain" && !check.comparisons.flatMap(item => item.evidenceRefs)
+          .some(ref => /^(?:frames\/|context\/|contact-sheets\/)/u.test(ref)
+            && imageRefs.has(ref) && roundTools.inspectedImages.has(ref))) {
+          throw new Error("RESPONSES_SOURCE_IMAGE_REFERENCE_MISSING: cite at least one inspected video frame or context sheet; cover alone is insufficient");
+        }
+        return check;
+      };
       const output = await this.model(request, "source-check", roundTools,
-        `ROUND ${round}/2. Read ${inputName} and post-source-input.json; inspect each image in ${JSON.stringify(images)}. ${round === 1
+        `ROUND ${round}/2. Read ${inputName} and post-source-input.json; inspect each image in ${JSON.stringify(images)}. Cite only exact refs from the evidence array in ${inputName}; that input JSON is an index, not an independent source to cite. ${round === 1
           ? "Classify identity separately from claim_detail using these four coverage frames and the independent cover."
           : "Make a fresh independent judgment from only the newly sampled timestamped context and cover. You are not given the first-round verdict. A detail disagreement alone is not an identity conflict."} Return semantic fields only; host binds the immutable input hash.`,
-      value => { ensure(value && typeof value === "object", "RESPONSES_SOURCE_CHECK_INVALID"); return value; }) as Record<string, unknown>;
-      if (!roundTools.fullyRead(inputName) || !roundTools.fullyRead("post-source-input.json")
-        || images.some(ref => !roundTools.inspectedImages.has(ref))) throw new Error("RESPONSES_SOURCE_ROUND_EVIDENCE_UNREAD");
-      if (fileDigest(media) !== mediaSha256 || items.some(item => fileDigest(path.join(directory, item.ref)) !== item.sha256)) {
+      validateRoundOutput, [], error => {
+        if (error instanceof Error && /^RESPONSES_SOURCE_(?:ROUND_EVIDENCE_UNREAD|EVIDENCE_NOT_INSPECTED|IMAGE_REFERENCE_MISSING)/u.test(error.message)) {
+          return `The source-check output failed a technical evidence-access check: ${error.message}. Correct only the missing reads, pixel inspections, or exact bound evidenceRefs listed above, then return the same semantic assessment. Do not change your verdict to bypass this check; the host binds input hashes and keeps the semantic fields yours.`;
+        }
+        return null;
+      }) as Record<string, unknown>;
+      if (fileDigest(media) !== mediaSha256 || fileDigest(path.join(directory, inputName)) !== inputFileSha256
+        || items.some(item => fileDigest(path.join(directory, item.ref)) !== item.sha256)) {
         throw new Error("RESPONSES_SOURCE_INPUT_MUTATED");
       }
-      const check = sourceConsistencyCheckV2Schema.parse({ ...output, inputSha256, provenance: {
-        model: request.definition.model, reasoningEffort: request.definition.reasoningEffort, methodSha256, threadId: null } });
-      const allowed = new Set(items.map(item => item.ref));
-      if (check.comparisons.some(comparison => comparison.evidenceRefs.some(ref => !allowed.has(ref) || !roundTools.readRefs.has(ref)))) {
-        throw new Error("RESPONSES_SOURCE_EVIDENCE_NOT_INSPECTED");
-      }
-      if (check.verdict !== "uncertain" && !check.comparisons.flatMap(item => item.evidenceRefs)
-        .some(ref => ref.startsWith("frames/") || ref.startsWith("context/") || ref.startsWith("contact-sheets/"))) {
-        throw new Error("RESPONSES_SOURCE_IMAGE_REFERENCE_MISSING");
-      }
+      const check = validateRoundOutput(output);
       writeJson(directory, `source-consistency-round-${round}.json`, check);
       return check;
     };
@@ -283,11 +319,15 @@ export class ResponsesResearchRunner implements AgentRunner {
     ref: ArtifactRef, tools: ResponsesEvidenceTools, post: boolean): Promise<unknown> {
     const kind = post ? "post" : "creator";
     const before = prior.reportSha256;
+    const checkedFindingHashes = new Set<string>();
     const retryFeedback = (request.input as ReviewInput).retryFeedback;
     const postRequiredTextRefs = post
-      ? ["post-source-input.json", "evidence/evidence-pack.json", "targeted-evidence/targeted-evidence.json"]
+      ? ["post-source-input.json", "probe.json", "capture-protocol.json", "evidence/evidence-pack.json", "targeted-evidence/targeted-evidence.json",
+        "targeted-evidence/ocr-evidence.json"]
         .filter(evidenceRef => tools.list().includes(evidenceRef))
       : [];
+    const coverRef = post ? candidateCoverSource(path.dirname(artifactPath(prior.reportArtifactRef)))?.path : null;
+    if (coverRef && !tools.list().includes(coverRef)) throw new Error("RESPONSES_CANDIDATE_COVER_NOT_BOUND");
     const readiness = () => {
       const missingText = tools.fullyRead(prior.reportArtifactRef) ? []
         : [{ ref: prior.reportArtifactRef, ...tools.readProgress(prior.reportArtifactRef) }];
@@ -295,12 +335,33 @@ export class ResponsesResearchRunner implements AgentRunner {
         if (!tools.fullyRead(evidenceRef)) missingText.push({ ref: evidenceRef, ...tools.readProgress(evidenceRef) });
       }
       const missingImages = post && !tools.inspectedImages.size ? ["inspect_image at least one bound source image or target frame"] : [];
+      if (post && tools.list().includes("evidence/opening-contact.jpg") && !tools.inspectedImages.has("evidence/opening-contact.jpg")) {
+        missingImages.push("inspect_image evidence/opening-contact.jpg; test onset claims against the opening sequence");
+      }
+      if (coverRef && !tools.inspectedImages.has(coverRef)) {
+        missingImages.push(`inspect_image ${coverRef}; check the frozen independent post cover`);
+      }
       return { ready: missingText.length === 0 && missingImages.length === 0, missingText, missingImages };
     };
     const readinessTool: SiwcTool = { name: "check_review_evidence_readiness",
       description: `Check whether the entire candidate and bound frozen source material have been read; returns exact missing refs and offsets. For post review, read these bound refs when present: ${postRequiredTextRefs.join(", ") || "none"}; inspect bound image pixels.`,
       parameters: { type: "object", additionalProperties: false, properties: {} },
       execute: async () => readiness() };
+    const reviewerContextTool: SiwcTool | undefined = post ? {
+      name: "read_reviewer_context",
+      description: "Read the exact full candidate, frozen post source, probe, protocol, evidence pack, TARGET manifest and OCR when bound, plus overview pixels in one SHA-verified batch. JSON whitespace alone is compacted; no field or model conclusion is removed. On size overflow nothing is marked read: follow the returned readiness offsets with read_evidence and inspect_image.",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+      execute: async () => {
+        const textRefs = [prior.reportArtifactRef, ...postRequiredTextRefs];
+        const imageRefs = ["evidence/opening-contact.jpg", "targeted-evidence/contact-sheet.jpg",
+          ...(coverRef ? [coverRef] : [])].filter(ref => tools.list().includes(ref));
+        const bundle = tools.readBundle(textRefs, imageRefs);
+        return postReviewerContextResponse(bundle, readiness());
+      }
+    } : undefined;
+    const comparisonTool = post ? createReviewFindingComparisonTool(prior.report, tools, checkedFindingHashes) : undefined;
+    const reviewFrameIndex = post ? frozenFrameIndex(path.dirname(artifactPath(prior.reportArtifactRef))) : undefined;
+    const windowTool = reviewFrameIndex?.frames.length ? createEvidenceWindowTool(tools, reviewFrameIndex.frames) : undefined;
     const reviewContract = fs.readFileSync(path.join(projectRoot,
       "packages/research/src/workflows/simple-review-contract.ts"), "utf8");
     const candidateContracts = post
@@ -309,7 +370,7 @@ export class ResponsesResearchRunner implements AgentRunner {
       : ["packages/research/src/creator-synthesis/contracts.ts",
         "packages/contracts/src/cross-post-research.ts"];
     const output = await this.model(request, post ? "post-reviewer" : "creator-reviewer", tools,
-      `Candidate report reference: ${prior.reportArtifactRef}. Candidate binding: ${JSON.stringify(ref)}. Candidate file SHA-256: ${before}. Review kind: ${kind}. Read the candidate report in full, following every read_evidence nextOffset until totalCharacters.${post ? ` Also read every bound frozen source/evidence ref among post-source-input.json, evidence/evidence-pack.json, and targeted-evidence/targeted-evidence.json. Inspect actual bound source/target image pixels relevant to your findings; the original source video filename is not itself a citable ref.` : ""} Before final output, call check_review_evidence_readiness and read any missing offset; RESPONSES_REVIEW_CANDIDATE_UNREAD means the host will reject an incomplete read. Read relevant frozen evidence via tools. ${retryFeedback ? `The previous Reviewer attempt failed with technical feedback ${JSON.stringify(retryFeedback)}; this is a fresh attempt over the same frozen candidate.` : ""} Return a research-review@1 receipt, not a new candidate. Every finding evidenceRefs entry must name an exact bound ref you read or inspected; for an individual cue or JSON field use bound-file-ref#/path/to/field, not an unbound cue ID.
+      `Candidate report reference: ${prior.reportArtifactRef}. Candidate binding: ${JSON.stringify(ref)}. Candidate file SHA-256: ${before}. Review kind: ${kind}. ${post ? `Call read_reviewer_context with {} once to receive complete SHA-verified candidate/source/probe/protocol/pack/TARGET/OCR text and overview pixels. If it reports overflow, read every missing exact ref with read_evidence from nextOffset until totalCharacters and inspect required images; no partial batch reads are credited. Use inspect_evidence_window when available to check visual unknowns and onset claims against all indexed frames in their short time window; the original source video filename is not itself a citable ref.` : "Read the candidate report in full, following every read_evidence nextOffset until totalCharacters."} Before final output, call check_review_evidence_readiness and read any missing offset; RESPONSES_REVIEW_CANDIDATE_UNREAD means the host will reject an incomplete read. Read relevant frozen evidence via tools. ${retryFeedback ? `The previous Reviewer attempt failed with technical feedback ${JSON.stringify(retryFeedback)}; this is a fresh attempt over the same frozen candidate.` : ""} Return a research-review@1 receipt, not a new candidate. Every finding evidenceRefs entry must name an exact bound ref you read or inspected; for an individual cue or JSON field use bound-file-ref#/path/to/field, not an unbound cue ID.
 Canonical review output contract (use researchReviewReceiptSchema):
 ${reviewContract}
 Candidate contracts for checking actual fields:
@@ -335,10 +396,19 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
             evidenceProblems.push(`finding=${finding.id} location=${finding.location} (not an existing candidate JSON pointer)`);
           }
           for (const evidenceRef of finding.evidenceRefs) {
-            const [baseRef] = evidenceRef.split("#");
+            const delimiter = evidenceRef.indexOf("#");
+            const baseRef = delimiter < 0 ? evidenceRef : evidenceRef.slice(0, delimiter);
             if (!baseRef || !allowedRefs.has(baseRef)) {
               evidenceProblems.push(`finding=${finding.id} location=${finding.location} ref=${evidenceRef} (not bound; use an exact ref from Bound evidence refs)`);
               continue;
+            }
+            if (delimiter >= 0) {
+              const pointer = evidenceRef.slice(delimiter + 1);
+              const problem = tools.jsonPointerProblem(baseRef, pointer);
+              if (problem) {
+                evidenceProblems.push(`finding=${finding.id} location=${finding.location} ref=${evidenceRef} (${problem})`);
+                continue;
+              }
             }
             if (!tools.readRefs.has(baseRef)) {
               evidenceProblems.push(`finding=${finding.id} location=${finding.location} ref=${evidenceRef} (this exact bound ref has not been read or inspected)`);
@@ -347,14 +417,20 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
           }
         }
         if (evidenceProblems.length) throw new Error(`RESPONSES_REVIEW_EVIDENCE_INVALID: ${evidenceProblems.join("; ")}`);
+        const uncheckedFindings = post ? review.findings.filter(finding => !checkedFindingHashes.has(reviewFindingHash(finding))) : [];
+        if (uncheckedFindings.length) throw new Error(`RESPONSES_REVIEW_COMPARISON_REQUIRED: ${uncheckedFindings.map(finding => finding.id).join(",")}`);
         return review;
-      }, [readinessTool], error => {
+      }, [readinessTool, ...(reviewerContextTool ? [reviewerContextTool] : []),
+        ...(comparisonTool ? [comparisonTool] : []), ...(windowTool ? [windowTool] : [])], error => {
         if (error instanceof SyntaxError) return `The prior Reviewer output was invalid JSON: ${error.message}. Keep the evidence-backed review and return one complete research-review@1 JSON receipt.`;
         if (error instanceof Error && /^(?:RESPONSES_REVIEW_CANDIDATE_UNREAD|RESPONSES_POST_REVIEW_VISUAL_REQUIRED)/u.test(error.message)) {
           return `Technical review readiness correction: ${error.message}. Use read_evidence at each listed exact offset, inspect required bound images with inspect_image, and call check_review_evidence_readiness again before returning the complete receipt.`;
         }
         if (error instanceof Error && error.message.startsWith("RESPONSES_REVIEW_EVIDENCE_INVALID:")) {
-          return `Technical evidence-reference correction: ${error.message}. Use only exact refs listed in Bound evidence refs above. Choose read_evidence for text refs and inspect_image for image or frame refs, and cite a ref only after that exact tool returned its contents/pixels. The original source-video filename may be unbound and cannot be read with read_evidence; use a bound frozen text ref or inspect a bound frame instead. If no available material supports a real issue, retain the finding as kind="missing_evidence" and explain the missing evidence; do not delete a real finding merely to pass validation.`;
+          return `Technical evidence-reference correction: ${error.message}. Use only exact refs listed in Bound evidence refs above. Choose read_evidence for text refs and inspect_image for image or frame refs, and cite a ref only after that exact tool returned its contents/pixels. A ref with # must point to an existing value in a bound JSON file, use valid RFC 6901 escaping, and the complete JSON file must have been read. The original source-video filename may be unbound and cannot be read with read_evidence; use a bound frozen text ref or inspect a bound frame instead. Recheck each finding against the candidate and frozen evidence: keep findings that remain supported, but withdraw a finding if the issue cannot be verified or the candidate already contains the correction. Never remove a finding just to bypass this technical check.`;
+        }
+        if (error instanceof Error && error.message.startsWith("RESPONSES_REVIEW_COMPARISON_REQUIRED:")) {
+          return `Technical finding comparison correction: ${error.message}. Keep every finding that remains supported and withdraw only a finding that rechecking shows is unsupported or already corrected. For each remaining complete finding, call compare_review_finding with that exact finding object, inspect the returned candidate value beside the returned reference values or ordered image pixels, then return the complete receipt. The tool does not decide the semantic verdict; make that judgment yourself. Do not change a finding merely to reuse an earlier comparison.`;
         }
         if (error instanceof Error && error.message.startsWith("RESPONSES_REVIEW_CANDIDATE_MISMATCH:")) {
           return `Technical candidate-binding correction: ${error.message}. Preserve all findings and set kind, candidate id/revision/sha256, and candidateReportSha256 to the exact frozen values supplied above.`;
@@ -381,6 +457,22 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
     await (this.options.prepareMedia ?? prepareBuilderInputs)({ videoPath: media, outputDir: directory, skillDir,
       executeFile: (file, args, options) => execFileAsync(file, args, { cwd: options?.cwd, timeout: options?.timeout,
         env: options?.env, signal: request.signal, maxBuffer: 20 * 1024 * 1024 }) });
+    const evidencePackPath = path.join(directory, "evidence/evidence-pack.json");
+    const evidencePackDigest = fileDigest(evidencePackPath);
+    const preparation = JSON.parse(fs.readFileSync(path.join(directory, "media-preparation.json"), "utf8")) as {
+      evidencePack?: { path?: string; fingerprint?: string };
+    };
+    if (preparation.evidencePack?.fingerprint !== evidencePackDigest
+      || (preparation.evidencePack.path && path.resolve(preparation.evidencePack.path) !== path.resolve(evidencePackPath))) {
+      throw new Error("RESPONSES_FROZEN_TRANSCRIPT_UNVERIFIED");
+    }
+    const frozenTranscript = frozenReconstructionTranscriptFromEvidencePack(
+      JSON.parse(fs.readFileSync(evidencePackPath, "utf8")) as unknown);
+    const injectFrozenTranscript = (value: unknown): Record<string, unknown> => {
+      if (fileDigest(evidencePackPath) !== evidencePackDigest) throw new Error("RESPONSES_FROZEN_TRANSCRIPT_CHANGED");
+      ensure(value && typeof value === "object" && !Array.isArray(value), "RESPONSES_POST_RECONSTRUCTION_INVALID");
+      return { ...(value as Record<string, unknown>), transcript: frozenTranscript };
+    };
     tools.addGenerated("post-source-input", path.join(directory, "post-source-input.json"));
     tools.addGenerated("media-preparation", path.join(directory, "media-preparation.json"));
     tools.addGenerated("evidence-pack", path.join(directory, "evidence/evidence-pack.json"));
@@ -409,14 +501,14 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
       return result;
     } };
     const reviseProbe: SiwcTool = { name: "revise_validated_draft",
-      description: "Replace existing wrapper-relative /probe/... or /captureProtocol/... fields in a staged draft, then rerun the exact Phase 1 validator. Use its new passing draftId and sha256 for final acceptance.",
-      parameters: draftPatchParameters,
+      description: `${repair ? "Replace existing fields" : "Replace existing fields, or add a missing property under an existing object"} at wrapper-relative /probe/... or /captureProtocol/... paths in a staged draft, then rerun the exact Phase 1 validator. Arrays must be replaced whole. Use its new passing draftId and sha256 for final acceptance.`,
+      parameters: repair ? draftPatchParameters : builderDraftPatchParameters,
       execute: async (args, signal) => {
         assertPinnedResearchInput(pinned);
         try {
           const base = probeDrafts.resolve(draftReference(args), { requireValid: false });
           const patched = applyReconstructionPatch(base, (args as { patches?: unknown }).patches,
-            ["probe", "captureProtocol"]) as { probe: unknown; captureProtocol: unknown };
+            ["probe", "captureProtocol"], { allowAddMissingObjectProperty: !repair }) as { probe: unknown; captureProtocol: unknown };
           const receipt = await probeValidator.execute(patched as never, signal);
           await request.emit("responses.draft_patched", { phase: "post-probe",
             sourceDraftId: (args as { draftId: string }).draftId,
@@ -429,7 +521,7 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
       const required = ["post-source-input", "media-preparation", "evidence-pack"];
       const missingText = required.filter(ref => !tools.fullyRead(ref)).map(ref => ({ ref, ...tools.readProgress(ref) }));
       const missingImages: string[] = [];
-      for (const ref of ["opening-contact", "post-cover"] as const) {
+      for (const ref of ["opening-contact", "post-cover", ...tools.list().filter(value => /^editing-cuts-\d+$/u.test(value))]) {
         if (tools.list().includes(ref) && !tools.inspectedImages.has(ref)) missingImages.push(`inspect_image ${ref}`);
       }
       if (!tools.inspectedImages.size) missingImages.push("inspect_image at least one bound image");
@@ -445,9 +537,20 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
       description: "Before finalizing the probe, check exact read_evidence offsets for post-source-input, media-preparation and evidence-pack, plus required source images. This is advisory; the host checks again before accepting the passing draft.",
       parameters: { type: "object", additionalProperties: false, properties: {} },
       execute: async () => phase1Readiness() };
+    const phase1ContextTool: SiwcTool = { name: "read_builder_context",
+      description: "Read all required phase-one bound text and overview image pixels in one verified batch. Returns compact full-field JSON, source SHA-256, ordered image refs and readiness after the reads. On overflow use precise read_evidence/inspect_image calls.",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+      execute: async () => {
+        assertPinnedResearchInput(pinned);
+        const imageRefs = ["opening-contact", "post-cover", ...tools.list().filter(ref => /^editing-cuts-\d+$/u.test(ref))]
+          .filter(ref => tools.list().includes(ref));
+        const result = tools.readBundle(["post-source-input", "media-preparation", "evidence-pack"], imageRefs);
+        if ("error" in result) return result;
+        return { ...result, value: { ...(result.value as Record<string, unknown>), readiness: phase1Readiness() } };
+      } };
     let acceptedProbe: ValidatedDraftRef | undefined;
     const first = await this.model(request, repair ? "post-repair" : "post-builder", tools,
-      `PHASE 1/2: Read post-source-input, media-preparation and evidence-pack completely; inspect opening-contact and post-cover when available. Before spending time on a long probe, call check_probe_evidence_readiness and resolve every exact text offset and image requirement it returns. Derive capture actions from the actual probe, targeting unresolved questions only. captureProtocol.schemaVersion must be "capture-protocol-2.0" and captureProtocol.probe must be exactly "probe.json" (a file reference, not a sweep ID). Call validate_probe_protocol with your complete draft. For small errors use revise_validated_draft with its draftId, sha256 and replace patches. After a passing receipt, return only {"acceptedDraft":{"draftId":"...","sha256":"..."}}; the host resolves and rechecks the exact draft without asking you to output it again. Returning complete {"probe":...,"captureProtocol":...} remains valid. Do not supply targetedEvidence or reconstruction yet. Post: ${source.postExternalId}. ${repair ? `Revise this candidate ${prior?.reportArtifactRef} using review ${JSON.stringify(review ?? input.findings)}.` : ""}\nCanonical probe schema:\n${schema("probe.schema.json")}\nCanonical captureProtocol schema:\n${schema("capture-protocol.schema.json")}`,
+      `PHASE 1/2: Call read_builder_context with {} once to receive complete compact phase-one JSON/text and overview pixels, including editing-cut contact pages when present. Inspect additional individual source frames when needed. Its readiness reports remaining requirements; use read_evidence/inspect_image for any overflow or missing refs. Derive capture actions from the actual probe, targeting unresolved questions only. captureProtocol.schemaVersion must be "capture-protocol-2.0" and captureProtocol.probe must be exactly "probe.json" (a file reference, not a sweep ID). Call validate_probe_protocol with your complete draft. For small errors use revise_validated_draft with its draftId and sha256; ${repair ? "replace existing fields only" : "replace existing fields, or add a missing property under an existing object (never into an array)"}. After a passing receipt, return only {"acceptedDraft":{"draftId":"...","sha256":"..."}}; the host resolves and rechecks the exact draft without asking you to output it again. Returning complete {"probe":...,"captureProtocol":...} remains valid. Do not supply targetedEvidence or reconstruction yet. Post: ${source.postExternalId}. ${repair ? `Revise this candidate ${prior?.reportArtifactRef} using review ${JSON.stringify(review ?? input.findings)}.` : ""}\nCanonical probe schema:\n${schema("probe.schema.json")}\nCanonical captureProtocol schema:\n${schema("capture-protocol.schema.json")}`,
       async value => {
         ensure(value && typeof value === "object", "RESPONSES_POST_PROBE_INVALID");
         assertPhase1Ready();
@@ -462,13 +565,13 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
           request.signal) as { pass: boolean; errors: DraftError[] };
         if (!checked.pass) throw new Error(`RESPONSES_POST_PROTOCOL_INVALID:${JSON.stringify(checked.errors)}`);
         return row;
-      }, [phase1ReadinessTool, probeValidator, reviseProbe], error => {
+      }, [phase1ContextTool, phase1ReadinessTool, probeValidator, reviseProbe], error => {
         if (error instanceof Error && /^RESPONSES_PHASE1_(?:UNREAD|VISUAL_UNREAD)/u.test(error.message)) {
           return `Phase 1 evidence readiness failed: ${error.message}. Read each listed text ref at the exact offset and inspect each listed image, call check_probe_evidence_readiness again, then resubmit the same passing acceptedDraft receipt. Do not rerun validate_probe_protocol just to repeat an unchanged draft. If the newly read evidence changes the probe, use revise_validated_draft and submit its new passing receipt.`;
         }
         return error instanceof Error && /^RESPONSES_POST_(?:DRAFT_REFERENCE_INVALID|PROBE_INVALID|PROTOCOL_MISSING|PROTOCOL_INVALID)/u.test(error.message)
           ? `Technical Phase 1 output rejected: ${error.message}. Use a valid draftId and sha256 from a passing validate_probe_protocol receipt, or return complete probe and captureProtocol JSON.` : null;
-      }) as { probe: unknown; captureProtocol: unknown };
+      }, !repair ? ["validate_probe_protocol", "revise_validated_draft"] : undefined) as { probe: unknown; captureProtocol: unknown };
     assertPinnedResearchInput(pinned);
     if (!tools.fullyRead("post-source-input") || !tools.fullyRead("media-preparation") || !tools.fullyRead("evidence-pack")) {
       throw new Error("RESPONSES_BUILDER_INPUTS_UNREAD");
@@ -489,7 +592,7 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
     if (acceptedProbe) await emitDraftEvent(request, "responses.draft_accepted", "post-probe", acceptedProbe, first);
     tools.addGenerated("probe", path.join(directory, "probe.json"));
     tools.addGenerated("capture-protocol", path.join(directory, "capture-protocol.json"));
-    const protocol = first.captureProtocol as { captureActions?: Array<{ mode?: string }> };
+    const protocol = first.captureProtocol as { captureActions?: Phase2CaptureAction[] };
     if (protocol.captureActions?.length) {
       await execFileAsync("node", [path.join(skillDir, "scripts/capture-protocol-evidence.mjs"), "--video", media,
         "--protocol", path.join(directory, "capture-protocol.json"), "--out", path.join(directory, "targeted-evidence")],
@@ -497,7 +600,7 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
     } else throw new Error("RESPONSES_EMPTY_CAPTURE_PROTOCOL");
     const targetedFile = path.join(directory, "targeted-evidence/targeted-evidence.json");
     const targeted = JSON.parse(fs.readFileSync(targetedFile, "utf8")) as {
-      frames?: Array<{ id: string; frame: string }>;
+      frames?: Array<{ id: string; frame: string; time: number; actionId?: string }>;
       actions?: Array<{ id: string; frameIds: string[] }>;
     };
     if (!targeted.frames?.length || targeted.actions?.some(action => !action.frameIds.length)) throw new Error("RESPONSES_TARGETED_CAPTURE_EMPTY");
@@ -511,28 +614,74 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
     tools.addGenerated("targeted-contact", path.join(directory, "targeted-evidence/contact-sheet.jpg"));
     const needsOcr = protocol.captureActions.some(action => action.mode === "ocr_review" || action.mode === "ui_state_review");
     if (needsOcr) {
-      await execFileAsync("node", [path.join(skillDir, "scripts/run-ocr.mjs"), "--manifest", targetedFile,
-        "--out", path.join(directory, "targeted-evidence/ocr-evidence.json")], { cwd: directory,
+      const ocrInput = writeOcrInputManifest(directory);
+      const ocrOutput = path.join(directory, "targeted-evidence/ocr-evidence.json");
+      await execFileAsync("node", [path.join(skillDir, "scripts/run-ocr.mjs"), "--manifest", ocrInput.path,
+        "--out", ocrOutput], { cwd: directory,
         timeout: 20 * 60_000, signal: request.signal, maxBuffer: 20 * 1024 * 1024 });
-      tools.addGenerated("ocr-evidence", path.join(directory, "targeted-evidence/ocr-evidence.json"));
+      assertCompleteOcrResult(JSON.parse(fs.readFileSync(ocrOutput, "utf8")), ocrInput.manifest);
+      tools.addGenerated("ocr-evidence", ocrOutput);
     }
     // The reconstruction is a fresh model call; only refs, not prior tool observations, carry across.
     tools.resetObservationTracking();
-    const readiness = () => phase2Readiness(tools, targeted.frames!, needsOcr, repair ? prior!.reportArtifactRef : undefined);
+    const frameIndex = frozenFrameIndex(directory);
+    const frameTimes = new Map(frameIndex.frames.map(frame => [frame.ref, frame.timeSeconds]));
+    const lensReceipts = new Map<BuilderLensSlot, { draftId: string; sha256: string; pass: boolean; errors: string[] }>();
+    const lensState = () => Object.fromEntries(lensReceipts);
+    const phase2Evidence = { protocolActions: protocol.captureActions ?? [], manifestActions: targeted.actions ?? [], frames: targeted.frames! };
+    const readiness = () => phase2Readiness(tools, phase2Evidence, needsOcr, repair ? prior!.reportArtifactRef : undefined);
     const readinessTool: SiwcTool = {
       name: "check_evidence_readiness",
-      description: "Before drafting a long reconstruction, check exactly which required text refs still need read_evidence chunks and which target images still need inspection. This does not validate or approve the final report.",
+      description: "Before drafting, check minimum required text/image access and review the per-capture-action question, expected observation, target IDs/timestamps, and this-call inspected/uninspected refs. ready means minimum input access only; image inspection does not establish semantic coverage or resolve an action.",
       parameters: { type: "object", additionalProperties: false, properties: {} },
       execute: async () => readiness()
     };
+    const phase2ContextTool: SiwcTool = { name: "read_builder_context",
+      description: "Read all required phase-two bound text and overview image pixels in one verified batch. Returns compact full-field JSON, source hashes, ordered image refs, three canonical lens schemas, the finalSummary schema, reconstruction index schema, and readiness after the reads. Use inspect_evidence_window for unresolved claims or boundaries to inspect all indexed original frames in a short interval; individual inspect_image remains available. On overflow narrow the window or use precise read_evidence/inspect_image calls.",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+      execute: async () => {
+        assertPinnedResearchInput(pinned);
+        const refs = ["post-source-input", "media-preparation", "evidence-pack", "probe", "capture-protocol",
+          "targeted-evidence", ...(needsOcr ? ["ocr-evidence"] : []),
+          ...(repair ? [prior!.reportArtifactRef, "repair-review"] : [])];
+        const imageRefs = ["opening-contact", "post-cover", "targeted-contact",
+          ...tools.list().filter(ref => /^editing-cuts-\d+$/u.test(ref))]
+          .filter(ref => tools.list().includes(ref));
+        const result = tools.readBundle(refs, imageRefs);
+        const response = phase2BuilderContextResponse(result, path.join(schemasDir, "reconstruction.schema.json"), readiness());
+        if ("kind" in response && response.kind === "siwc_visual_tool_result") {
+          return { ...response, value: { ...(response.value as object), existingLensDrafts: lensState(),
+            existingDraftPolicy: "Preserve staged prose across corrections. Patch only reported fields; do not restart completed lenses." } } as never;
+        }
+        return { ...response, existingLensDrafts: lensState() } as never;
+      } };
     const draftCheck = async (value: unknown, signal: AbortSignal) => {
       assertPinnedResearchInput(pinned);
-      const result = await validateReconstructionDraft({ value, directory, skillDir, media, signal,
+      const preparedValue = injectFrozenTranscript(value);
+      const summaryErrors = finalSummaryContractErrors(preparedValue, directory, true);
+      const result = await validateReconstructionDraft({ value: preparedValue, directory, skillDir, media, signal,
         integrity: this.options.validateIntegrity ?? validateBuilderIntegrity });
       assertPinnedResearchInput(pinned);
-      return result;
+      return { ...result, pass: result.pass && summaryErrors.length === 0,
+        errors: [...result.errors, ...summaryErrors], value: preparedValue };
     };
     const reconstructionDrafts = new ValidatedDraftStore<unknown>(directory, "post-reconstruction");
+    const builderLensDrafts = new BuilderLensDrafts(directory, async (slot, value) => {
+      const schemaPath = path.join(directory, `.builder-lens-${slot}.schema.json`);
+      writeJson(directory, `.builder-lens-${slot}.schema.json`, builderLensSchema(path.join(schemasDir, "reconstruction.schema.json"), slot));
+      const errors = await validateDraftJsonSchema(schemaPath, value, directory, request.signal);
+      const postSource = slot === "directingLogic"
+        ? JSON.parse(fs.readFileSync(path.join(directory, "post-source-input.json"), "utf8")) as {
+          facts: { title: string | null; coverHref: string | null }; cover?: unknown }
+        : null;
+      const localErrors = slot === "contentRestoration"
+        ? [...contentBlockVisualDiagnostics(value), ...contentBlockTemporalDiagnostics(value, frameTimes, frameIndex.duration)]
+        : slot === "visualEditing"
+          ? openingFrameDiagnostics({ builderLenses: { visualEditing: value } }, directory)
+          : depthPackagingSourceDiagnostics(value, postSource);
+      const allErrors = [...errors.map(error => `SCHEMA ${error.path} ${error.message}`), ...localErrors];
+      return { pass: allErrors.length === 0, errors: allErrors };
+    });
     let draftChecks = 0;
     const stageReconstruction = async (value: unknown, validation: { pass: boolean; errors: string[] }) => {
       const receipt = reconstructionDrafts.stage(value, validation);
@@ -541,33 +690,114 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
     };
     const draftTool: SiwcTool = {
       name: "validate_reconstruction_draft",
-      description: "Validate a reconstruction draft using the host's canonical assembly, JSON Schema, and evidence integrity gates in an isolated scratch directory. It reports errors but never edits the production candidate or evidence.",
-      parameters: { type: "object", additionalProperties: false, required: ["reconstruction"], properties: {
-        reconstruction: { type: "object" }
-      } },
-      execute: async (args, signal) => {
+      description: "Validate a reconstruction draft using canonical assembly, JSON Schema and evidence integrity. For a section index set useLatestBuilderLenses:true and supply finalSummary from the Builder as a separate top-level argument; the host selects the current three exact staged revisions without copying IDs/hashes. Each selected latest revision must pass and its stored hash is verified; failed or missing lenses are never replaced with an older passing version. Do not also provide builderLensDrafts. This never edits the production candidate or evidence.",
+      parameters: builderLensDraftToolParameters(path.join(schemasDir, "reconstruction.schema.json")),
+      execute: async (args, signal): ReturnType<SiwcTool["execute"]> => {
+        const input = args as { reconstruction?: unknown; builderLensDrafts?: unknown; useLatestBuilderLenses?: unknown;
+          finalSummary?: unknown };
+        let value = input.reconstruction;
+        let selectedHandles = input.builderLensDrafts;
+        if (input.builderLensDrafts !== undefined || input.useLatestBuilderLenses !== undefined) {
+          try {
+            if (input.useLatestBuilderLenses !== undefined) {
+              if (input.useLatestBuilderLenses !== true || input.builderLensDrafts !== undefined) {
+                throw new Error("BUILDER_LENS_HANDLE_SELECTION_AMBIGUOUS");
+              }
+              selectedHandles = Object.fromEntries(builderLensSlots.map(slot => {
+                const latest = builderLensDrafts.latestRef(slot);
+                if (!latest) throw new Error(`BUILDER_LENS_HANDLES_INCOMPLETE:${slot}`);
+                return [slot, latest];
+              }));
+            }
+            value = builderLensDrafts.compose(input.reconstruction, selectedHandles, input.finalSummary);
+          }
+          catch (error) {
+            if (error instanceof Error && /^(?:BUILDER_LENS_|VALIDATED_DRAFT_(?:REFERENCE|UNKNOWN_OR_SHA_MISMATCH|NOT_VALID|EXPIRED|MANIFEST_CHANGED))/u.test(error.message)) {
+              return { pass: false, errors: [`RESPONSES_BUILDER_LENS_DRAFT_INVALID:${error.message}`],
+                latestBuilderLensDrafts: Object.fromEntries(builderLensSlots.map(slot => [slot, builderLensDrafts.latestRef(slot) ?? null])),
+                recovery: "Keep all staged prose. Correct the failed lens locally, or use useLatestBuilderLenses:true to select current receipts without retyping hashes." };
+            }
+            throw error;
+          }
+        }
         if (++draftChecks > 4) return { pass: false, errors: ["Draft validation call limit (4) reached"] };
-        const value = (args as { reconstruction?: unknown }).reconstruction;
         const validation = await draftCheck(value, signal);
-        return stageReconstruction(value, validation);
+        return { ...await stageReconstruction(validation.value, validation),
+          ...(selectedHandles !== undefined ? { builderLensDraftsUsed: selectedHandles as Record<BuilderLensSlot, ValidatedDraftRef> } : {}) };
       }
     };
     const reviseReconstruction: SiwcTool = { name: "revise_validated_draft",
-      description: `Apply bounded replace-only JSON Pointer patches relative to a staged reconstruction and rerun canonical schema and integrity checks. Allowed report roots: ${reconstructionPatchRootList}. derivedSources is Builder-owned source registration; use it for sources such as POST-TITLE when the frozen local file exists. Host-owned probe, protocol, transcript and evidencePack roots are forbidden. A passing receipt can be accepted directly.`,
-      parameters: draftPatchParameters,
+      description: `Apply bounded ${repair ? "replace-only" : "replace or missing object-property add"} JSON Pointer patches relative to a staged reconstruction and rerun canonical schema and integrity checks. Arrays must be replaced whole. Allowed report roots: ${reconstructionPatchRootList}. derivedSources is Builder-owned source registration; use it for sources such as POST-TITLE when the frozen local file exists. Host-owned probe, protocol, transcript and evidencePack roots are forbidden. A passing receipt can be accepted directly.`,
+      parameters: repair ? draftPatchParameters : builderDraftPatchParameters,
       execute: async (args, signal) => {
         assertPinnedResearchInput(pinned);
         if (++draftChecks > 4) return { pass: false, errors: ["Draft validation call limit (4) reached"] };
         try {
           const base = reconstructionDrafts.resolve(draftReference(args), { requireValid: false });
-          const patched = applyReconstructionPatch(base, (args as { patches?: unknown }).patches);
+          const patched = applyReconstructionPatch(base, (args as { patches?: unknown }).patches,
+            RECONSTRUCTION_PATCH_ALLOWED_ROOTS, { allowAddMissingObjectProperty: !repair });
           const validation = await draftCheck(patched, signal);
-          const receipt = await stageReconstruction(patched, validation);
+          const receipt = await stageReconstruction(validation.value, validation);
           await request.emit("responses.draft_patched", { phase: "post-reconstruction",
             sourceDraftId: (args as { draftId: string }).draftId, draftId: receipt.draftId,
-            sha256: receipt.sha256, byteSize: Buffer.byteLength(JSON.stringify(patched), "utf8") });
+            sha256: receipt.sha256, byteSize: Buffer.byteLength(JSON.stringify(validation.value), "utf8") });
           return receipt;
         } catch (error) { return patchErrorResult(error); }
+      } };
+    const stageLensTool: SiwcTool = { name: "stage_builder_lens",
+      description: "Validate one complete lens against its canonical schema, then store it unchanged in this phase-two attempt. Returns only its slot, draftId, sha256, pass and errors; it does not judge content quality or semantic coverage.",
+      parameters: { type: "object", additionalProperties: false, required: ["slot", "value"], properties: {
+        slot: { type: "string", enum: [...builderLensSlots] }, value: { type: "object" }
+      } },
+      execute: async args => {
+        assertPinnedResearchInput(pinned);
+        const input = args as { slot?: BuilderLensSlot; value?: unknown };
+        ensure(input.slot && (builderLensSlots as readonly string[]).includes(input.slot), "BUILDER_LENS_SLOT_INVALID");
+        if (!input.value || typeof input.value !== "object" || Array.isArray(input.value)) {
+          throw new Error("BUILDER_LENS_VALUE_INVALID");
+        }
+        const receipt = await builderLensDrafts.stage(input.slot, input.value);
+        lensReceipts.set(input.slot, { draftId: receipt.draftId, sha256: receipt.sha256, pass: receipt.pass, errors: receipt.errors.map(String) });
+        assertPinnedResearchInput(pinned);
+        const handle = { slot: input.slot, draftId: receipt.draftId, sha256: receipt.sha256 };
+        await request.emit("responses.draft_staged", { phase: `builder-lens-${input.slot}`, ...handle,
+          pass: receipt.pass, errors: receipt.errors });
+        return { ...handle, pass: receipt.pass, errors: receipt.errors };
+      } };
+    const reviseLensTool: SiwcTool = { name: "revise_builder_lens",
+      description: "Apply bounded replace or missing object-property add to one latest staged Builder lens. Prefer useLatest:true with slot and patches to select the exact current revision without copying its ID/hash; do not also supply draftId/sha256. Explicit exact handles remain accepted. Paths start /<slot>/. Add requires an existing object parent, never overwrites or inserts into arrays. Preserves every unpatched field; failed latest receipts remain repairable.",
+      parameters: { type: "object", additionalProperties: false, required: ["slot", "patches"], properties: {
+        slot: { type: "string", enum: [...builderLensSlots] }, draftId: { type: "string" }, sha256: { type: "string" },
+        useLatest: { type: "boolean", enum: [true] },
+        patches: { type: "array", maxItems: 64, items: { type: "object", additionalProperties: false,
+          required: ["op", "path", "value"], properties: {
+            op: { type: "string", enum: ["replace", "add"] }, path: { type: "string" }, value: {}
+          } } }
+      } },
+      execute: async args => {
+        assertPinnedResearchInput(pinned);
+        const input = args as { slot?: BuilderLensSlot; draftId?: string; sha256?: string; patches?: unknown; useLatest?: unknown };
+        ensure(input.slot && (builderLensSlots as readonly string[]).includes(input.slot), "BUILDER_LENS_SLOT_INVALID");
+        try {
+          if (input.useLatest !== undefined && (input.useLatest !== true || input.draftId !== undefined || input.sha256 !== undefined)) {
+            throw new Error("BUILDER_LENS_HANDLE_SELECTION_AMBIGUOUS");
+          }
+          const selected = input.useLatest === true ? builderLensDrafts.latestRef(input.slot) : draftReference(input);
+          if (!selected) throw new Error(`BUILDER_LENS_HANDLE_NOT_LATEST:${input.slot}`);
+          const receipt = await builderLensDrafts.revise(input.slot, selected, input.patches);
+          lensReceipts.set(input.slot, { draftId: receipt.draftId, sha256: receipt.sha256, pass: receipt.pass, errors: receipt.errors.map(String) });
+          assertPinnedResearchInput(pinned);
+          const handle = { slot: input.slot, draftId: receipt.draftId, sha256: receipt.sha256 };
+          await request.emit("responses.draft_patched", { phase: `builder-lens-${input.slot}`, ...handle,
+            pass: receipt.pass, errors: receipt.errors });
+          return { ...handle, pass: receipt.pass, errors: receipt.errors };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (error instanceof Error && error.name === "AbortError") throw error;
+          if (!/^(?:BUILDER_LENS_(?:HANDLE_NOT_LATEST|HANDLE_SELECTION_AMBIGUOUS|SLOT_INVALID)|RESPONSES_POST_DRAFT_REFERENCE_INVALID|RECONSTRUCTION_PATCH_)/u.test(message)) throw error;
+          const latest = builderLensDrafts.latestRef(input.slot);
+          return { slot: input.slot, ...(latest ?? {}), pass: false, errors: [message] };
+        }
       } };
     let acceptedReconstruction: ValidatedDraftRef | undefined;
     const resolveReconstruction = (value: unknown): { reconstruction: unknown; revisionResponse?: unknown } => {
@@ -578,11 +808,16 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
         try { return { reconstruction: reconstructionDrafts.resolve(acceptedReconstruction), revisionResponse: [] }; }
         catch (error) { throw new Error(`RESPONSES_POST_DRAFT_REFERENCE_INVALID:${String(error)}`); }
       }
+      if ("builderLensDrafts" in row) {
+        try { return { reconstruction: builderLensDrafts.compose(row.reconstruction, row.builderLensDrafts, row.finalSummary),
+          revisionResponse: [] }; }
+        catch (error) { throw new Error(`RESPONSES_BUILDER_LENS_DRAFT_INVALID:${String(error)}`); }
+      }
       ensure(row.reconstruction && typeof row.reconstruction === "object", "RESPONSES_POST_RECONSTRUCTION_MISSING");
       return row as { reconstruction: unknown; revisionResponse?: unknown };
     };
     const second = await this.model(request, repair ? "post-repair" : "post-builder", tools,
-      `PHASE 2/2: This is a fresh model call with no PHASE 1 memory. Read post-source-input, media-preparation, evidence-pack, probe, capture-protocol, and targeted-evidence in full (and ocr-evidence if present). Inspect targeted-contact then individual TARGET frames needed to resolve uncertainties. ${repair ? `Read prior candidate ${prior?.reportArtifactRef} and repair-review in full. ` : ""}Before drafting the long report, call check_evidence_readiness with {} and resolve every missing text offset and image requirement; this tool is advisory, and the final host gate will check again. Call validate_reconstruction_draft with the complete report; for small validation errors call revise_validated_draft with the failed receipt's draftId, sha256 and replace patches. After a passing receipt, return only {"acceptedDraft":{"draftId":"...","sha256":"..."}}; the host resolves and rechecks the exact report. Returning the complete {"reconstruction":...,"revisionResponse":[]} remains valid. This is a scratch validation, not an approval or permission to invent evidence. The host executed the validated capture protocol. targetedEvidence is host-owned; never invent frame, OCR, path, time or hash. Match actual evidence IDs and use three full Builder lenses. ${repair ? `Address review ${JSON.stringify(review ?? input.findings)}.` : ""}\nCanonical reconstruction schema:\n${schema("reconstruction.schema.json")}`,
+      `PHASE 2/2: This is a fresh model call with no PHASE 1 memory. Call read_builder_context with {} once to receive complete compact phase-two JSON/text, ordered overview pixels, all three Builder lens schemas, the finalSummary schema and the reconstruction index schema. Phase 1 observations do not carry over. Use inspect_evidence_window to resolve local visual/text uncertainties from original DENSE/CUE/CUT/OPEN plus TARGET pixels; TARGET sampling alone may miss a short caption. ${repair ? `Read prior candidate ${prior?.reportArtifactRef} and repair-review in full. ` : ""}Before drafting, resolve any missing refs reported by context readiness; check_evidence_readiness remains available. Ready means minimum input access only. ${repair ? "Use the existing complete reconstruction draft or bounded repair tools; do not use section handles." : "Write and stage all three complete lenses in this same session: for each slot use its schema from read_builder_context, draft that whole lens, then call stage_builder_lens. If a lens receipt fails, fix only the reported fields with revise_builder_lens, with slot, useLatest:true and patches. Replace existing fields or add a missing object property under an existing parent, using /<slot>/... paths; arrays are replaced whole. A failed revised receipt remains the latest and can be revised again. Preserve all unpatched lens content exactly; do not re-draft or re-stage the full lens to fix local errors. Obtain one passing latest receipt for each slot. Then write finalSummary from the model using the schema and frozen post-source facts; distinguish observed metrics from video claims, preserve null when unknown, and do not invent a comparison cohort. Create the reconstruction index without builderLenses, set summaryContractVersion to single-post-summary@1, and call validate_reconstruction_draft with {reconstruction:<index>,useLatestBuilderLenses:true,finalSummary:<your complete summary>}. The host selects and hash-verifies the exact current receipts; never retype IDs or SHA values just to compose these lenses. After a passing receipt, return only its acceptedDraft handle. The host composes stored values unchanged and validates the full report. Staging validates structure only, not content quality or semantic coverage."} Call validate_reconstruction_draft with the appropriate full report or handle index; for small whole-report validation errors call revise_validated_draft with the failed receipt's draftId and sha256; ${repair ? "replace existing fields only" : "replace existing fields, or add a missing property under an existing object (never into an array)"}. After a passing receipt, return only {"acceptedDraft":{"draftId":"...","sha256":"..."}}; the host resolves and rechecks the exact report. This is scratch validation, not approval or permission to invent evidence. The host executed the validated capture protocol. targetedEvidence is host-owned; never invent frame, OCR, path, time or hash. Match actual evidence IDs and use all three full Builder lenses. ${repair ? `Address review ${JSON.stringify(review ?? input.findings)}.` : ""}${repair ? `\nCanonical reconstruction schema:\n${schema("reconstruction.schema.json")}` : ""}`,
       async value => {
         const row = resolveReconstruction(value);
         const state = readiness();
@@ -591,14 +826,15 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
         if (state.missingImages.length) throw new Error(`RESPONSES_PHASE2_VISUAL_UNREAD: ${state.missingImages.join("; ")}`);
         const draft = await draftCheck(row.reconstruction, request.signal);
         if (!draft.pass) throw new Error(`RESPONSES_PHASE2_INTEGRITY: ${draft.errors.join("; ")}`);
-        return row;
-      }, [readinessTool, openingFrameTool(directory, pinned), draftTool, reviseReconstruction], error => {
+        return { ...row, reconstruction: draft.value };
+      }, [phase2ContextTool, readinessTool, createEvidenceWindowTool(tools, frameIndex.frames), openingFrameTool(directory, pinned), draftTool, reviseReconstruction,
+        ...(repair ? [] : [stageLensTool, reviseLensTool])], error => {
         if (error instanceof SyntaxError) return `Your prior final output was invalid JSON: ${error.message}. Return a valid acceptedDraft with the exact draftId and sha256 from a passing receipt, or a complete reconstruction JSON. Do not omit fields or invent evidence.`;
-        if (error instanceof Error && /^(RESPONSES_PHASE2_UNREAD|RESPONSES_PHASE2_VISUAL_UNREAD|RESPONSES_PHASE2_INTEGRITY|RESPONSES_POST_(?:RECONSTRUCTION|DRAFT_REFERENCE))/.test(error.message)) {
-          return `The host rejected the draft for a technical reason: ${error.message}. Fix unread evidence or use a passing validate_reconstruction_draft receipt's exact draftId and sha256; for small report errors use revise_validated_draft. A full corrected reconstruction remains valid. Do not invent evidence or let the host rewrite your conclusions.`;
+        if (error instanceof Error && /^(RESPONSES_PHASE2_UNREAD|RESPONSES_PHASE2_VISUAL_UNREAD|RESPONSES_PHASE2_INTEGRITY|RESPONSES_POST_(?:RECONSTRUCTION|DRAFT_REFERENCE)|RESPONSES_BUILDER_LENS_DRAFT_INVALID)/.test(error.message)) {
+          return `The host rejected the draft for a technical reason: ${error.message}. Fix unread evidence or use a passing validate_reconstruction_draft receipt's exact draftId and sha256; for small report errors use revise_validated_draft. A full corrected reconstruction remains valid. Current staged lens receipts (preserve their prose; do not restart completed lenses): ${JSON.stringify(lensState())}. Use useLatest:true for a lens patch and useLatestBuilderLenses:true for index composition to avoid copying hashes. Do not invent evidence or let the host rewrite your conclusions.`;
         }
         return null;
-      }) as { reconstruction: unknown; revisionResponse?: unknown };
+      }, !repair ? ["validate_reconstruction_draft", "revise_validated_draft"] : undefined) as { reconstruction: unknown; revisionResponse?: unknown };
     assertPinnedResearchInput(pinned);
     const checkedSecond = resolveReconstruction(second);
     const candidate = checkedSecond.reconstruction as { schemaVersion?: unknown; depthContractVersion?: unknown; builderLenses?: unknown };
@@ -607,6 +843,10 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
     if (["post-source-input", "media-preparation", "evidence-pack", "probe", "capture-protocol", "targeted-evidence"]
       .some(ref => !tools.fullyRead(ref)) || !tools.inspectedImages.has("targeted-contact")
       || !targeted.frames.some(frame => tools.inspectedImages.has(frame.id))) throw new Error("RESPONSES_TARGETED_EVIDENCE_UNREAD");
+    if (["opening-contact", "post-cover", ...tools.list().filter(ref => /^editing-cuts-\d+$/u.test(ref))]
+      .some(ref => tools.list().includes(ref) && !tools.inspectedImages.has(ref))) {
+      throw new Error("RESPONSES_PHASE2_SOURCE_IMAGES_UNREAD");
+    }
     if (needsOcr && !tools.fullyRead("ocr-evidence")) throw new Error("RESPONSES_OCR_EVIDENCE_UNREAD");
     if (repair && (!tools.fullyRead(prior!.reportArtifactRef) || !tools.fullyRead("repair-review"))) {
       throw new Error("RESPONSES_REPAIR_CONTEXT_UNREAD");
@@ -700,7 +940,8 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
     const opening = path.join(directory, "evidence/opening-contact.jpg");
     if (fs.existsSync(opening)) tools.addGenerated("opening-contact", opening);
     const targeted = JSON.parse(fs.readFileSync(path.join(directory, "targeted-evidence/targeted-evidence.json"), "utf8")) as {
-      frames?: Array<{ id: string; frame: string }>;
+      frames?: Array<{ id: string; frame: string; time: number; actionId?: string }>;
+      actions?: Array<{ id: string; frameIds: string[] }>;
     };
     if (!targeted.frames?.length) throw new Error("RESPONSES_REPAIR_TARGETED_EVIDENCE_MISSING");
     for (const frame of targeted.frames) {
@@ -710,22 +951,45 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
       tools.addGenerated(frame.id, path.join(directory, "targeted-evidence", frame.frame));
     }
     const protocol = JSON.parse(fs.readFileSync(path.join(directory, "capture-protocol.json"), "utf8")) as {
-      captureActions?: Array<{ mode?: string }>;
+      captureActions?: Phase2CaptureAction[];
     };
     const needsOcr = protocol.captureActions?.some(action => action.mode === "ocr_review" || action.mode === "ui_state_review") ?? false;
     if (needsOcr) tools.addGenerated("ocr-evidence", path.join(directory, "targeted-evidence/ocr-evidence.json"));
+    const phase2Evidence = { protocolActions: protocol.captureActions ?? [], manifestActions: targeted.actions ?? [], frames: targeted.frames };
     const skillDir = path.join(projectRoot, ".agents/skills/video-content-reconstruction");
     const schema = fs.readFileSync(path.join(skillDir, "schemas/reconstruction.schema.json"), "utf8");
-    const readiness = () => phase2Readiness(tools, targeted.frames!, needsOcr, prior.reportArtifactRef);
+    const readiness = () => phase2Readiness(tools, phase2Evidence, needsOcr, prior.reportArtifactRef);
     const readinessTool: SiwcTool = { name: "check_evidence_readiness",
-      description: "Check required frozen text read offsets and target image inspection before revising the report.",
+      description: "Check minimum frozen text/image access and review each capture action's question, expected observation, target IDs/timestamps, and this-call inspected/uninspected refs. ready means minimum input access only; image inspection does not establish semantic coverage or resolve an action.",
       parameters: { type: "object", additionalProperties: false, properties: {} }, execute: async () => readiness() };
+    const repairContextTool: SiwcTool = { name: "read_repair_context",
+      description: "Read the exact frozen prior report, repair review, post source, media preparation, evidence pack, probe, capture protocol, TARGET manifest and OCR when required, plus bound overview pixels in one SHA-verified batch. Only JSON whitespace is compacted. On overflow no observations are recorded; follow exact readiness offsets and inspect missing images.",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+      execute: async () => {
+        const textRefs = [prior.reportArtifactRef, "repair-review", "post-source-input", "media-preparation",
+          "evidence-pack", "probe", "capture-protocol", "targeted-evidence", ...(needsOcr ? ["ocr-evidence"] : [])];
+        const imageRefs = ["opening-contact", "post-cover", "targeted-contact",
+          ...tools.list().filter(ref => /^editing-cuts-\d+$/u.test(ref))].filter(ref => tools.list().includes(ref));
+        return postRepairContextResponse(tools.readBundle(textRefs, imageRefs), readiness());
+      } };
+    const repairAccessGate = () => {
+      const state = readiness();
+      if (state.ready) return undefined;
+      return { pass: false, errors: [
+        ...state.missingText.map(item => `RESPONSES_REPAIR_UNREAD: ${item.ref} read_evidence offset=${item.nextOffset} total=${item.totalCharacters}`),
+        ...state.missingImages.map(item => `RESPONSES_REPAIR_VISUAL_UNREAD: ${item}`),
+        "Call read_repair_context or finish the exact missing reads and inspections, then check_evidence_readiness before validating a repair."
+      ], readiness: state };
+    };
     const draftCheck = async (value: unknown, signal: AbortSignal) => {
       assertPinnedResearchInput(pinned);
       const result = await validateReconstructionDraft({ value, directory,
         skillDir, media, signal, integrity: this.options.validateIntegrity ?? validateBuilderIntegrity, assemble: false });
       assertPinnedResearchInput(pinned);
-      return result;
+      const summaryErrors = finalSummaryContractErrors(value, directory,
+        (prior.report as { summaryContractVersion?: unknown }).summaryContractVersion === "single-post-summary@1");
+      return { ...result, pass: result.pass && summaryErrors.length === 0,
+        errors: [...result.errors, ...summaryErrors] };
     };
     const repairDrafts = new ValidatedDraftStore<{ reconstruction: unknown; revisionResponse?: unknown }>(directory, "post-repair");
     let draftChecks = 0;
@@ -745,18 +1009,26 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
       description: "Validate the repaired report in isolated scratch files against canonical schemas and integrity without changing the prior or frozen evidence.",
       parameters: { type: "object", additionalProperties: false, required: ["reconstruction"],
         properties: { reconstruction: { type: "object" }, revisionResponse: { type: "array" } } },
-      execute: async (args, signal) => ++draftChecks > 4
-        ? { pass: false, errors: ["Draft validation call limit (4) reached"] }
-        : stageRepair(args as { reconstruction: unknown; revisionResponse?: unknown }, signal) };
+      execute: async (args, signal) => {
+        assertPinnedResearchInput(pinned);
+        assertFrozenPostCandidateFiles(directory, frozenHashes);
+        if (fileDigest(artifactPath(prior.reportArtifactRef)) !== prior.reportSha256) throw new Error("RESPONSES_REPAIR_MUTATED_PRIOR");
+        const unread = repairAccessGate();
+        if (unread) return unread;
+        return ++draftChecks > 4 ? { pass: false, errors: ["Draft validation call limit (4) reached"] }
+          : stageRepair(args as { reconstruction: unknown; revisionResponse?: unknown }, signal);
+      } };
     const patchTool: SiwcTool = { name: "validate_reconstruction_patch",
       description: `Apply bounded replace-only patches to the frozen prior reconstruction, validate the complete repaired report and revisionResponse, then stage an exact receipt without rewriting the whole report. Allowed report roots: ${reconstructionPatchRootList}. derivedSources is Builder-owned source registration; use it for sources such as POST-TITLE only when the frozen local file exists. Host-owned probe, protocol, transcript and evidencePack roots remain forbidden.`,
       parameters: { type: "object", additionalProperties: false, required: ["patches", "revisionResponse"],
         properties: { patches: { type: "array" }, revisionResponse: { type: "array" } } },
       execute: async (args, signal) => {
         assertPinnedResearchInput(pinned);
-        if (++draftChecks > 4) return { pass: false, errors: ["Draft validation call limit (4) reached"] };
         assertFrozenPostCandidateFiles(directory, frozenHashes);
         if (fileDigest(artifactPath(prior.reportArtifactRef)) !== prior.reportSha256) throw new Error("RESPONSES_REPAIR_MUTATED_PRIOR");
+        const unread = repairAccessGate();
+        if (unread) return unread;
+        if (++draftChecks > 4) return { pass: false, errors: ["Draft validation call limit (4) reached"] };
         try {
           const reconstruction = applyReconstructionPatch(prior.report, (args as { patches?: unknown }).patches);
           const value = { reconstruction, revisionResponse: (args as { revisionResponse?: unknown }).revisionResponse };
@@ -772,8 +1044,11 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
       parameters: draftPatchParameters,
       execute: async (args, signal) => {
         assertPinnedResearchInput(pinned);
-        if (++draftChecks > 4) return { pass: false, errors: ["Draft validation call limit (4) reached"] };
         assertFrozenPostCandidateFiles(directory, frozenHashes);
+        if (fileDigest(artifactPath(prior.reportArtifactRef)) !== prior.reportSha256) throw new Error("RESPONSES_REPAIR_MUTATED_PRIOR");
+        const unread = repairAccessGate();
+        if (unread) return unread;
+        if (++draftChecks > 4) return { pass: false, errors: ["Draft validation call limit (4) reached"] };
         try {
           const base = repairDrafts.resolve(draftReference(args), { requireValid: false });
           const value = applyRepairDraftPatches(base, (args as { patches?: unknown }).patches);
@@ -803,7 +1078,7 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
           status: { type: "string", enum: ["changed", "disputed", "missing_evidence"] },
           reason: { type: "string", minLength: 1 } } } };
     const revised = await this.model(request, "post-repair", tools,
-      `Bounded repair of ${prior.reportArtifactRef}; review ${JSON.stringify(review)}. The original probe, capture protocol, TARGET frames, OCR, source and media preparation are frozen. This is one model call, not a new probe/capture round. Read the prior report and repair-review plus frozen evidence in full; inspect the needed original images. Call check_evidence_readiness. Prefer validate_reconstruction_patch with replace-only patches against the frozen prior plus the complete revisionResponse; it validates the full resulting report. For small corrections to a staged draft use revise_validated_draft. After a passing receipt return only {"acceptedDraft":{"draftId":"...","sha256":"..."}}; the host resolves and rechecks the exact report. Full {"reconstruction":...,"revisionResponse":[...]} remains valid. Revise only reported findings and preserve supported content, all unaffected Builder lenses, evidence IDs and explicit unknowns. Never claim a finding changed unless the report actually changed.\nCanonical revisionResponse required fields (one entry per finding ID; prefer only these three fields):\n${JSON.stringify(revisionResponseSchema)}\nCorrect example for the first finding: ${JSON.stringify({ id: findingIds[0], status: "changed", reason: "The report was revised at the cited location using frozen evidence." })}. The required field is id; findingId cannot substitute for it.\nCanonical reconstruction schema:\n${schema}`,
+      `Bounded repair of ${prior.reportArtifactRef}; review ${JSON.stringify(review)}. The original probe, capture protocol, TARGET frames, OCR, source and media preparation are frozen. This is one model call, not a new probe/capture round. Call read_repair_context with {} once for the full SHA-verified prior report, repair review, frozen required text and overview pixels. If it overflows, no partial reads count: use the returned exact refs and offsets with read_evidence and inspect_image until check_evidence_readiness is ready. Inspect the needed original TARGET images as well; the overview batch does not replace that inspection. Earlier image inspections do not carry over. Repair draft and patch tools check this readiness before schema validation; unread evidence yields precise corrective offsets and does not use a validation call. Prefer validate_reconstruction_patch with replace-only patches against the frozen prior plus the complete revisionResponse; it validates the full resulting report. For small corrections to a staged draft use revise_validated_draft. After a passing receipt return only {"acceptedDraft":{"draftId":"...","sha256":"..."}}; the host resolves and rechecks the exact report. Full {"reconstruction":...,"revisionResponse":[...]} remains valid. Revise only reported findings and preserve supported content, all unaffected Builder lenses, evidence IDs and explicit unknowns. Never claim a finding changed unless the report actually changed.\nCanonical revisionResponse required fields (one entry per finding ID; prefer only these three fields):\n${JSON.stringify(revisionResponseSchema)}\nCorrect example for the first finding: ${JSON.stringify({ id: findingIds[0], status: "changed", reason: "The report was revised at the cited location using frozen evidence." })}. The required field is id; findingId cannot substitute for it.\nCanonical reconstruction schema:\n${schema}`,
       async value => {
         const row = resolveRepair(value);
         const state = readiness();
@@ -814,7 +1089,7 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
         if (!draft.pass) throw new Error(`RESPONSES_REPAIR_INTEGRITY: ${draft.errors.join("; ")}`);
         validateRevisionResponse(row.revisionResponse, review);
         return row;
-      }, [readinessTool, openingFrameTool(directory, pinned), draftTool, patchTool, reviseRepair], error => {
+      }, [readinessTool, repairContextTool, openingFrameTool(directory, pinned), draftTool, patchTool, reviseRepair], error => {
         if (error instanceof SyntaxError) return `The prior output was invalid JSON: ${error.message}. Return the exact acceptedDraft from a passing repair receipt, or a complete corrected JSON object.`;
         if (error instanceof Error && /^RESPONSES_(?:REPAIR|POST_REPAIR|POST_DRAFT_REFERENCE|REVISION_RESPONSE)/.test(error.message)) {
           return `The host rejected the repair draft: ${error.message}. Use frozen evidence and correct only reported findings. For patch tools, only these report roots are Builder-owned and patchable: ${reconstructionPatchRootList}; host-owned probe, protocol, transcript and evidencePack roots are frozen. Preserve supported content and unknowns. A passing validate_reconstruction_patch or validate_reconstruction_draft receipt may be accepted by exact draftId and sha256; a complete report remains valid.`;
@@ -1040,7 +1315,8 @@ async function sourceContactSheet(items: Array<{ ref: string; label?: string; ti
 
 function bindPreparedPackFrames(tools: ResponsesEvidenceTools, directory: string): void {
   const packFile = path.join(directory, "evidence/evidence-pack.json");
-  const pack = JSON.parse(fs.readFileSync(packFile, "utf8")) as { frameIndex?: Array<{ id: string; frame: string }> };
+  const pack = JSON.parse(fs.readFileSync(packFile, "utf8")) as { frameIndex?: Array<{ id: string; frame: string }>;
+    editingCuts?: { contactSheets?: Array<{ id: string; frame: string }> } };
   const seen = new Set<string>();
   for (const frame of pack.frameIndex ?? []) {
     if (!/^[A-Za-z0-9_-]+$/.test(frame.id) || !/^frames\/[A-Za-z0-9._/-]+\.(?:jpg|jpeg|png)$/.test(frame.frame)
@@ -1050,12 +1326,23 @@ function bindPreparedPackFrames(tools: ResponsesEvidenceTools, directory: string
     seen.add(frame.id);
     tools.addGenerated(frame.id, path.join(directory, "evidence", frame.frame));
   }
+  for (const sheet of pack.editingCuts?.contactSheets ?? []) {
+    if (!/^editing-cuts-\d+$/u.test(sheet.id) || !/^contact\/cuts-\d+\.(?:jpg|jpeg|png)$/u.test(sheet.frame)
+      || seen.has(sheet.id)) throw new Error("RESPONSES_PREPARED_CUT_CONTACT_PATH_INVALID");
+    seen.add(sheet.id);
+    tools.addGenerated(sheet.id, path.join(directory, "evidence", sheet.frame));
+  }
 }
 
 function postCandidateFileHashes(directory: string, allowedLinks: ReadonlySet<string> = new Set()): Record<string, string> {
   const required = ["post-source-input.json", "media-preparation.json", "probe.json", "capture-protocol.json",
     "reconstruction.json", "evidence/evidence-pack.json", "targeted-evidence/targeted-evidence.json",
     "targeted-evidence/contact-sheet.jpg"];
+  const ocrInput = path.join(directory, "ocr-input-manifest.json");
+  const ocrEvidence = path.join(directory, "targeted-evidence/ocr-evidence.json");
+  const candidateRootOcr = fs.existsSync(ocrEvidence)
+    && (JSON.parse(fs.readFileSync(ocrEvidence, "utf8")) as { sourceFrameBase?: string }).sourceFrameBase === "candidate-root";
+  if (candidateRootOcr || fs.existsSync(ocrInput)) required.push("ocr-input-manifest.json");
   if (!fs.existsSync(path.join(directory, "post-source-input.json"))) {
     throw new Error("RESPONSES_PRESERVED_CANDIDATE_INCOMPLETE:post-source-input.json");
   }
@@ -1168,6 +1455,21 @@ function assertFrozenPostCandidateFiles(directory: string, expected: Record<stri
   if (stable(current) !== stable(expected)) throw new Error("RESPONSES_PRESERVED_EVIDENCE_MUTATED");
 }
 
+function candidateCoverSource(reportDir: string): { path: string; sha256: string } | null {
+  const sourcePath = path.join(reportDir, "post-source-input.json");
+  if (!fs.existsSync(sourcePath)) return null; // Historical candidate without frozen post-source input.
+  if (!fs.lstatSync(sourcePath).isFile()) throw new Error("RESPONSES_CANDIDATE_COVER_SOURCE_INVALID");
+  const source = JSON.parse(fs.readFileSync(sourcePath, "utf8")) as { cover?: unknown };
+  if (source.cover == null) return null;
+  const cover = source.cover as { path?: unknown; sha256?: unknown };
+  if (typeof cover.path !== "string" || !/^[A-Za-z0-9._/-]+\.(?:jpe?g|png|webp|gif)$/iu.test(cover.path)
+    || cover.path.split("/").some(segment => !segment || segment === "." || segment === "..")
+    || typeof cover.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(cover.sha256)) {
+    throw new Error("RESPONSES_CANDIDATE_COVER_SOURCE_INVALID");
+  }
+  return { path: cover.path, sha256: cover.sha256 };
+}
+
 export function bindPostCandidateFiles(bound: Array<{ ref: string; path: string; sha256: string }>,
   candidate: Pick<CandidatePayload, "reportArtifactRef" | "relativeRoot">, creatorRunId: string): void {
   const root = runArtifactDir(creatorRunId);
@@ -1182,8 +1484,31 @@ export function bindPostCandidateFiles(bound: Array<{ ref: string; path: string;
   };
   for (const relative of ["post-source-input.json", "media-preparation.json", "probe.json", "capture-protocol.json",
     "evidence/evidence-pack.json", "evidence/opening-contact.jpg", "targeted-evidence/targeted-evidence.json",
-    "targeted-evidence/contact-sheet.jpg", "targeted-evidence/ocr-evidence.json", "post-cover.jpg", "post-cover.png"] ) {
+    "targeted-evidence/contact-sheet.jpg", "targeted-evidence/ocr-evidence.json"] ) {
     add(relative, relative);
+  }
+  const cover = candidateCoverSource(reportDir);
+  if (cover) {
+    const file = path.resolve(reportDir, cover.path);
+    const relative = path.relative(reportDir, file);
+    if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error("RESPONSES_CANDIDATE_COVER_PATH_INVALID");
+    }
+    let component = reportDir;
+    for (const segment of relative.split(path.sep)) {
+      component = path.join(component, segment);
+      if (!fs.existsSync(component) || fs.lstatSync(component).isSymbolicLink()) {
+        throw new Error("RESPONSES_CANDIDATE_COVER_PATH_INVALID");
+      }
+    }
+    if (!fs.statSync(file).isFile() || fileDigest(file) !== cover.sha256) {
+      throw new Error("RESPONSES_CANDIDATE_COVER_FINGERPRINT_INVALID");
+    }
+    const existing = bound.find(item => item.ref === cover.path);
+    if (existing && (path.resolve(existing.path) !== file || existing.sha256 !== cover.sha256)) {
+      throw new Error("RESPONSES_CANDIDATE_COVER_BINDING_CONFLICT");
+    }
+    if (!existing) bound.push({ ref: cover.path, path: file, sha256: cover.sha256 });
   }
   const targetedFile = path.join(reportDir, "targeted-evidence/targeted-evidence.json");
   if (fs.existsSync(targetedFile)) {
@@ -1197,13 +1522,30 @@ export function bindPostCandidateFiles(bound: Array<{ ref: string; path: string;
   }
   const packFile = path.join(reportDir, "evidence/evidence-pack.json");
   if (fs.existsSync(packFile)) {
-    const pack = JSON.parse(fs.readFileSync(packFile, "utf8")) as { frameIndex?: Array<{ id: string; frame: string }> };
+    const pack = JSON.parse(fs.readFileSync(packFile, "utf8")) as { frameIndex?: Array<{ id: string; frame: string }>;
+      editingCuts?: { contactSheets?: Array<{ id: string; frame: string }> } };
     for (const frame of pack.frameIndex ?? []) {
       if (!/^[A-Za-z0-9_-]+$/.test(frame.id) || !/^[A-Za-z0-9._/-]+\.(?:jpg|jpeg|png)$/.test(frame.frame)
         || frame.frame.split("/").includes("..")) throw new Error("RESPONSES_CANDIDATE_FRAME_PATH_INVALID");
       add(frame.id, `evidence/${frame.frame}`);
     }
+    for (const sheet of pack.editingCuts?.contactSheets ?? []) {
+      if (!/^editing-cuts-\d+$/u.test(sheet.id) || !/^contact\/cuts-\d+\.(?:jpg|jpeg|png)$/u.test(sheet.frame)) {
+        throw new Error("RESPONSES_CANDIDATE_CUT_CONTACT_PATH_INVALID");
+      }
+      add(sheet.id, `evidence/${sheet.frame}`);
+    }
   }
+}
+
+function frozenFrameIndex(directory: string) {
+  const readOptional = (relative: string) => {
+    const file = path.join(directory, relative);
+    return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) as unknown : null;
+  };
+  const pack = readOptional("evidence/evidence-pack.json") as { media?: { duration?: number } } | null;
+  return { frames: indexedEvidenceFrames(pack, readOptional("targeted-evidence/targeted-evidence.json")),
+    duration: Number(pack?.media?.duration ?? 0) };
 }
 
 type DraftError = { document: string; path: string; message: string };
@@ -1211,6 +1553,10 @@ const draftPatchParameters = { type: "object", additionalProperties: false,
   required: ["draftId", "sha256", "patches"], properties: {
     draftId: { type: "string" }, sha256: { type: "string" }, patches: { type: "array" }
   } };
+const builderDraftPatchParameters = { ...draftPatchParameters, properties: { ...draftPatchParameters.properties,
+  patches: { type: "array", maxItems: 64, items: { type: "object", additionalProperties: false,
+    required: ["op", "path", "value"], properties: {
+      op: { type: "string", enum: ["replace", "add"] }, path: { type: "string" }, value: {} } } } } };
 
 function patchErrorResult(error: unknown): { pass: false; errors: string[] } {
   const message = error instanceof Error ? error.message : String(error);
@@ -1261,7 +1607,7 @@ export function createProbeProtocolDraftValidator(directory: string, schemasDir:
   let calls = 0;
   return {
     name: "validate_probe_protocol",
-    description: "Check a proposed probe and captureProtocol against canonical schemas and host linkage rules. Returns exact errors for correction; never writes final reports or captures media.",
+    description: "Check a proposed probe and captureProtocol against canonical schemas, host linkage, and the exact capture time budget. Returns action counts and exact errors for correction; never writes final reports or captures media.",
     parameters: { type: "object", additionalProperties: false, required: ["probe", "captureProtocol"], properties: {
       probe: { type: "object" }, captureProtocol: { type: "object" }
     } },
@@ -1292,6 +1638,21 @@ export function createProbeProtocolDraftValidator(directory: string, schemasDir:
       if (!errors.length) {
         try { validateProbeProtocolLinkage(fields.probe, fields.captureProtocol, pack); }
         catch (error) { errors.push(...explainLinkageError(error, fields.probe, fields.captureProtocol)); }
+      }
+      if (!errors.length) {
+        const duration = Number((pack as { media?: { duration?: number } }).media?.duration);
+        const preview = await execFileAsync("node", [path.join(path.dirname(schemasDir), "scripts/capture-plan-preview.mjs"),
+          "--protocol", protocolFile, "--duration", String(duration)],
+        { cwd: draftDir, timeout: 60_000, signal, maxBuffer: 1_000_000 });
+        const plan = JSON.parse(preview.stdout) as { errors: Array<{ path: string; message: string }>;
+          actions: Array<{ id: string; selectedTimes: number[] }> };
+        errors.push(...plan.errors.map(error => ({ document: "captureProtocol", ...error })));
+        if (!errors.length) {
+          const ocrPlan = preflightOcrInputUnion(pack, fields.captureProtocol, plan.actions);
+          errors.push(...ocrPlan.errors.map(error => ({ document: "captureProtocol", path: error.path,
+            message: `${error.message} Actions: ${ocrPlan.actions.map(action =>
+              `${action.id} ${action.range.start}–${action.range.end}s source=${action.sourceFrames} plannedTARGET=${action.plannedTargetTimes}`).join("; ")}.` })));
+        }
       }
       const validation = { pass: errors.length === 0, errors };
       return { ...validation, ...(stage ? await stage({ probe: fields.probe, captureProtocol: fields.captureProtocol }, validation) as object : {}) };
@@ -1335,21 +1696,107 @@ function explainLinkageError(error: unknown, probeValue: unknown, protocolValue:
   return [{ document: "draft", path: "/", message: code }];
 }
 
-function phase2Readiness(tools: ResponsesEvidenceTools, targetFrames: Array<{ id: string }>,
+export type Phase2CaptureAction = { id: string; mode?: string; reason?: string; expectedObservation?: string;
+  range?: { start: number; end: number }; carrier?: string };
+export type Phase2EvidenceOverview = {
+  protocolActions: readonly Phase2CaptureAction[];
+  manifestActions: readonly { id: string; frameIds: readonly string[] }[];
+  frames: readonly { id: string; time: number; actionId?: string }[];
+};
+
+export function phase2Readiness(tools: ResponsesEvidenceTools, evidence: Phase2EvidenceOverview,
   needsOcr: boolean, priorReportRef?: string): {
     ready: boolean;
+    readinessScope: "minimum_input_access";
+    semanticCoverage: "not_evaluated";
     missingText: Array<{ ref: string; nextOffset: number; totalCharacters: number }>;
     missingImages: string[];
+    inspectedTargetRefs: string[];
+    uninspectedTargetRefs: string[];
+    actionCoverage: Array<{ id: string; question: string | null; expectedObservation: string | null;
+      timeRange: { start: number; end: number } | null; targetFrames: Array<{ ref: string; timeSeconds: number }>;
+      inspectedRefs: string[]; uninspectedRefs: string[]; semanticCoverage: "not_evaluated" }>;
   } {
   const required = ["post-source-input", "media-preparation", "evidence-pack", "probe", "capture-protocol", "targeted-evidence",
     ...(needsOcr ? ["ocr-evidence"] : []), ...(priorReportRef ? [priorReportRef, "repair-review"] : [])];
   const missingText = required.filter(ref => !tools.fullyRead(ref)).map(ref => ({ ref, ...tools.readProgress(ref) }));
+  const targetFrames = evidence.frames.map(frame => ({ ref: frame.id, timeSeconds: frame.time }));
+  const inspectedTargetRefs = targetFrames.filter(frame => tools.inspectedImages.has(frame.ref)).map(frame => frame.ref);
+  const uninspectedTargetRefs = targetFrames.filter(frame => !tools.inspectedImages.has(frame.ref)).map(frame => frame.ref);
+  const frameById = new Map(evidence.frames.map(frame => [frame.id, frame]));
+  const actionCoverage = evidence.protocolActions.map(action => {
+    const frameIds = evidence.manifestActions.find(manifestAction => manifestAction.id === action.id)?.frameIds ?? [];
+    const frames = frameIds.flatMap(ref => {
+      const frame = frameById.get(ref);
+      return frame ? [{ ref, timeSeconds: frame.time }] : [];
+    });
+    const inspectedRefs = frames.filter(frame => tools.inspectedImages.has(frame.ref)).map(frame => frame.ref);
+    return { id: action.id, question: action.reason ?? null, expectedObservation: action.expectedObservation ?? null,
+      timeRange: action.range ?? null, targetFrames: frames, inspectedRefs,
+      uninspectedRefs: frames.filter(frame => !tools.inspectedImages.has(frame.ref)).map(frame => frame.ref),
+      semanticCoverage: "not_evaluated" as const };
+  });
   const missingImages: string[] = [];
-  if (!tools.inspectedImages.has("targeted-contact")) missingImages.push("inspect_image targeted-contact");
-  if (!targetFrames.some(frame => tools.inspectedImages.has(frame.id))) {
-    missingImages.push(`inspect_image at least one TARGET frame: ${targetFrames.map(frame => frame.id).join(", ")}`);
+  for (const ref of ["opening-contact", "post-cover", ...tools.list().filter(value => /^editing-cuts-\d+$/u.test(value))]) {
+    if (tools.list().includes(ref) && !tools.inspectedImages.has(ref)) missingImages.push(`inspect_image ${ref}`);
   }
-  return { ready: missingText.length === 0 && missingImages.length === 0, missingText, missingImages };
+  if (!tools.inspectedImages.has("targeted-contact")) missingImages.push("inspect_image targeted-contact");
+  if (!inspectedTargetRefs.length) {
+    missingImages.push(`inspect_image at least one TARGET frame: ${targetFrames.map(frame => frame.ref).join(", ")}`);
+  }
+  return { ready: missingText.length === 0 && missingImages.length === 0,
+    readinessScope: "minimum_input_access", semanticCoverage: "not_evaluated", missingText, missingImages,
+    inspectedTargetRefs, uninspectedTargetRefs, actionCoverage };
+}
+
+/** Keep readiness and overflow guidance attached to the exact verified reviewer batch. */
+export function postReviewerContextResponse(bundle: ReturnType<ResponsesEvidenceTools["readBundle"]>,
+  readiness: { ready: boolean; missingText: Array<{ ref: string; nextOffset: number; totalCharacters: number }>;
+    missingImages: string[] }) {
+  if ("error" in bundle) return { ...bundle, readiness,
+    recovery: "The full verified reviewer context exceeds a batch limit; no observations were recorded. Read each exact missing text ref from readiness with read_evidence at nextOffset until totalCharacters, inspect the required bound images, then call check_review_evidence_readiness." };
+  return { ...bundle, value: { ...(bundle.value as Record<string, unknown>), readiness, readinessScope: "minimum_input_access",
+    semanticCoverage: "not_evaluated" } } as SiwcVisualToolResult;
+}
+
+/** Preserve the frozen repair inputs and exact missing offsets when a full batch cannot fit. */
+export function postRepairContextResponse(bundle: ReturnType<ResponsesEvidenceTools["readBundle"]>,
+  readiness: ReturnType<typeof phase2Readiness>) {
+  if ("error" in bundle) return { ...bundle, readiness,
+    recovery: "The full verified repair context exceeds a batch limit; no observations were recorded. Read each exact missing text ref from readiness with read_evidence at nextOffset until totalCharacters, inspect required bound images, then call check_evidence_readiness." };
+  return { ...bundle, value: { ...(bundle.value as Record<string, unknown>), readiness,
+    readinessScope: "minimum_input_access", semanticCoverage: "not_evaluated" } } as SiwcVisualToolResult;
+}
+
+function finalSummaryContractErrors(value: unknown, directory: string, required: boolean): string[] {
+  const report = value && typeof value === "object" && !Array.isArray(value)
+    ? value as { summaryContractVersion?: unknown; builderLenses?: { finalSummary?: unknown } } : {};
+  if (!required && report.summaryContractVersion === undefined) return [];
+  const errors: string[] = [];
+  if (report.summaryContractVersion !== "single-post-summary@1") {
+    errors.push("RESPONSES_FINAL_SUMMARY_CONTRACT_REQUIRED: set summaryContractVersion to single-post-summary@1");
+  }
+  if (report.builderLenses?.finalSummary === undefined) {
+    errors.push("RESPONSES_FINAL_SUMMARY_REQUIRED: Builder must write builderLenses.finalSummary");
+  } else {
+    const frozenSource = JSON.parse(fs.readFileSync(path.join(directory, "post-source-input.json"), "utf8")) as {
+      facts?: unknown };
+    try { assertFinalSummaryPerformance(report.builderLenses.finalSummary,
+      postSourceFactsSchema.parse(frozenSource.facts)); }
+    catch (error) { errors.push(`RESPONSES_FINAL_SUMMARY_SOURCE_FACTS:${String(error)}`); }
+  }
+  return errors;
+}
+
+/** Schemas are static method inputs, so they remain available when a large evidence batch must be paged. */
+export function phase2BuilderContextResponse(bundle: ReturnType<ResponsesEvidenceTools["readBundle"]>,
+  schemaPath: string, readiness: ReturnType<typeof phase2Readiness>): SiwcVisualToolResult | Record<string, unknown> {
+  const canonical = JSON.parse(fs.readFileSync(schemaPath, "utf8")) as { $defs: Record<string, unknown> };
+  const schemas = { builderLensSchemas: Object.fromEntries(builderLensSlots.map(slot =>
+    [slot, builderLensSchema(schemaPath, slot)])), reconstructionIndexSchema: builderLensIndexSchema(schemaPath),
+    finalSummarySchema: canonical.$defs.finalSummary, summaryContractVersion: "single-post-summary@1" };
+  if ("error" in bundle) return { ...bundle, ...schemas, readiness };
+  return { ...bundle, value: { ...(bundle.value as Record<string, unknown>), ...schemas, readiness } } as SiwcVisualToolResult;
 }
 
 async function validateJsonSchema(schemaPath: string, documentPath: string): Promise<void> {

@@ -3,13 +3,29 @@ import Foundation
 import Vision
 
 struct Manifest: Decodable {
+    let schemaVersion: String?
     struct Frame: Decodable {
         let id: String
         let actionId: String
+        let actionIds: [String]?
         let time: Double
         let frame: String
     }
+    struct Action: Decodable {
+        let id: String
+        let frameIds: [String]
+    }
+    let `protocol`: String?
     let frames: [Frame]
+    let actions: [Action]?
+}
+
+struct CaptureProtocol: Decodable {
+    struct Action: Decodable {
+        let id: String
+        let mode: String
+    }
+    let captureActions: [Action]
 }
 
 struct OCRLine: Encodable {
@@ -22,6 +38,7 @@ struct OCRLine: Encodable {
 struct OCRFrame: Encodable {
     let frameId: String
     let actionId: String
+    let actionIds: [String]?
     let time: Double
     let sourceFrame: String
     let status: String
@@ -31,6 +48,7 @@ struct OCRFrame: Encodable {
 
 struct OCROutput: Encodable {
     let schemaVersion: String
+    let sourceFrameBase: String?
     let generatedAt: String
     let manifest: String
     let recognitionLanguages: [String]
@@ -51,11 +69,40 @@ let manifestURL = URL(fileURLWithPath: manifestRaw).standardizedFileURL
 let outputURL = URL(fileURLWithPath: outRaw).standardizedFileURL
 let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifestURL))
 let baseURL = manifestURL.deletingLastPathComponent()
+let dedicated = manifest.schemaVersion == "ocr-input-1.0"
+if dedicated {
+    for frame in manifest.frames {
+        guard let actionIds = frame.actionIds, !actionIds.isEmpty, actionIds.first == frame.actionId else {
+            throw NSError(domain: "OCR", code: 4, userInfo: [NSLocalizedDescriptionKey: "Dedicated OCR frame actionIds are invalid"])
+        }
+    }
+}
+var requestedFrameActions: [String: String] = [:]
+var requestedModesPresent = false
+if !dedicated, let protocolPath = manifest.protocol {
+    let protocolURL = URL(fileURLWithPath: protocolPath, relativeTo: baseURL).standardizedFileURL
+    let captureProtocol = try JSONDecoder().decode(CaptureProtocol.self, from: Data(contentsOf: protocolURL))
+    let textActions = captureProtocol.captureActions.filter { $0.mode == "ocr_review" || $0.mode == "ui_state_review" }
+    requestedModesPresent = !textActions.isEmpty
+    let manifestFrameIds = Set(manifest.frames.map(\.id))
+    for action in textActions {
+        let mapped = manifest.actions?.first(where: { $0.id == action.id })?.frameIds
+            ?? manifest.frames.filter { $0.actionId == action.id }.map(\.id)
+        if mapped.isEmpty {
+            throw NSError(domain: "OCR", code: 2, userInfo: [NSLocalizedDescriptionKey: "OCR action \(action.id) has no targeted frames in manifest"])
+        }
+        if let missing = mapped.first(where: { !manifestFrameIds.contains($0) }) {
+            throw NSError(domain: "OCR", code: 3, userInfo: [NSLocalizedDescriptionKey: "OCR action \(action.id) references missing frame \(missing)"])
+        }
+        for frameId in mapped { requestedFrameActions[frameId] = action.id }
+    }
+}
 let languages = ["zh-Hans", "en-US"]
 var outputs: [OCRFrame] = []
 var lineNumber = 0
 
-for frame in manifest.frames {
+for frame in manifest.frames where dedicated || !requestedModesPresent || requestedFrameActions[frame.id] != nil {
+    let actionId = requestedFrameActions[frame.id] ?? frame.actionId
     let imageURL = baseURL.appendingPathComponent(frame.frame)
     do {
         let request = VNRecognizeTextRequest()
@@ -79,14 +126,14 @@ for frame in manifest.frames {
                 boundingBox: [Double(box.minX), Double(box.minY), Double(box.width), Double(box.height)]
             )
         }
-        outputs.append(OCRFrame(frameId: frame.id, actionId: frame.actionId, time: frame.time, sourceFrame: frame.frame, status: "processed", lines: lines, error: nil))
+        outputs.append(OCRFrame(frameId: frame.id, actionId: actionId, actionIds: dedicated ? frame.actionIds : nil, time: frame.time, sourceFrame: frame.frame, status: "processed", lines: lines, error: nil))
     } catch {
-        outputs.append(OCRFrame(frameId: frame.id, actionId: frame.actionId, time: frame.time, sourceFrame: frame.frame, status: "failed", lines: [], error: String(describing: error)))
+        outputs.append(OCRFrame(frameId: frame.id, actionId: actionId, actionIds: dedicated ? frame.actionIds : nil, time: frame.time, sourceFrame: frame.frame, status: "failed", lines: [], error: String(describing: error)))
     }
 }
 
 let formatter = ISO8601DateFormatter()
-let payload = OCROutput(schemaVersion: "ocr-evidence-1.0", generatedAt: formatter.string(from: Date()), manifest: manifestURL.path, recognitionLanguages: languages, frames: outputs)
+let payload = OCROutput(schemaVersion: "ocr-evidence-1.0", sourceFrameBase: dedicated ? "candidate-root" : nil, generatedAt: formatter.string(from: Date()), manifest: manifestURL.path, recognitionLanguages: languages, frames: outputs)
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
 let data = try encoder.encode(payload)

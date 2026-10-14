@@ -67,3 +67,44 @@ describe("replace-only reconstruction patch", () => {
       .toThrow("RECONSTRUCTION_PATCH_PROTOTYPE_FIELD");
   });
 });
+
+describe("Builder staged-draft object-property add", () => {
+  const allowAdd = { allowAddMissingObjectProperty: true };
+  const apply = (patches: unknown) => applyReconstructionPatch(base(), patches, RECONSTRUCTION_PATCH_ALLOWED_ROOTS, allowAdd);
+
+  it("adds a missing field under an existing Builder-owned object without changing other content", () => {
+    const original = { ...base(), coverageMatrix: { checkedChannels: ["voice"] } };
+    const patched = applyReconstructionPatch(original, [
+      { op: "add", path: "/coverageMatrix/uncheckedChannels", value: [] },
+    ], RECONSTRUCTION_PATCH_ALLOWED_ROOTS, allowAdd) as typeof original & { coverageMatrix: { uncheckedChannels: string[] } };
+    expect(patched.coverageMatrix).toEqual({ checkedChannels: ["voice"], uncheckedChannels: [] });
+    expect(original.coverageMatrix).toEqual({ checkedChannels: ["voice"] });
+    expect(patched.builderLenses).toEqual(original.builderLenses);
+    expect(() => applyReconstructionPatch(original, [{ op: "add", path: "/coverageMatrix/uncheckedChannels", value: [] }]))
+      .toThrow("RECONSTRUCTION_PATCH_EDIT_INVALID");
+  });
+
+  it("rejects array insertion, overwrite, absent parent, forbidden root and prototype fields", () => {
+    const bad = [
+      [{ op: "add", path: "/knowledgeUnits/1", value: { id: "KU-2" } }, "ADD_PARENT_NOT_OBJECT"],
+      [{ op: "add", path: "/knowledgeUnits/-", value: { id: "KU-2" } }, "ADD_PARENT_NOT_OBJECT"],
+      [{ op: "add", path: "/metaGate/unknowns", value: [] }, "ADD_TARGET_EXISTS"],
+      [{ op: "add", path: "/coverageMatrix/uncheckedChannels", value: [] }, "PATH_MISSING"],
+      [{ op: "add", path: "/probe/newField", value: "bad" }, "ROOT_NOT_ALLOWED"],
+      [{ op: "add", path: "/metaGate/__proto__", value: {} }, "PATH_FORBIDDEN"],
+      [{ op: "add", path: "/metaGate/constructor", value: {} }, "PATH_FORBIDDEN"],
+    ] as const;
+    for (const [patch, reason] of bad) expect(() => apply([patch])).toThrow(`RECONSTRUCTION_PATCH_${reason}`);
+  });
+
+  it("retains overlap, edit count and JSON value limits for add", () => {
+    expect(() => apply([
+      { op: "add", path: "/metaGate/newField", value: {} },
+      { op: "replace", path: "/metaGate/newField/child", value: 1 },
+    ])).toThrow("RECONSTRUCTION_PATCH_PATH_OVERLAP");
+    expect(() => apply(Array.from({ length: 65 }, (_, index) => ({ op: "add", path: `/metaGate/new${index}`, value: 1 }))))
+      .toThrow("RECONSTRUCTION_PATCH_EDIT_COUNT_INVALID");
+    expect(() => apply([{ op: "add", path: "/metaGate/newField", value: JSON.parse('{"__proto__":{"polluted":true}}') }]))
+      .toThrow("RECONSTRUCTION_PATCH_PROTOTYPE_FIELD");
+  });
+});

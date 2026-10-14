@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { recoverHostOcr } from "./video-ocr-host-recovery.js";
+import { ocrRecoveryRepairPrompt, recoverOcrWithBuilderContinuation } from "./video-ocr-builder-continuation.js";
+import { writeOcrInputManifest } from "./video-ocr-input-manifest.js";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
@@ -26,6 +28,86 @@ function digest(file: string): string {
 }
 
 describe("host OCR recovery", () => {
+  it.each(["modify", "delete"] as const)("rejects %s of the dedicated OCR input manifest during Builder continuation", async mutation => {
+    const item = fixture();
+    const manifest = path.join(item.root, "ocr-input-manifest.json");
+    const video = path.join(item.root, "source.mp4");
+    fs.writeFileSync(manifest, '{"schemaVersion":"ocr-input@1"}');
+    fs.writeFileSync(video, "source video");
+    fs.writeFileSync(path.join(item.root, "reconstruction.json"), '{"before":true}');
+    await expect(recoverOcrWithBuilderContinuation({ outputDir: item.root, videoPath: video, skillDir: "/skill",
+      recover: async () => ({ attempted: true, recoveredText: true, reason: "recovered_text", receipt: null }),
+      continueBuilder: async prompt => {
+        expect(prompt).toContain("ocr-input-manifest.json (when present)");
+        fs.writeFileSync(path.join(item.root, "reconstruction.json"), '{"after":true}');
+        if (mutation === "modify") fs.writeFileSync(manifest, '{"schemaVersion":"changed"}');
+        else fs.rmSync(manifest);
+      }
+    })).rejects.toThrow("OCR_RECOVERY_IMMUTABLE_INPUT_MUTATED");
+    expect(JSON.parse(fs.readFileSync(path.join(item.root, "ocr-builder-continuation.json"), "utf8")))
+      .toMatchObject({ status: "failed", error: "OCR_RECOVERY_IMMUTABLE_INPUT_MUTATED" });
+  });
+
+  it("keeps an older candidate without a dedicated OCR manifest compatible", async () => {
+    const item = fixture();
+    const video = path.join(item.root, "source.mp4");
+    fs.writeFileSync(video, "source video");
+    fs.writeFileSync(path.join(item.root, "reconstruction.json"), '{"before":true}');
+    expect(ocrRecoveryRepairPrompt(video, item.root)).toContain("ocr-input-manifest.json (when present)");
+    const result = await recoverOcrWithBuilderContinuation({ outputDir: item.root, videoPath: video, skillDir: "/skill",
+      recover: async () => ({ attempted: true, recoveredText: true, reason: "recovered_text", receipt: null }),
+      continueBuilder: async () => {
+        fs.writeFileSync(path.join(item.root, "reconstruction.json"), '{"after":true}');
+      }
+    });
+    expect(result.recoveredText).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(item.root, "ocr-builder-continuation.json"), "utf8")))
+      .toMatchObject({ status: "completed", error: null });
+  });
+
+  it("retries the exact source-plus-TARGET union and rejects incomplete recovery without replacing evidence", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "host-ocr-union-")); roots.push(root);
+    fs.mkdirSync(path.join(root, "evidence/frames/dense"), { recursive: true });
+    fs.mkdirSync(path.join(root, "targeted-evidence/frames"), { recursive: true });
+    fs.writeFileSync(path.join(root, "evidence/frames/dense/a.jpg"), "source pixels");
+    fs.writeFileSync(path.join(root, "targeted-evidence/frames/t.jpg"), "target pixels");
+    fs.writeFileSync(path.join(root, "evidence/evidence-pack.json"), JSON.stringify({ frameIndex: [
+      { id: "DENSE-001", time: 1, frame: "frames/dense/a.jpg" }] }));
+    fs.writeFileSync(path.join(root, "capture-protocol.json"), JSON.stringify({ captureActions: [
+      { id: "OCR", mode: "ocr_review", range: { start: 0, end: 2 } }] }));
+    fs.writeFileSync(path.join(root, "targeted-evidence/targeted-evidence.json"), JSON.stringify({ frames: [
+      { id: "TARGET-0001", actionId: "OCR", time: 1.5, frame: "frames/t.jpg" }],
+      actions: [{ id: "OCR", frameIds: ["TARGET-0001"] }] }));
+    const input = writeOcrInputManifest(root);
+    const ocr = path.join(root, "targeted-evidence/ocr-evidence.json");
+    fs.writeFileSync(ocr, JSON.stringify({ schemaVersion: "ocr-evidence-1.0", sourceFrameBase: "candidate-root", frames: [
+      { frameId: "TARGET-0001", actionId: "OCR", actionIds: ["OCR"], time: 1.5,
+        sourceFrame: "targeted-evidence/frames/t.jpg", status: "processed", lines: [] }] }));
+    const before = digest(ocr);
+    let calls = 0;
+    const invalid = await recoverHostOcr({ outputDir: root, skillDir: "/skill", executeFile: async (_file, args) => {
+      calls += 1;
+      expect(args[args.indexOf("--manifest") + 1]).toBe(input.path);
+      fs.writeFileSync(args[args.indexOf("--out") + 1]!, JSON.stringify({ schemaVersion: "ocr-evidence-1.0", sourceFrameBase: "candidate-root", frames: [
+        { frameId: "TARGET-0001", actionId: "OCR", actionIds: ["OCR"], time: 1.5,
+          sourceFrame: "targeted-evidence/frames/t.jpg", status: "processed", lines: [{ id: "OCR-1", text: "seen" }] }] }));
+      return { stdout: "ok", stderr: "" };
+    } });
+    expect(invalid).toMatchObject({ attempted: true, recoveredText: false, reason: "host_failed" });
+    expect(digest(ocr)).toBe(before);
+    expect(calls).toBe(1);
+    fs.rmSync(path.join(root, "targeted-evidence/ocr-host-recovery.json"));
+    const valid = await recoverHostOcr({ outputDir: root, skillDir: "/skill", executeFile: async (_file, args) => {
+      const frames = input.manifest.frames.map(frame => ({ frameId: frame.id, actionId: frame.actionId,
+        actionIds: frame.actionIds, time: frame.time, sourceFrame: frame.frame, status: "processed",
+        lines: frame.id === "DENSE-001" ? [{ id: "OCR-1", text: "short caption" }] : [] }));
+      fs.writeFileSync(args[args.indexOf("--out") + 1]!, JSON.stringify({ schemaVersion: "ocr-evidence-1.0", sourceFrameBase: "candidate-root", frames }));
+      return { stdout: "ok", stderr: "" };
+    } });
+    expect(valid).toMatchObject({ attempted: true, recoveredText: true, reason: "recovered_text" });
+    expect(JSON.parse(fs.readFileSync(ocr, "utf8")).frames).toHaveLength(2);
+  });
+
   it("preserves failed evidence and publishes recovered text once for one immutable manifest", async () => {
     const item = fixture();
     const beforeSha = digest(item.ocr);
@@ -108,5 +190,37 @@ describe("host OCR recovery", () => {
       return { stdout: "ok", stderr: "" };
     } });
     expect(result).toMatchObject({ recoveredText: true, reason: "recovered_text" });
+  });
+
+  it("expects only requested OCR action frames when targeted capture also contains visual frames", async () => {
+    const item = fixture();
+    fs.writeFileSync(path.join(item.root, "capture-protocol.json"), JSON.stringify({ captureActions: [
+      { id: "VISUAL", mode: "exact_times" }, { id: "OCR", mode: "ocr_review" }
+    ] }));
+    fs.writeFileSync(path.join(item.root, "targeted-evidence/frames/b.jpg"), "immutable-frame-b");
+    fs.writeFileSync(item.targeted, JSON.stringify({ frames: [
+      { id: "FRAME-0", actionId: "VISUAL", time: 0, frame: "frames/b.jpg" },
+      { id: "FRAME-1", actionId: "VISUAL", time: 1, frame: "frames/a.jpg" }
+    ], actions: [
+      { id: "VISUAL", frameIds: ["FRAME-0", "FRAME-1"] },
+      { id: "OCR", frameIds: ["FRAME-1"] }
+    ] }));
+    fs.writeFileSync(item.ocr, JSON.stringify({ frames: [
+      { frameId: "FRAME-1", status: "processed", error: null, lines: [] }
+    ] }));
+    const complete = await recoverHostOcr({ outputDir: item.root, skillDir: "/skill",
+      executeFile: async () => { throw new Error("must not run"); } });
+    expect(complete).toMatchObject({ attempted: false, reason: "ocr_not_host_retryable" });
+
+    fs.writeFileSync(item.ocr, JSON.stringify({ frames: [
+      { frameId: "FRAME-1", status: "failed", error: "nilError", lines: [] }
+    ] }));
+    const recovered = await recoverHostOcr({ outputDir: item.root, skillDir: "/skill", executeFile: async (_file, args) => {
+      fs.writeFileSync(args[args.indexOf("--out") + 1]!, JSON.stringify({ frames: [
+        { frameId: "FRAME-1", status: "processed", error: null, lines: [{ id: "OCR-1", text: "visible" }] }
+      ] }));
+      return { stdout: "ok", stderr: "" };
+    } });
+    expect(recovered).toMatchObject({ attempted: true, recoveredText: true });
   });
 });
