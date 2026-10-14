@@ -27,9 +27,10 @@ export function OpeningReport({ data }: { data: VideoResearch }) {
 }
 export function PackagingReport({ data }: { data: VideoResearch }) {
   const analysis = data.directingLogic.packagingAnalysis;
+  const fulfillmentOriginLabels = { title: '发布标题', cover: '独立发布封面', first_frame: '视频首帧画面或文字', on_screen_text: '后续片内可观察文字', first_sentence: '正文首句' } as const;
   return <div id="directing-packaging" className="depth-report"><h3>标题、独立封面与正文兑现</h3>{!analysis ? <p>Builder 未产出独立包装分析；不以首帧代替封面。</p> : <>
     {(['title','cover','firstFrame'] as const).map(key => { const surface = analysis[key]; return <article key={key}><h4>{{ title: '发布标题', cover: '独立发布封面', firstFrame: '视频首帧' }[key]} · {{available:'已取得',partial:'部分',missing:'缺失'}[surface.state]}</h4>
       {key === 'title' && <blockquote>{data.sourceFacts.title ?? '标题缺失'}</blockquote>}{key === 'cover' && data.sourceFacts.coverHref && <a href={data.sourceFacts.coverHref} target="_blank" rel="noreferrer"><img style={{width:180}} src={data.sourceFacts.coverHref} alt="独立发布封面，小尺寸预览"/></a>}
       <dl>{([['audience','受众'],['promise','承诺'],['tension','冲突'],['specificity','具体信息'],['searchTerms','搜索词'],['composition','构图'],['typeHierarchy','字号层级'],['smallSizeReadability','小尺寸可读性']] as const).map(([field,label]) => <div key={field}><dt>{label}</dt><dd>{surface[field] ?? '未产出 / 未知'}</dd></div>)}</dl><DepthEvidence data={data} refs={surface.evidenceRefs}/>{surface.unknowns.map(item => <p key={item}>{item}</p>)}</article>; })}
-    {analysis.fulfillment.map((item,index) => <article key={index}><h4>{{title:'标题',cover:'封面',first_sentence:'首句'}[item.origin]} → 正文 · {{fulfilled:'已展示兑现',partial:'部分兑现',not_shown:'未展示',unknown:'未知'}[item.status]}</h4><p>{item.promise}</p><p>{item.explanation}</p><DepthEvidence data={data} refs={item.bodyEvidenceRefs}/></article>)}{analysis.unknowns.map(item => <p key={item}>{item}</p>)}</>}</div>;
+    {analysis.fulfillment.map((item,index) => <article key={index}><h4>{fulfillmentOriginLabels[item.origin]} → 正文 · {{fulfilled:'已展示兑现',partial:'部分兑现',not_shown:'未展示',unknown:'未知'}[item.status]}</h4><p>{item.promise}</p><p>{item.explanation}</p><DepthEvidence data={data} refs={item.bodyEvidenceRefs}/></article>)}{analysis.unknowns.map(item => <p key={item}>{item}</p>)}</>}</div>;
 }

@@ -539,6 +539,8 @@ it("runs probe, host capture, reconstruction, independent review and bounded rep
       createModelRunner: options => { expect(options.enforceJsonObject).toBe(true); new OpenAIAgentsSdkRunner(options); return { run: async request => {
         const instruction = String(request.definition.config?.instructions);
         const role = request.definition.id;
+        if (role === "post-builder") expect(options.requestTimeoutMs).toBe(300_000);
+        else expect(options.requestTimeoutMs).toBeUndefined();
         const tools = await options.tools!({} as never);
         if (role === "post-builder") expect(options.finishOnPassingDraftTools).toEqual(instruction.includes("PHASE 1/2")
           ? ["validate_probe_protocol", "revise_validated_draft"]
@@ -741,6 +743,16 @@ it("runs probe, host capture, reconstruction, independent review and bounded rep
           expect(rejectedCover.errors.join("; ")).toContain('packagingAnalysis.cover.sourceRef received="post-cover.webp" required="POST-COVER"');
           expect(rejectedCover.errors.join("; ")).toContain("revise_builder_lens slot=directingLogic useLatest:true");
           expect(rejectedCover.errors.join("; ")).not.toContain("derivedSources missing");
+          const lateFrame = sourceFrames.frameIndex.find(frame => frame.time > 0.5)!;
+          const lateFirstFrameLens = structuredClone(lenses.directingLogic) as {
+            packagingAnalysis: { firstFrame: { sourceRef: string } };
+          };
+          lateFirstFrameLens.packagingAnalysis.firstFrame.sourceRef = lateFrame.id;
+          const rejectedFirstFrame = await stageLens.execute({ slot: "directingLogic", value: lateFirstFrameLens } as never,
+            request.signal) as { pass: boolean; errors: string[] };
+          expect(rejectedFirstFrame.pass).toBe(false);
+          expect(rejectedFirstFrame.errors.join("; ")).toContain(
+            `packagingAnalysis.firstFrame.sourceRef received=${JSON.stringify(lateFrame.id)} resolvedTime=${lateFrame.time}s required=0..0.5s`);
           const handles: Record<string, { draftId: string; sha256: string }> = {};
           for (const slot of ["contentRestoration", "directingLogic", "visualEditing"] as const) {
             const schema = contextResult.value.builderLensSchemas[slot]!;

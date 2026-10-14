@@ -136,6 +136,27 @@ export function contentBlockVisualDiagnostics(contentRestoration: unknown): stri
 }
 
 /** Check the timing of primary visual anchors; explicit before/after comparisons may cross the block boundary. */
+/** Checks declared prose coverage, not whether the prose correctly interprets the pixels. */
+export function contentRestorationCoverageDiagnostics(contentRestoration: unknown, duration: number): string[] {
+  if (!Number.isFinite(duration) || duration <= 0) return [];
+  const lens = contentRestoration as { blocks?: Array<{ timeRange?: { start?: number; end?: number } }> } | null;
+  const ranges = (Array.isArray(lens?.blocks) ? lens.blocks : [])
+    .map(block => block?.timeRange)
+    .filter((range): range is { start: number; end: number } => Boolean(range
+      && typeof range.start === "number" && Number.isFinite(range.start) && range.start >= 0
+      && typeof range.end === "number" && Number.isFinite(range.end) && range.end > range.start
+      && range.end <= duration + 0.5))
+    .sort((left, right) => left.start - right.start);
+  const gaps: Array<[number, number]> = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range.start - cursor > 0.5) gaps.push([cursor, range.start]);
+    cursor = Math.max(cursor, range.end);
+  }
+  if (duration - cursor > 0.5) gaps.push([cursor, duration]);
+  return gaps.map(([start, end]) => `BUILDER_INTEGRITY_CONTENT_COVERAGE:builderLenses.contentRestoration.blocks uncovered=${start}..${end}s duration=${duration}; add continuous prose blocks for this interval, including explicitly unknown content where evidence is insufficient; summary text does not replace blocks. Preserve supported existing prose and revise_builder_lens slot=contentRestoration useLatest:true.`);
+}
+
 export function contentBlockTemporalDiagnostics(contentRestoration: unknown,
   frameTimes: ReadonlyMap<string, number>, duration: number): string[] {
   const lens = contentRestoration && typeof contentRestoration === "object" && !Array.isArray(contentRestoration)
@@ -380,6 +401,9 @@ export function validateBuilderIntegrity(outputDir: string, videoPath: string): 
       }
       issues.push(...contentBlockVisualDiagnostics(lenses?.contentRestoration));
       issues.push(...contentBlockTemporalDiagnostics(lenses?.contentRestoration, frameTimes, Number(pack.media?.duration)));
+      if ((reconstruction as { summaryContractVersion?: string }).summaryContractVersion === "single-post-summary@1") {
+        issues.push(...contentRestorationCoverageDiagnostics(lenses?.contentRestoration, Number(pack.media?.duration)));
+      }
       const stages = lenses?.directingLogic?.stages ?? [];
       const meanings = stages.map((stage) => normalizedMeaning(`${stage.function} ${stage.cognitiveChange}`));
       if (meanings.some((value) => !value) || new Set(meanings).size !== meanings.length) {

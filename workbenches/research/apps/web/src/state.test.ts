@@ -12,6 +12,11 @@ const artifact = (id: string) => ({
   review: 'pending' as const,
   effectiveReview: 'pending' as const,
 });
+const metric = (stepRunId: string, state: ResearchSnapshot['stepMetrics'][number]['state'] = 'running'): ResearchSnapshot['stepMetrics'][number] => ({
+  stepRunId, runId: 'r', key: stepRunId, kind: 'agent', state, startedAt: null, endedAt: null,
+  observedAt: null, elapsedSoFarMs: null, wallDurationMs: null, sumAttemptDurationMs: null,
+  usage: null, reportedTokens: null, usageCoverage: 'unavailable', attempts: [],
+});
 const base: ResearchSnapshot = {
   schemaVersion: 1,
   rootRunId: 'r',
@@ -25,6 +30,7 @@ const base: ResearchSnapshot = {
     } as ResearchSnapshot['stages'][number],
   ],
   calls: [],
+  stepMetrics: [metric('keep'), metric('drop')],
   artifacts: [artifact('a'), artifact('b')],
   relations: [],
   progress: { registered: 2, completed: 1, closed: false },
@@ -40,18 +46,20 @@ test('incremental changes preserve stable artifacts, remove deleted metadata and
       ...base,
       cursor: '2',
       artifacts: [{ ...artifact('a'), validation: 'invalid' }],
+      stepMetrics: [metric('keep', 'succeeded'), metric('new')],
       progress: { registered: 3, completed: 2, closed: false },
       relations: [],
       diagnostics: ['new'],
       ui: { assets: { a: { title: 'A2' } }, primaryByStage: { 'phase-a2': 'a' } },
     },
-    removed: { runs: [], stages: [], calls: [], artifacts: ['b'] },
+    removed: { runs: [], stages: [], calls: [], stepMetrics: ['drop'], artifacts: ['b'] },
   });
   assert.equal(next?.artifacts.length, 1);
   assert.equal(next?.artifacts[0].validation, 'invalid');
   assert.deepEqual(next?.ui.assets, { a: { title: 'A2' } });
   assert.deepEqual(next?.ui.primaryByStage, { 'phase-a2': 'a' });
   assert.deepEqual(next?.diagnostics, ['new']);
+  assert.deepEqual(next?.stepMetrics.map(item => [item.stepRunId, item.state]), [['keep', 'succeeded'], ['new', 'running']]);
 });
 test('ambiguous delivery never silently selects a report', () => {
   assert.equal(

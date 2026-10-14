@@ -2,7 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createEvidenceWindowTool, indexedEvidenceFrames } from "./evidence-window.js";
+import { createEvidenceWindowTool, indexedEvidenceFrames, probeTimelineFrames } from "./evidence-window.js";
 import { ResponsesEvidenceTools } from "./responses-tools.js";
 
 const roots: string[] = [];
@@ -17,6 +17,32 @@ function fixture(ids: string[]) {
   }
   return { tools, root };
 }
+
+it("delivers bounded original middle and ending pixels even when the cut index has no middle boundary", () => {
+  const frames = indexedEvidenceFrames({ frameIndex: [
+    { id: "FRAME-CUT-001-AFTER", time: 0.1 },
+    ...Array.from({ length: 31 }, (_, i) => ({ id: `DENSE-${String(i + 1).padStart(4, "0")}`, time: i * 1.5 })),
+  ] }, null);
+  const timeline = probeTimelineFrames(frames);
+  expect(timeline).toHaveLength(16);
+  expect(timeline[0]).toEqual({ ref: "DENSE-0001", timeSeconds: 0 });
+  expect(timeline.at(-1)).toEqual({ ref: "DENSE-0031", timeSeconds: 45 });
+  expect(timeline.some(frame => frame.timeSeconds >= 10 && frame.timeSeconds <= 25)).toBe(true);
+  expect(new Set(timeline.map(frame => frame.ref)).size).toBe(16);
+  const { tools } = fixture(["opening-contact", ...timeline.map(frame => frame.ref)]);
+  const result = tools.readBundle([], ["opening-contact", ...timeline.map(frame => frame.ref)]);
+  expect(result).toMatchObject({ kind: "siwc_visual_tool_result", value: { coverage: { imageRefs: 17 } } });
+  expect([...tools.inspectedImages]).toEqual(["opening-contact", ...timeline.map(frame => frame.ref)]);
+  if ("kind" in result) expect(result.images).toHaveLength(17);
+});
+
+it("keeps short dense timelines complete and does not mistake cut samples for timeline coverage", () => {
+  const frames = [{ ref: "DENSE-0002", timeSeconds: 8 }, { ref: "DENSE-0001", timeSeconds: 0 },
+    { ref: "FRAME-CUT-001-BEFORE", timeSeconds: 4 }];
+  expect(probeTimelineFrames(frames)).toEqual([frames[1], frames[0]]);
+  expect(probeTimelineFrames([frames[2]!])).toEqual([]);
+  expect(() => probeTimelineFrames(frames, 1)).toThrow("RESPONSES_PROBE_TIMELINE_LIMIT_INVALID");
+});
 
 it("includes original dense pixels between sparse TARGET samples with exact ordered labels", async () => {
   const frames = indexedEvidenceFrames({ frameIndex: [{ id: "DENSE-0036", time: 87.5 }] },

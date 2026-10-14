@@ -3,7 +3,8 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { classifyOutcome, collectWorkflowRunTree, parseWorkflowArgs, prepareFullWorkflowInput } from "./benchmark-post-workflow-run.ts";
+import { classifyOutcome, collectWorkflowRunTree, parseWorkflowArgs, prepareFullWorkflowInput,
+  requireDecisionsApiKey, createBenchmarkAgents } from "./benchmark-post-workflow-run.ts";
 
 describe("full post workflow benchmark arguments", () => {
   it("requires a historical run and accepts an explicit candidate, case and output", () => {
@@ -11,8 +12,22 @@ describe("full post workflow benchmark arguments", () => {
     expect(parseWorkflowArgs(["--source-workflow-run-id", "historical-run", "--candidate-artifact-id", "candidate",
       "--case", "same-post-v1", "--output", "summary.json", "--dry-run"])).toMatchObject({
       sourceWorkflowRunId: "historical-run", candidateArtifactId: "candidate", caseLabel: "same-post-v1",
-      outputPath: path.resolve("summary.json"), dryRun: true,
+      outputPath: path.resolve("summary.json"), dryRun: true, evidenceMode: "agent", lensMode: "single",
     });
+  });
+
+  it("defaults modes and accepts explicit Decisions and parallel lenses", () => {
+    expect(parseWorkflowArgs(["--source-workflow-run-id", "historical-run"]))
+      .toMatchObject({ evidenceMode: "agent", lensMode: "single" });
+    expect(parseWorkflowArgs(["--source-workflow-run-id", "historical-run", "--evidence-mode", "decisions",
+      "--lens-mode", "parallel"])).toMatchObject({ evidenceMode: "decisions", lensMode: "parallel" });
+  });
+
+  it.each(["content-first-serial", "content-first-parallel"])("pins the optional restoration handoff mode %s", lensMode => {
+    expect(parseWorkflowArgs(["--source-workflow-run-id", "historical-run", "--lens-mode", lensMode]))
+      .toMatchObject({ evidenceMode: "agent", lensMode });
+    expect(createBenchmarkAgents({ evidenceMode: "agent", lensMode }).agents.postBuilder.config)
+      .toMatchObject({ builderOptimization: { evidenceMode: "agent", lensMode } });
   });
 
   it("rejects duplicate, unknown and unsafe options", () => {
@@ -22,6 +37,34 @@ describe("full post workflow benchmark arguments", () => {
       .toThrow("short safe label");
     expect(() => parseWorkflowArgs(["--source-workflow-run-id", "a", "--surprise", "b"]))
       .toThrow("Unknown option");
+    expect(() => parseWorkflowArgs(["--source-workflow-run-id", "a", "--evidence-mode", "codex"]))
+      .toThrow("--evidence-mode must be agent or decisions");
+    expect(() => parseWorkflowArgs(["--source-workflow-run-id", "a", "--lens-mode", "race"]))
+      .toThrow("--lens-mode must be single, serial, parallel, content-first-serial or content-first-parallel");
+    expect(() => parseWorkflowArgs(["--source-workflow-run-id", "a", "--lens-mode", "single",
+      "--lens-mode", "parallel"])).toThrow("Duplicate option");
+  });
+});
+
+describe("full post workflow Decisions credential gate", () => {
+  it("requires an explicit key only in Decisions mode and never returns the key for agent mode", () => {
+    expect(requireDecisionsApiKey("agent", undefined)).toBeUndefined();
+    expect(requireDecisionsApiKey("agent", "secret-key")).toBeUndefined();
+    expect(() => requireDecisionsApiKey("decisions", undefined)).toThrow("OPENAI_API_KEY is required");
+    expect(() => requireDecisionsApiKey("decisions", "  ")).toThrow("OPENAI_API_KEY is required");
+    expect(requireDecisionsApiKey("decisions", "explicit-key-value")).toBe("explicit-key-value");
+  });
+
+  it("binds both modes into agent config and the benchmark revision", () => {
+    const agent = createBenchmarkAgents({ evidenceMode: "agent", lensMode: "single" });
+    const decisionsParallel = createBenchmarkAgents({ evidenceMode: "decisions", lensMode: "parallel" });
+    expect(agent.agents.postBuilder.config).toMatchObject({
+      builderOptimization: { evidenceMode: "agent", lensMode: "single" },
+    });
+    expect(decisionsParallel.agents.postBuilder.config).toMatchObject({
+      builderOptimization: { evidenceMode: "decisions", lensMode: "parallel" },
+    });
+    expect(agent.methodRevision).not.toBe(decisionsParallel.methodRevision);
   });
 });
 
@@ -102,14 +145,19 @@ describe("full post workflow trace accounting", () => {
   it("counts request and method events across the root and every child workflow exactly once", async () => {
     const runs = new Map([
       ["root", { id: "root", workflowId: "post.analyze" }],
-      ["build", { id: "build", workflowId: "post.build" }],
-      ["review", { id: "review", workflowId: "post.review" }],
+      ["build", { id: "build", workflowId: "post.build", parentRunId: "root" }],
+      ["review", { id: "review", workflowId: "post.review", parentRunId: "root" }],
     ]);
     const children = new Map([["root", ["build", "review"]], ["build", []], ["review", []]]);
     const events = new Map([
       ["root", [{ type: "workflow.started" }, { type: "siwc.request" }]],
-      ["build", [{ type: "responses.method" }, { type: "siwc.request" }, { type: "siwc.request" }]],
-      ["review", [{ type: "responses.method" }, { type: "siwc.request" }]],
+      ["build", [{ type: "responses.method" }, { type: "siwc.request" }, { type: "siwc.request" },
+        { type: "decision.inference.response", data: { elapsedMs: 125 } },
+        { type: "decision.inference.completed", data: { answers: [] } },
+        { type: "decision.recorded", data: { route: "deliver_supporting_pixels" } }]],
+      ["review", [{ type: "responses.method" }, { type: "siwc.request" },
+        { type: "decision.inference.response", data: { elapsedMs: 42 } },
+        { type: "decision.inference.completed", data: { answers: [] } }]],
     ]);
     const store = {
       getRun: async (id) => runs.get(id),
@@ -118,6 +166,10 @@ describe("full post workflow trace accounting", () => {
     };
     await expect(collectWorkflowRunTree(store, "root")).resolves.toMatchObject({
       requestCount: 4, methodEventCount: 2,
+      childRunIds: { root: ["build", "review"] },
+      decisionInferenceCompletedCount: 2, decisionInferenceDurationMs: 167,
+      decisionProviderResponseCount: 2, decisionRecordedCount: 1,
+      decisionRoutes: [{ runId: "build", workflowId: "post.build", route: "deliver_supporting_pixels" }],
       runs: [{ id: "root" }, { id: "build" }, { id: "review" }],
     });
   });

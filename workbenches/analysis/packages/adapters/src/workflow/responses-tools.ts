@@ -107,6 +107,21 @@ export class ResponsesEvidenceTools {
   }
 
   list(): string[] { return [...this.allowed.keys()]; }
+  /** Host-only binding metadata copy. Actual reads verify bytes; copying gives no observation credit. */
+  snapshotBindings(): BoundEvidence[] { return [...this.allowed.values()].map(item => ({ ...item })); }
+  /** Independent Agent contexts never inherit another call's read/image observations. */
+  fork(outputDir: string): ResponsesEvidenceTools {
+    return new ResponsesEvidenceTools(this.snapshotBindings(), outputDir);
+  }
+  /** Deliver a bounded prefix, shrinking on aggregate transport overflow without skipping any ref. */
+  readImageBatch(refs: readonly string[]): ReturnType<ResponsesEvidenceTools["readBundle"]> {
+    let count = Math.min(refs.length, 24);
+    while (true) {
+      const result = this.readBundle([], refs.slice(0, count));
+      if (!("error" in result) || count <= 1) return result;
+      count = Math.max(1, Math.floor(count / 2));
+    }
+  }
   /** A new model call has no memory of observations made by an earlier call. */
   resetObservationTracking(): void {
     this.textCoverage.clear();

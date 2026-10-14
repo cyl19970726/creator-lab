@@ -2,6 +2,7 @@
 import "dotenv/config";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Pool } from "pg";
@@ -16,11 +17,14 @@ import { AnalysisPgContext } from "../packages/adapters/src/platform/database/an
 import { PostgresCreatorArtifactStore } from "../packages/adapters/src/platform/artifacts/postgres-creator-artifact-store.js";
 import { assertPinnedResearchInput, methodSnapshot, pinResearchInput, registerResearchInput,
   skillPackageSnapshot, type PinnedResearchInput } from "../packages/adapters/src/workflow/research-inputs.js";
-import { ResponsesResearchRunner } from "../packages/adapters/src/workflow/responses-research-runner.js";
+import { ResponsesResearchRunner, type BuilderOptimization } from "../packages/adapters/src/workflow/responses-research-runner.js";
 import { artifactPath } from "../packages/adapters/src/core/artifacts.js";
 import { projectRoot, runtimeDir } from "../packages/adapters/src/core/config.js";
 
-type Options = { sourceWorkflowRunId: string; candidateArtifactId?: string; caseLabel: string; dryRun: boolean; outputPath?: string };
+type EvidenceMode = "agent" | "decisions";
+type LensMode = BuilderOptimization["lensMode"];
+type Options = { sourceWorkflowRunId: string; candidateArtifactId?: string; caseLabel: string; dryRun: boolean;
+  evidenceMode: EvidenceMode; lensMode: LensMode; outputPath?: string };
 type CandidatePayload = { kind: "post"; evidence: ArtifactRef; outcome: unknown; reportArtifactRef: string;
   reportSha256: string; relativeRoot: string };
 type CandidateSource = { ref: ArtifactRef; payload: CandidatePayload; frozen: PinnedResearchInput };
@@ -58,13 +62,23 @@ export function parseWorkflowArgs(argv: readonly string[]): Options {
     index += 1;
   }
   const allowed = new Set(["--source-workflow-run-id", "--candidate-artifact-id", "--case", "--output"]);
+  allowed.add("--evidence-mode");
+  allowed.add("--lens-mode");
   for (const key of values.keys()) if (!allowed.has(key)) throw new Error(`Unknown option: ${key}`);
   const sourceWorkflowRunId = values.get("--source-workflow-run-id");
   if (!sourceWorkflowRunId) throw new Error("--source-workflow-run-id is required");
   const caseLabel = values.get("--case") ?? "full-post-analysis";
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(caseLabel)) throw new Error("--case must be a short safe label");
+  const evidenceMode = values.get("--evidence-mode") ?? "agent";
+  if (evidenceMode !== "agent" && evidenceMode !== "decisions") throw new Error("--evidence-mode must be agent or decisions");
+  const lensMode = values.get("--lens-mode") ?? "single";
+  if (lensMode !== "single" && lensMode !== "serial" && lensMode !== "parallel"
+    && lensMode !== "content-first-serial" && lensMode !== "content-first-parallel") {
+    throw new Error("--lens-mode must be single, serial, parallel, content-first-serial or content-first-parallel");
+  }
   return { sourceWorkflowRunId, ...(values.has("--candidate-artifact-id") ? { candidateArtifactId: values.get("--candidate-artifact-id") } : {}),
-    ...(values.has("--output") ? { outputPath: path.resolve(values.get("--output")!) } : {}), caseLabel, dryRun };
+    ...(values.has("--output") ? { outputPath: path.resolve(values.get("--output")!) } : {}), caseLabel, dryRun,
+    evidenceMode, lensMode };
 }
 
 async function locateHistoricalCandidate(store: PostgresWorkflowRunStore, options: Options): Promise<CandidateSource> {
@@ -124,13 +138,13 @@ export function prepareFullWorkflowInput(frozen: PinnedResearchInput): PinnedRes
   return { ...pinned, methods: methodSnapshot("post"), skillPackages: [skillPackageSnapshot("post")] };
 }
 
-function makeAgents() {
+export function createBenchmarkAgents(builderOptimization: BuilderOptimization) {
   const methods = methodSnapshot("post");
   const skillPackages = [skillPackageSnapshot("post")];
-  const revision = digest(JSON.stringify({ methods, skillPackages }));
+  const revision = digest(JSON.stringify({ methods, skillPackages, builderOptimization }));
   const model = "gpt-6-luna";
   const reasoningEffort = "medium";
-  const config = { delegate: "openai-agents-sdk", methods, skillPackages };
+  const config = { delegate: "openai-agents-sdk", methods, skillPackages, builderOptimization };
   const define = <Input, Output>(id: string) => defineAgent<Input, Output>({ id, revision: "full-post-benchmark@1", model,
     reasoningEffort, promptRevision: revision, skillsRevision: revision, permissionsRevision: "bound-evidence-tools@1",
     config: { ...config, prompt: "Execute the pinned full post workflow role with evidence-bound official SDK tools." } });
@@ -163,7 +177,7 @@ function makeAgents() {
   const sdkPackageMethod = methods.find(({ path: item }) => item === "../../vendor/agent-workflow/packages/agent-sdk/package.json");
   if (!sdkMethod || !sdkPackageMethod) throw new Error("Agent SDK package and source must be included in method snapshot");
   const sdkManifest = JSON.parse(fs.readFileSync(path.resolve(projectRoot, sdkPackageMethod.path), "utf8")) as { version?: unknown };
-  return { suite, agents, validators, methods, skillPackages, methodRevision: revision, model, reasoningEffort, promptHashes,
+  return { suite, agents, validators, methods, skillPackages, builderOptimization, methodRevision: revision, model, reasoningEffort, promptHashes,
     sdkVersion: typeof sdkManifest.version === "string" ? sdkManifest.version : "unknown",
     sdkPackageSha256: sdkPackageMethod.sha256, sdkSourceSha256: sdkMethod.sha256 };
 }
@@ -187,7 +201,8 @@ export function classifyOutcome(outputValue: unknown): { workflowOutcome: string
 }
 
 export async function collectWorkflowRunTree(store: PostgresWorkflowRunStore, rootRunId: string) {
-  const runs: Array<{ id: string; workflowId: string; events: Array<{ type: string }> }> = [];
+  const runs: Array<{ id: string; workflowId: string; events: Array<{ type: string; data?: unknown }> }> = [];
+  const childRunIds: Record<string, string[]> = {};
   const visited = new Set<string>();
   const visit = async (runId: string): Promise<void> => {
     if (visited.has(runId)) return;
@@ -196,12 +211,33 @@ export async function collectWorkflowRunTree(store: PostgresWorkflowRunStore, ro
     if (!run) return;
     const events = await store.listEvents(run.id);
     runs.push({ id: run.id, workflowId: run.workflowId, events });
-    for (const child of await store.listRuns({ parentRunId: run.id })) await visit(child.id);
+    const children = await store.listRuns({ parentRunId: run.id });
+    childRunIds[run.id] = children.map((child) => child.id);
+    for (const child of children) await visit(child.id);
   };
   await visit(rootRunId);
   const allEvents = runs.flatMap((run) => run.events);
+  const inferenceCompleted = runs.flatMap((run) => run.events.filter((event) => event.type === "decision.inference.completed")
+    .map(() => ({ runId: run.id, workflowId: run.workflowId })));
+  const inferenceResponses = allEvents.filter((event) => event.type === "decision.inference.response");
+  const decisionRoutes = runs.flatMap((run) => run.events.filter((event) => event.type === "decision.recorded")
+    .map((event) => {
+      const data = object(event.data);
+      return { runId: run.id, workflowId: run.workflowId, route: typeof data?.route === "string" ? data.route : null };
+    }));
+  const inferenceDurationMs = inferenceResponses.reduce((total, event) => {
+    const elapsedMs = object(event.data)?.elapsedMs;
+    return total + (typeof elapsedMs === "number" && Number.isFinite(elapsedMs) && elapsedMs >= 0 ? elapsedMs : 0);
+  }, 0);
   return { runs, requestCount: allEvents.filter((event) => event.type === "siwc.request").length,
-    methodEventCount: allEvents.filter((event) => event.type === "responses.method").length };
+    responsesRequestCount: allEvents.filter((event) => event.type === "siwc.request").length,
+    methodEventCount: allEvents.filter((event) => event.type === "responses.method").length,
+    responsesMethodEventCount: allEvents.filter((event) => event.type === "responses.method").length,
+    runIds: runs.map((run) => run.id), childRunIds,
+    decisionInferenceCompletedCount: inferenceCompleted.length,
+    decisionInferenceDurationMs: inferenceDurationMs,
+    decisionProviderResponseCount: inferenceResponses.length,
+    decisionRecordedCount: decisionRoutes.length, decisionRoutes };
 }
 
 async function collectCandidateArtifacts(store: PostgresWorkflowRunStore, rootRunId: string) {
@@ -223,7 +259,28 @@ async function collectCandidateArtifacts(store: PostgresWorkflowRunStore, rootRu
       }
     }
   }
-  return { candidates, reviews, requestCount: trace.requestCount, methodEventCount: trace.methodEventCount };
+  return { candidates, reviews, requestCount: trace.requestCount, methodEventCount: trace.methodEventCount,
+    responsesRequestCount: trace.responsesRequestCount, responsesMethodEventCount: trace.responsesMethodEventCount,
+    runIds: trace.runIds, childRunIds: trace.childRunIds, decisionInferenceCompletedCount: trace.decisionInferenceCompletedCount,
+    decisionInferenceDurationMs: trace.decisionInferenceDurationMs,
+    decisionProviderResponseCount: trace.decisionProviderResponseCount,
+    decisionRecordedCount: trace.decisionRecordedCount, decisionRoutes: trace.decisionRoutes };
+}
+
+export function requireDecisionsApiKey(evidenceMode: EvidenceMode, apiKey: string | undefined): string | undefined {
+  if (evidenceMode !== "decisions") return undefined;
+  if (!apiKey?.trim()) throw new Error("OPENAI_API_KEY is required for Decisions evidence mode");
+  return apiKey;
+}
+
+async function createDecisionRunner(evidenceMode: EvidenceMode) {
+  if (evidenceMode !== "decisions") return undefined;
+  const apiKey = requireDecisionsApiKey(evidenceMode, process.env.OPENAI_API_KEY);
+  const { OpenAIDecisionsRunner } = await import("@signal-room/workflow-agent-sdk");
+  // Resolve the SDK's pinned OpenAI client; credentials are explicitly injected and never emitted.
+  const sdkRequire = createRequire(new URL("../../../vendor/agent-workflow/packages/agent-sdk/package.json", import.meta.url));
+  const OpenAI = sdkRequire("openai").default;
+  return new OpenAIDecisionsRunner({ client: new OpenAI({ apiKey, maxRetries: 0 }) });
 }
 
 function writeSummary(file: string, value: unknown, replace = false): void {
@@ -242,6 +299,9 @@ function redactError(error: unknown): string {
 }
 
 export async function runFullPostBenchmark(options: Options): Promise<Record<string, unknown>> {
+  const builderOptimization = { evidenceMode: options.evidenceMode, lensMode: options.lensMode } as const;
+  // For dry runs this checks key presence only; it never creates a provider client or sends a request.
+  requireDecisionsApiKey(builderOptimization.evidenceMode, process.env.OPENAI_API_KEY);
   const connectionString = process.env.SELF_MEDIA_DATABASE_URL;
   if (!connectionString) throw new Error("SELF_MEDIA_DATABASE_URL is required");
   const pool = new Pool({ connectionString, max: 4, connectionTimeoutMillis: 5000 });
@@ -252,7 +312,7 @@ export async function runFullPostBenchmark(options: Options): Promise<Record<str
     assertPinnedResearchInput(pinned);
     const source = pinned.source as PostWorkflowStartInput;
     if (!fs.existsSync(artifactPath(source.sourceMediaArtifactRef))) throw new Error("Frozen source media is not present in the local cache");
-    const workflow = makeAgents();
+    const workflow = createBenchmarkAgents(builderOptimization);
     const outputPath = options.outputPath ?? path.join(runtimeDir(), "benchmarks", "post-full-workflow",
       `${new Date().toISOString().replace(/[:.]/gu, "-")}-${safeSegment(options.caseLabel)}-${randomUUID()}.json`);
     const prepared = {
@@ -264,6 +324,8 @@ export async function runFullPostBenchmark(options: Options): Promise<Record<str
       postId: source.postExternalId, creatorRunId: source.creatorRunId, candidateMode: source.candidateMode,
       evaluationMode: source.evaluationMode, frozenEvidenceFiles: pinned.files.length,
       methodSnapshotEntries: pinned.methods.length, skillPackages: workflow.skillPackages,
+      evidenceMode: options.evidenceMode, lensMode: options.lensMode,
+      builderOptimization: workflow.builderOptimization,
       promptHashes: workflow.promptHashes, methodRevision: workflow.methodRevision,
       sdk: { version: workflow.sdkVersion, packageSha256: workflow.sdkPackageSha256, sourceSha256: workflow.sdkSourceSha256 },
       model: workflow.model, reasoningEffort: workflow.reasoningEffort,
@@ -275,30 +337,42 @@ export async function runFullPostBenchmark(options: Options): Promise<Record<str
     };
     if (options.dryRun) return prepared;
     if (fs.existsSync(outputPath)) throw new Error(`Summary path already exists: ${outputPath}`);
+    const decisionRunner = await createDecisionRunner(options.evidenceMode);
     writeSummary(outputPath, { ...prepared, mode: "full-post-analyze", status: "incomplete", workflowRunId: null });
     const benchmarkAttemptId = randomUUID();
     const startedAt = Date.now();
     const evidence = await registerResearchInput(store, pinned);
     const artifacts = new PostgresCreatorArtifactStore(new AnalysisPgContext(pool));
-    const runner = new ResponsesResearchRunner(store, artifacts);
+    const runner = new ResponsesResearchRunner(store, artifacts, { builderOptimization,
+      ...(decisionRunner ? { decisionRunner } : {}) });
     const input: PostWorkflowInput = { creatorRunId: source.creatorRunId, postExternalId: source.postExternalId,
       evidenceKind: "video", candidateMode: "rebuild", evaluationMode: "fresh", evidence };
     let result;
     try {
       result = await runWorkflow({ workflow: workflow.suite.analyze, input, store, agentRunner: runner,
         metadata: { creatorRunId: source.creatorRunId, postId: source.postExternalId, benchmarkCase: options.caseLabel,
+          evidenceMode: options.evidenceMode, lensMode: options.lensMode,
           sourceCandidateArtifactId: historical.ref.id, benchmarkAttemptId, registered: false,
           purpose: "isolated full post-analyze quality comparison" } });
     } catch (error) {
       const runs = await store.listRuns({ metadata: { benchmarkAttemptId } });
       const failed = runs.at(-1);
-      const trace = failed ? await collectWorkflowRunTree(store, failed.id) : { requestCount: 0, methodEventCount: 0 };
+      const trace = failed ? await collectWorkflowRunTree(store, failed.id) : { requestCount: 0, methodEventCount: 0,
+        responsesRequestCount: 0, responsesMethodEventCount: 0,
+        runIds: [], childRunIds: {}, decisionInferenceCompletedCount: 0, decisionInferenceDurationMs: 0,
+        decisionProviderResponseCount: 0, decisionRecordedCount: 0, decisionRoutes: [] };
       const steps = failed ? await store.listSteps(failed.id) : [];
       const activeStep = [...steps].reverse().find((step) => ["failed", "running", "needs_review", "blocked"].includes(step.state));
       writeSummary(outputPath, { ...prepared, mode: "full-post-analyze", status: "failed", completion: "runner-threw",
         workflowRunId: failed?.id ?? null, runState: failed?.state ?? null, stage: activeStep?.key ?? null,
         error: redactError(error), durationMs: Date.now() - startedAt,
         requestCount: trace.requestCount, methodEventCount: trace.methodEventCount,
+        responsesRequestCount: trace.responsesRequestCount, responsesMethodEventCount: trace.responsesMethodEventCount,
+        runIds: trace.runIds, childRunIds: trace.childRunIds,
+        decisionInferenceCompletedCount: trace.decisionInferenceCompletedCount,
+        decisionInferenceDurationMs: trace.decisionInferenceDurationMs,
+        decisionProviderResponseCount: trace.decisionProviderResponseCount,
+        decisionRecordedCount: trace.decisionRecordedCount, decisionRoutes: trace.decisionRoutes,
         candidateArtifact: null, candidateReportRef: null, candidateReportSha256: null, qualityAccepted: false,
         summaryPath: outputPath }, true);
       throw error;
@@ -315,6 +389,13 @@ export async function runFullPostBenchmark(options: Options): Promise<Record<str
       workflowRunId: result.run.id, runState: result.run.state, ...disposition,
       durationMs: Date.now() - startedAt, requestCount: persisted.requestCount,
       methodEventCount: persisted.methodEventCount,
+      responsesRequestCount: persisted.responsesRequestCount,
+      responsesMethodEventCount: persisted.responsesMethodEventCount,
+      runIds: persisted.runIds, childRunIds: persisted.childRunIds,
+      decisionInferenceCompletedCount: persisted.decisionInferenceCompletedCount,
+      decisionInferenceDurationMs: persisted.decisionInferenceDurationMs,
+      decisionProviderResponseCount: persisted.decisionProviderResponseCount,
+      decisionRecordedCount: persisted.decisionRecordedCount, decisionRoutes: persisted.decisionRoutes,
       candidateArtifact: candidate ? { id: candidate.id, revision: candidate.revision, sha256: candidate.sha256 } : null,
       candidateReportRef: candidatePayload?.reportArtifactRef ?? null, candidateReportSha256: candidatePayload?.reportSha256 ?? null,
       evaluationArtifact: evaluation ? { id: evaluation.id, revision: evaluation.revision, sha256: evaluation.sha256 } : null,
@@ -328,7 +409,7 @@ export async function runFullPostBenchmark(options: Options): Promise<Record<str
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (argv.includes("--help") || argv.includes("-h")) {
-    process.stdout.write("Usage: tsx scripts/benchmark-post-workflow-run.ts --source-workflow-run-id ID [--candidate-artifact-id ID] [--case LABEL] [--output PATH] [--dry-run]\\n");
+    process.stdout.write("Usage: tsx scripts/benchmark-post-workflow-run.ts --source-workflow-run-id ID [--candidate-artifact-id ID] [--case LABEL] [--output PATH] [--evidence-mode agent|decisions] [--lens-mode single|serial|parallel|content-first-serial|content-first-parallel] [--dry-run]\n");
     return;
   }
   const options = parseWorkflowArgs(argv);

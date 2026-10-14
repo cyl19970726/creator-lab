@@ -184,6 +184,87 @@ it("reads a verified full-field JSON batch with ordered image pixels and fresh-c
   expect(tools.inspectedImages.size).toBe(0);
 });
 
+it("forks exact bindings without carrying text or pixel observations and rejects later source mutation", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "responses-fork-")); roots.push(root);
+  const textFile = path.join(root, "source.json");
+  const imageFile = path.join(root, "frame.png");
+  const source = Buffer.from('{"observed":true}');
+  fs.writeFileSync(textFile, source);
+  fs.writeFileSync(imageFile, tinyPng);
+  const bindings = [
+    { ref: "source", path: textFile, sha256: createHash("sha256").update(source).digest("hex") },
+    { ref: "frame", path: imageFile, sha256: createHash("sha256").update(tinyPng).digest("hex") },
+  ];
+  const parent = new ResponsesEvidenceTools(bindings, root);
+  const observed = parent.readBundle(["source"], ["frame"]);
+  expect("kind" in observed).toBe(true);
+  const copy = parent.snapshotBindings();
+  expect(copy).toEqual(bindings);
+  copy[0]!.sha256 = "0".repeat(64);
+  expect(parent.snapshotBindings()).toEqual(bindings);
+  const first = parent.fork(path.join(root, "branch-one"));
+  const second = parent.fork(path.join(root, "branch-two"));
+  expect(first.list()).toEqual(["source", "frame"]);
+  expect(first.fullyRead("source")).toBe(false);
+  expect(first.inspectedImages.size).toBe(0);
+  expect(second.fullyRead("source")).toBe(false);
+  expect(second.inspectedImages.size).toBe(0);
+  first.readBundle(["source"], ["frame"]);
+  expect(first.fullyRead("source")).toBe(true);
+  expect(first.inspectedImages.has("frame")).toBe(true);
+  expect(second.fullyRead("source")).toBe(false);
+  expect(second.inspectedImages.size).toBe(0);
+  expect(parent.fullyRead("source")).toBe(true);
+  fs.writeFileSync(textFile, '{"observed":false}');
+  expect(parent.snapshotBindings()).toEqual(bindings);
+  const late = parent.fork(path.join(root, "late-branch"));
+  expect(() => first.readBundle(["source"], [])).toThrow("RESPONSES_EVIDENCE_MUTATED");
+  expect(() => second.readBundle(["source"], ["frame"])).toThrow("RESPONSES_EVIDENCE_MUTATED");
+  expect(() => late.readBundle(["source"], [])).toThrow("RESPONSES_EVIDENCE_MUTATED");
+  expect(second.fullyRead("source")).toBe(false);
+  expect(second.inspectedImages.size).toBe(0);
+});
+
+it("copies large media bindings without reading bytes until a tool actually opens the ref", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "responses-snapshot-media-")); roots.push(root);
+  const mediaPath = path.join(root, "source.mp4");
+  const bytes = Buffer.alloc(8 * 1024 * 1024, 7);
+  fs.writeFileSync(mediaPath, bytes);
+  const binding = { ref: "source-media", path: mediaPath, sha256: createHash("sha256").update(bytes).digest("hex") };
+  const tools = new ResponsesEvidenceTools([binding], root);
+  const read = vi.spyOn(fs, "readFileSync");
+  try {
+    expect(tools.snapshotBindings()).toEqual([binding]);
+    const branch = tools.fork(path.join(root, "branch"));
+    expect(branch.list()).toEqual(["source-media"]);
+    expect(read).not.toHaveBeenCalled();
+  } finally { read.mockRestore(); }
+  fs.writeFileSync(mediaPath, "changed");
+  expect(() => tools.readBundle([], ["source-media"])).toThrow("RESPONSES_EVIDENCE_MUTATED");
+});
+
+it("shrinks an overflowing image batch and credits only pixels actually returned", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "responses-batch-shrink-")); roots.push(root);
+  const bindings = Array.from({ length: 3 }, (_, index) => {
+    const file = path.join(root, `image-${index}.png`);
+    const bytes = Buffer.alloc(12 * 1024 * 1024);
+    tinyPng.copy(bytes, 0, 0, 8);
+    bytes[bytes.length - 1] = index;
+    fs.writeFileSync(file, bytes);
+    return { ref: `image-${index}`, path: file, sha256: createHash("sha256").update(bytes).digest("hex") };
+  });
+  const tools = new ResponsesEvidenceTools(bindings, root);
+  const first = tools.readImageBatch(bindings.map(item => item.ref));
+  if ("error" in first) throw new Error(first.error);
+  expect(first.value.imageRefs.map(item => item.ref)).toEqual(["image-0"]);
+  expect([...tools.inspectedImages]).toEqual(["image-0"]);
+  const remaining = bindings.map(item => item.ref).filter(ref => !tools.inspectedImages.has(ref));
+  const second = tools.readImageBatch(remaining);
+  if ("error" in second) throw new Error(second.error);
+  expect(second.value.imageRefs.map(item => item.ref)).toEqual(["image-1", "image-2"]);
+  expect([...tools.inspectedImages]).toEqual(["image-0", "image-1", "image-2"]);
+});
+
 it("compacts only JSON whitespace without changing number or string tokens", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "responses-bundle-lexical-")); roots.push(root);
   const source = '{ "id": 9007199254740993, "minusZero": -0, "label": " a b ", "escaped": "a\\u0020b\\n" }';

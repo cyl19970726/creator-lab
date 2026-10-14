@@ -125,6 +125,21 @@ describe("Builder deterministic integrity gate", () => {
     ]);
   });
 
+  it("rejects uncovered prose in the current full-summary contract at final integrity validation", () => {
+    const item = createFixture();
+    try {
+      upgradeFixtureToV2(item.root);
+      const file = path.join(item.root, "reconstruction.json");
+      const reconstruction = JSON.parse(fs.readFileSync(file, "utf8"));
+      reconstruction.summaryContractVersion = "single-post-summary@1";
+      reconstruction.builderLenses.contentRestoration.blocks = [{
+        ...reconstruction.builderLenses.contentRestoration.blocks[0], timeRange: { start: 0, end: 1 },
+      }];
+      fs.writeFileSync(file, JSON.stringify(reconstruction));
+      expect(() => validateBuilderIntegrity(item.root, item.videoPath)).toThrow("BUILDER_INTEGRITY_CONTENT_COVERAGE");
+    } finally { fs.rmSync(item.root, { recursive: true, force: true }); }
+  });
+
   it("applies the content-block frame gate to the final v2 integrity validation", () => {
     const item = createFixture();
     try {

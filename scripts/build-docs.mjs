@@ -38,6 +38,7 @@ const NAV = [
     ['vendor/agent-workflow/docs/postgres-storage.md', 1, '已实现的 PG 执行账本'],
     ['vendor/agent-workflow/docs/getting-started.md', 0, '快速开始'],
     ['vendor/agent-workflow/docs/writing-workflows.md', 0, '编写工作流与 API'],
+    ['vendor/agent-workflow/docs/decisions.md', 1, 'Decisions 判断节点'],
     ['vendor/agent-workflow/docs/codex-and-skills.md', 0, 'Agents SDK 与方法快照'],
     ['vendor/agent-workflow/packages/agent-sdk/README.md', 1, 'SDK runner 合同'],
     ['vendor/agent-workflow/docs/integration.md', 0, '宿主集成'],
@@ -86,6 +87,7 @@ const NAV = [
     ['workbenches/analysis/README.md', 0, '分析工作台'],
     ['workbenches/analysis/docs/storage-execution-migration.md', 1, '存储与执行迁移'],
     ['workbenches/analysis/docs/official-agents-sdk-migration.md', 1, '官方 SDK 执行合同'],
+    ['workbenches/analysis/docs/post-decision-shadow.md', 1, '拉片 Decisions 影子验证'],
     ['workbenches/analysis/docs/postgres-sdk-retirement-20261012.md', 1, '迁移验收与质量边界'],
   ] },
 ];

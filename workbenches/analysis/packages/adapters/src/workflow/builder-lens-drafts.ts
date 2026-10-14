@@ -118,6 +118,11 @@ export class BuilderLensDrafts {
     return ref ? { ...ref } : undefined;
   }
 
+  resolve(slot: BuilderLensSlot, ref: ValidatedDraftRef): unknown {
+    this.assertLatest(slot, ref);
+    return this.stores[slot].resolve(ref, { requireValid: true });
+  }
+
   async revise(slot: BuilderLensSlot, ref: ValidatedDraftRef, patches: unknown): Promise<ValidatedDraftReceipt> {
     this.assertLatest(slot, ref);
     const current = this.stores[slot].resolve(ref, { requireValid: false });
