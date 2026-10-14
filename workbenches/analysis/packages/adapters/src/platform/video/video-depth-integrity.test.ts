@@ -67,6 +67,42 @@ describe("single-post depth integrity", () => {
       .toContain('state received="available" but frozen post source has no cover image/coverHref');
     expect(() => check(input)).toThrow("do not mark this source available");
   });
+  it("requires firstFrame.sourceRef itself to name a frozen opening frame", () => {
+    const input = fixture();
+    const firstFrame = input.builderLenses.directingLogic.packagingAnalysis.firstFrame;
+    const frozenFrames = new Map([...frames, ["OPEN-0001", 0], ["OPEN-0002", 0.5], ["FRAME-SHOT-001", 1.4]] as [string, number][]);
+    const frozenIds = new Set([...ids, ...frozenFrames.keys()]);
+    Object.assign(firstFrame, { state: "available", sourceRef: "FRAME-SHOT-001", evidenceRefs: ["OPEN-0001"] });
+    const staged = depthPackagingSourceDiagnostics(input.builderLenses.directingLogic, source, undefined, frozenFrames);
+    expect(staged).toHaveLength(1);
+    expect(staged[0]).toContain('packagingAnalysis.firstFrame.sourceRef received="FRAME-SHOT-001" resolvedTime=1.4s required=0..0.5s');
+    expect(staged[0]).toContain("OPEN-0001@0s");
+    expect(staged[0]).toContain("revise_builder_lens slot=directingLogic useLatest:true");
+    expect(staged[0]).toContain("validate_reconstruction_draft useLatestBuilderLenses:true");
+    const validate = () => validateVideoDepth(input, 83, frozenIds, frozenFrames, source);
+    expect(validate).toThrow("BUILDER_INTEGRITY_DEPTH_FIRST_FRAME");
+
+    // A new evidence citation or index time range does not rewrite the staged lens sourceRef.
+    Object.assign(firstFrame, { evidenceRefs: ["OPEN-0001", "OPEN-0002"] });
+    expect(validate).toThrow('firstFrame.sourceRef received="FRAME-SHOT-001"');
+    Object.assign(input, { derivedSources: [{ id: "FRAME-SHOT-001", path: "evidence/evidence-pack.json",
+      timeRange: { start: 0, end: 0.5 } }] });
+    expect(validate).toThrow('firstFrame.sourceRef received="FRAME-SHOT-001"');
+    expect(firstFrame.sourceRef).toBe("FRAME-SHOT-001");
+
+    Object.assign(firstFrame, { sourceRef: "OPEN-0001" });
+    expect(depthPackagingSourceDiagnostics(input.builderLenses.directingLogic, source, undefined, frozenFrames)).toEqual([]);
+    expect(validate).not.toThrow();
+  });
+  it.each([undefined, Number.NaN, -0.1])("rejects an unknown or invalid frozen first-frame time (%s)", time => {
+    const input = fixture();
+    Object.assign(input.builderLenses.directingLogic.packagingAnalysis.firstFrame,
+      { state: "available", sourceRef: "OPEN-INVALID", evidenceRefs: ["OPEN-INVALID"] });
+    const invalidFrames = new Map<string, number>(frames);
+    if (time !== undefined) invalidFrames.set("OPEN-INVALID", time);
+    expect(depthPackagingSourceDiagnostics(input.builderLenses.directingLogic, source, undefined, invalidFrames)[0])
+      .toContain('FIRST_FRAME:builderLenses.directingLogic.packagingAnalysis.firstFrame.sourceRef received="OPEN-INVALID"');
+  });
   it("reports the precise fulfillment evidence field and every invalid ID", () => {
     const input = fixture();
     Object.assign(input.builderLenses.directingLogic.packagingAnalysis, { fulfillment: [

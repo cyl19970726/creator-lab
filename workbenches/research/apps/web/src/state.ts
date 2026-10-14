@@ -3,14 +3,15 @@ import type { WorkflowChanges, SafeArtifact } from '@signal-room/workflow-read-m
 
 type ResearchChanges = WorkflowChanges & { changed?: ResearchSnapshot };
 const idOf = (item: { id?: string; identity?: { id: string } }) => item.id ?? item.identity?.id;
-function upsert<T extends { id?: string; identity?: { id: string } }>(
+function upsert<T>(
   old: T[],
   incoming: T[],
   removed: string[],
+  key: (item: T) => string | undefined,
 ) {
-  const map = new Map(old.map((item) => [idOf(item), item]));
+  const map = new Map(old.map((item) => [key(item), item]));
   for (const id of removed) map.delete(id);
-  for (const item of incoming) map.set(idOf(item), item);
+  for (const item of incoming) map.set(key(item), item);
   return [...map.values()];
 }
 export function mergeSnapshot(
@@ -25,10 +26,11 @@ export function mergeSnapshot(
   return {
     ...previous,
     cursor: update.cursor,
-    runs: upsert(previous.runs, changed.runs, removed.runs),
-    stages: upsert(previous.stages, changed.stages, removed.stages),
-    calls: upsert(previous.calls, changed.calls, removed.calls),
-    artifacts: upsert(previous.artifacts, changed.artifacts, removed.artifacts),
+    runs: upsert(previous.runs, changed.runs, removed.runs, idOf),
+    stages: upsert(previous.stages, changed.stages, removed.stages, idOf),
+    calls: upsert(previous.calls, changed.calls, removed.calls, idOf),
+    stepMetrics: upsert(previous.stepMetrics, changed.stepMetrics, removed.stepMetrics, item => item.stepRunId),
+    artifacts: upsert(previous.artifacts, changed.artifacts, removed.artifacts, idOf),
     progress: changed.progress,
     delivery: changed.delivery,
     relations: changed.relations,

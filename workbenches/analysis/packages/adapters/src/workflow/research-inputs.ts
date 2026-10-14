@@ -73,6 +73,7 @@ export function methodSnapshot(kind: "post" | "creator") {
       "packages/adapters/src/workflow/research-workflow-executor.ts",
       "packages/adapters/src/workflow/postgres-research-workflow-executor.ts",
       "../../vendor/agent-workflow/packages/agent-sdk/src/responses.ts",
+      "../../vendor/agent-workflow/packages/agent-sdk/src/request-payload-metrics.ts",
       "../../vendor/agent-workflow/packages/agent-sdk/src/auth.ts",
       "../../vendor/agent-workflow/packages/agent-sdk/package.json",
       "../../pnpm-lock.yaml",

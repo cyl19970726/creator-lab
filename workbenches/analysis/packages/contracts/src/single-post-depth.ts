@@ -19,7 +19,7 @@ const surfaceSchema = z.object({
 });
 export const packagingAnalysisSchema = z.object({
   title: surfaceSchema, cover: surfaceSchema, firstFrame: surfaceSchema,
-  fulfillment: z.array(z.object({ origin: z.enum(["title", "cover", "first_sentence"]), promise: words,
+  fulfillment: z.array(z.object({ origin: z.enum(["title", "cover", "first_frame", "on_screen_text", "first_sentence"]), promise: words,
     status: z.enum(["fulfilled", "partial", "not_shown", "unknown"]), bodyEvidenceRefs: refs, explanation: words })),
   unknowns: refs
 });

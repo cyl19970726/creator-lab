@@ -4,7 +4,7 @@ type PostSource = { facts: { title: string | null; coverHref: string | null }; c
 
 /** Source identity can be checked when directingLogic is staged; index registration is checked after assembly. */
 export function depthPackagingSourceDiagnostics(directingLogic: unknown, source: PostSource,
-  derivedSourceIds?: ReadonlySet<string>): string[] {
+  derivedSourceIds?: ReadonlySet<string>, frames?: ReadonlyMap<string, number>): string[] {
   const packaging = packagingAnalysisSchema.safeParse((directingLogic as { packagingAnalysis?: unknown } | null)?.packagingAnalysis);
   if (!packaging.success) return [];
   const errors: string[] = [];
@@ -29,6 +29,18 @@ export function depthPackagingSourceDiagnostics(directingLogic: unknown, source:
       errors.push(`BUILDER_INTEGRITY_DEPTH_${code}:${mismatches.join("; ")}; correct the directingLogic lens with revise_builder_lens slot=directingLogic useLatest:true, then validate_reconstruction_draft useLatestBuilderLenses:true; changing only the index cannot correct a lens binding`);
     }
   }
+  const firstFrame = packaging.data.firstFrame;
+  if (frames && firstFrame.state !== "missing") {
+    const sourceRef = firstFrame.sourceRef;
+    const resolvedTime = sourceRef === null ? undefined : frames.get(sourceRef);
+    if (resolvedTime === undefined || !Number.isFinite(resolvedTime) || resolvedTime < 0 || resolvedTime > 0.5) {
+      const examples = [...frames.entries()]
+        .filter(([, time]) => Number.isFinite(time) && time >= 0 && time <= 0.5)
+        .sort(([leftId, leftTime], [rightId, rightTime]) => leftTime - rightTime || leftId.localeCompare(rightId))
+        .slice(0, 6).map(([ref, time]) => `${ref}@${time}s`);
+      errors.push(`BUILDER_INTEGRITY_DEPTH_FIRST_FRAME:builderLenses.directingLogic.packagingAnalysis.firstFrame.sourceRef received=${JSON.stringify(sourceRef)} resolvedTime=${resolvedTime === undefined ? "missing" : `${resolvedTime}s`} required=0..0.5s; valid frozen opening frame examples=${JSON.stringify(examples)} (inspect pixels before choosing); revise_builder_lens slot=directingLogic useLatest:true to change firstFrame.sourceRef, then validate_reconstruction_draft useLatestBuilderLenses:true; changing only evidenceRefs or an index timeRange cannot repair this lens field`);
+    }
+  }
   return errors;
 }
 
@@ -48,7 +60,7 @@ export function validateVideoDepth(input: unknown, duration: number, ids: Set<st
   if (!openingResult.success || !packagingResult.success) return fail("SCHEMA");
   const opening = openingResult.data, packaging = packagingResult.data;
   const sourceErrors = depthPackagingSourceDiagnostics(root.builderLenses?.directingLogic,
-    source, new Set((root.derivedSources ?? []).map(item => item.id).filter((id): id is string => Boolean(id))));
+    source, new Set((root.derivedSources ?? []).map(item => item.id).filter((id): id is string => Boolean(id))), frames);
   if (sourceErrors.length) throw new Error(sourceErrors.join("\n"));
   if (!Number.isFinite(duration) || Math.abs(opening.duration - Math.min(10, duration)) > 0.02) fail("DURATION");
   const invalidReferenceDetails: string[] = [];
@@ -92,7 +104,6 @@ export function validateVideoDepth(input: unknown, duration: number, ids: Set<st
       if (!surface.sourceRef || !surface.evidenceRefs.length) fail("SOURCE_REFERENCE");
       checkRefs(surface.evidenceRefs, `builderLenses.directingLogic.packagingAnalysis.${key}.evidenceRefs`);
       checkRefs([surface.sourceRef!], `builderLenses.directingLogic.packagingAnalysis.${key}.sourceRef`);
-      if (key === "firstFrame" && (frames.get(surface.sourceRef!) ?? Infinity) > 0.5) fail("FIRST_FRAME");
     }
   }
   for (const [index, item] of packaging.fulfillment.entries()) {
