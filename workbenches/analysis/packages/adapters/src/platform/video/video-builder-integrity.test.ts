@@ -3,7 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { carrierInspectionStatus, validateBuilderIntegrity } from "./video-builder-integrity.js";
+import { carrierInspectionStatus, contentBlockTemporalDiagnostics, contentBlockVisualDiagnostics,
+  validateBuilderIntegrity } from "./video-builder-integrity.js";
 
 const fixtureRoot = path.join(process.cwd(), ".agents", "skills", "video-content-reconstruction", "tests", "fixtures", "valid");
 
@@ -71,6 +72,78 @@ function upgradeFixtureToV2(root: string) {
 }
 
 describe("Builder deterministic integrity gate", () => {
+  it("identifies the exact visual content block and missing visual-binding fields", () => {
+    expect(contentBlockVisualDiagnostics({ blocks: [
+      { id: "B2", type: "spoken", body: "voice-only" },
+      { id: "B3", type: "frame_strip", body: "state changes" }
+    ] })).toEqual([
+      "BUILDER_INTEGRITY_CONTENT_BLOCK_VISUAL_MISSING:builderLenses.contentRestoration.blocks[1](B3) has no visuals, frameRefs, beforeFrameRef/afterFrameRef, or steps"
+    ]);
+    expect(contentBlockVisualDiagnostics({ blocks: [{ id: "B3", type: "frame_strip", frameRefs: ["TARGET-0001"] }] })).toEqual([]);
+    expect(contentBlockVisualDiagnostics({ blocks: [null, "bad block"] })).toEqual([]);
+  });
+
+  it("rejects v4.9-style out-of-range primary frame anchors with exact locations", () => {
+    const times = new Map([["TARGET-0001", 1], ["TARGET-0034", 82.2], ["DENSE-0036", 87.5]]);
+    expect(contentBlockTemporalDiagnostics({ blocks: [
+      { id: "B1", type: "frame_strip", timeRange: { start: 0, end: 38.467 },
+        evidenceRefs: ["TARGET-0034"], frameRefs: ["TARGET-0001", "TARGET-0034"],
+        visuals: [{ role: "key_frame", ref: "TARGET-0001" }] },
+      { id: "B2", type: "operation_sequence", timeRange: { start: 40, end: 60 },
+        steps: [{ frameRefs: ["DENSE-0036"] }], visuals: [{ role: "during", ref: "TARGET-0034" }] }
+    ] }, times, 100)).toEqual([
+      "BUILDER_INTEGRITY_CONTENT_BLOCK_FRAME_TIME:builderLenses.contentRestoration.blocks[0](B1).frameRefs[1]:TARGET-0034@82.2 outside 0..38.467",
+      "BUILDER_INTEGRITY_CONTENT_BLOCK_FRAME_TIME:builderLenses.contentRestoration.blocks[1](B2).visuals[0].ref:TARGET-0034@82.2 outside 40..60",
+      "BUILDER_INTEGRITY_CONTENT_BLOCK_FRAME_TIME:builderLenses.contentRestoration.blocks[1](B2).steps[0].frameRefs[0]:DENSE-0036@87.5 outside 40..60"
+    ]);
+  });
+
+  it("allows ordinary evidence comparisons and explicit before/after visual roles", () => {
+    const times = new Map([["CURRENT", 20], ["EARLIER", 2], ["LATER", 82.2]]);
+    expect(contentBlockTemporalDiagnostics({ blocks: [
+      { id: "B1", type: "before_after", timeRange: { start: 19, end: 21 },
+        evidenceRefs: ["EARLIER", "LATER"], frameRefs: ["CURRENT"],
+        beforeFrameRef: "EARLIER", afterFrameRef: "LATER",
+        visuals: [{ role: "before", ref: "EARLIER" }, { role: "during", ref: "CURRENT" },
+          { role: "after", ref: "LATER" }] }
+    ] }, times, 100)).toEqual([]);
+    expect(contentBlockTemporalDiagnostics({ blocks: [
+      { id: "B2", type: "text", timeRange: { start: 19, end: 21 }, evidenceRefs: ["LATER"] }
+    ] }, times, 100)).toEqual([]);
+  });
+
+  it("uses the existing half-second tolerance and rejects malformed block ranges", () => {
+    const times = new Map([["LOW", 9.5], ["HIGH", 20.5], ["OUT", 20.501]]);
+    expect(contentBlockTemporalDiagnostics({ blocks: [
+      { id: "EDGE", timeRange: { start: 10, end: 20 }, frameRefs: ["LOW", "HIGH", "OUT"] },
+      { id: "REVERSED", timeRange: { start: 8, end: 7 }, frameRefs: ["OUT"] },
+      { id: "PAST_DURATION", timeRange: { start: 0, end: 21 }, frameRefs: ["OUT"] }
+    ] }, times, 20)).toEqual([
+      "BUILDER_INTEGRITY_CONTENT_BLOCK_FRAME_TIME:builderLenses.contentRestoration.blocks[0](EDGE).frameRefs[2]:OUT@20.501 outside 10..20",
+      "BUILDER_INTEGRITY_CONTENT_BLOCK_TIME_RANGE:builderLenses.contentRestoration.blocks[1](REVERSED).timeRange:8..7 duration=20",
+      "BUILDER_INTEGRITY_CONTENT_BLOCK_TIME_RANGE:builderLenses.contentRestoration.blocks[2](PAST_DURATION).timeRange:0..21 duration=20"
+    ]);
+  });
+
+  it("applies the content-block frame gate to the final v2 integrity validation", () => {
+    const item = createFixture();
+    try {
+      upgradeFixtureToV2(item.root);
+      const file = path.join(item.root, "reconstruction.json");
+      const reconstruction = JSON.parse(fs.readFileSync(file, "utf8"));
+      const block = reconstruction.builderLenses.contentRestoration.blocks[0];
+      block.timeRange = { start: 0, end: 3 };
+      block.frameRefs = ["TARGET-0001", "TARGET-0004"];
+      fs.writeFileSync(file, JSON.stringify(reconstruction));
+      expect(() => validateBuilderIntegrity(item.root, item.videoPath)).toThrow(
+        "BUILDER_INTEGRITY_CONTENT_BLOCK_FRAME_TIME:builderLenses.contentRestoration.blocks[0](BLOCK-001).frameRefs[1]:TARGET-0004@7.5 outside 0..3"
+      );
+      block.frameRefs = ["TARGET-0001"];
+      fs.writeFileSync(file, JSON.stringify(reconstruction));
+      expect(() => validateBuilderIntegrity(item.root, item.videoPath)).not.toThrow();
+    } finally { fs.rmSync(item.root, { recursive: true, force: true }); }
+  });
+
   it("treats checked_unreadable as closed without claiming semantic readability", () => {
     expect(carrierInspectionStatus({
       id: "CAR-AUDIO", available: true, inspected: true,
@@ -357,20 +430,29 @@ describe("Builder deterministic integrity gate", () => {
     }
   });
 
-  it("reports every out-of-range frame reference in one repairable failure", () => {
+  it("reports every out-of-range frame reference with frozen times and all same-unit timed evidence", () => {
     const item = createFixture();
     try {
       const file = path.join(item.root, "reconstruction.json");
       const reconstruction = JSON.parse(fs.readFileSync(file, "utf8"));
       reconstruction.knowledgeUnits[0].timeRange.end = 2;
       reconstruction.knowledgeUnits[0].evidence.push(
+        { refType: "targeted_frame", ref: "TARGET-0001", supports: "within the unit" },
         { refType: "targeted_frame", ref: "TARGET-0003", supports: "outside the unit" },
         { refType: "targeted_frame", ref: "TARGET-0004", supports: "outside the unit" }
       );
       fs.writeFileSync(file, JSON.stringify(reconstruction));
-      expect(() => validateBuilderIntegrity(item.root, item.videoPath)).toThrow(
-        "BUILDER_INTEGRITY_EVIDENCE_TIME_RANGE:KU-001:TARGET-0003,KU-001:TARGET-0004"
-      );
+      let message = "";
+      try { validateBuilderIntegrity(item.root, item.videoPath); }
+      catch (error) { message = (error as Error).message; }
+      expect(message).toContain("BUILDER_INTEGRITY_EVIDENCE_TIME_RANGE:KU-001:TARGET-0003,KU-001:TARGET-0004");
+      expect(message).toContain('temporalContext=[{"unitId":"KU-001","range":{"start":0,"end":2},' +
+        '"outside":[{"ref":"TARGET-0003","time":4.5},{"ref":"TARGET-0004","time":7.5}],' +
+        '"timedEvidence":[{"ref":"TARGET-0001","time":0.5},{"ref":"TARGET-0003","time":4.5},' +
+        '{"ref":"TARGET-0004","time":7.5}]}]');
+      expect(message).toContain("correct the actual unit time range");
+      expect(message).toContain("split a cross-time knowledge unit");
+      expect(message).toContain("remove inapplicable references");
     } finally {
       fs.rmSync(item.root, { recursive: true, force: true });
     }

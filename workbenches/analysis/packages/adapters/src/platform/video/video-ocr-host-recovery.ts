@@ -2,12 +2,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { runFile } from "../../core/process.js";
+import { assertCompleteOcrResult, readVerifiedOcrInputManifest, type OcrInputManifest } from "./video-ocr-input-manifest.js";
 
 type ExecuteFile = typeof runFile;
 type OcrFrame = { frameId?: string; status?: string; error?: string | null; lines?: unknown[] };
 type OcrArtifact = { frames?: OcrFrame[] };
-type TargetedFrame = { id?: string; frame?: string };
-type TargetedArtifact = { frames?: TargetedFrame[] };
+type TargetedFrame = { id?: string; frame?: string; actionId?: string };
+type TargetedArtifact = { frames?: TargetedFrame[]; actions?: Array<{ id?: string; frameIds?: string[] }> };
 
 export type HostOcrRecoveryReceipt = {
   schemaVersion: "video-ocr-host-recovery@1";
@@ -58,8 +59,20 @@ function lineKeys(value: unknown): Set<string> {
   }) : []) ?? []);
 }
 
-function coversTargetedFrames(value: unknown, targeted: TargetedArtifact): boolean {
-  const expected = new Set((targeted.frames ?? []).map((frame) => frame.id).filter(Boolean));
+function expectedFrames(protocol: unknown, targeted: TargetedArtifact): TargetedFrame[] {
+  const actions = (protocol as { captureActions?: Array<{ id?: string; mode?: string }> } | null)?.captureActions ?? [];
+  const textActionIds = new Set(actions.filter((action) => action.mode === "ocr_review" || action.mode === "ui_state_review")
+    .map((action) => action.id).filter((id): id is string => Boolean(id)));
+  if (textActionIds.size === 0) return targeted.frames ?? [];
+  const mapped = new Set((targeted.actions ?? []).filter((action) => action.id && textActionIds.has(action.id))
+    .flatMap((action) => action.frameIds ?? []));
+  const frames = (targeted.frames ?? []).filter((frame) => frame.id && mapped.has(frame.id));
+  return frames.length > 0 ? frames : (targeted.frames ?? []).filter((frame) =>
+    frame.id && textActionIds.has(frame.actionId ?? ""));
+}
+
+function coversTargetedFrames(value: unknown, expectedFrames: TargetedFrame[]): boolean {
+  const expected = new Set(expectedFrames.map((frame) => frame.id).filter(Boolean));
   const actual = new Set(((value as OcrArtifact | null)?.frames ?? []).map((frame) => frame.frameId).filter(Boolean));
   return expected.size > 0 && expected.size === actual.size && [...expected].every((id) => actual.has(id));
 }
@@ -67,7 +80,7 @@ function coversTargetedFrames(value: unknown, targeted: TargetedArtifact): boole
 export function shouldRetryHostOcr(protocol: unknown, targetedInput: unknown, ocr: unknown): boolean {
   const targeted = targetedInput as TargetedArtifact | null;
   if (!targeted) return false;
-  const expected = targeted.frames ?? [];
+  const expected = expectedFrames(protocol, targeted);
   const frames = (ocr as OcrArtifact | null)?.frames ?? [];
   if (expected.length === 0) return false;
   if (frames.length === 0) {
@@ -82,9 +95,18 @@ export function shouldRetryHostOcr(protocol: unknown, targetedInput: unknown, oc
     frame.status === "failed" && frame.error === "nilError");
 }
 
-function frameSetFingerprint(targetedPath: string, targeted: TargetedArtifact): string {
+function shouldRetryDedicatedOcr(manifest: OcrInputManifest, ocr: unknown): boolean {
+  if (!manifest.frames.length) return false;
+  try { assertCompleteOcrResult(ocr, manifest); }
+  catch { return true; }
+  const frames = (ocr as OcrArtifact).frames!;
+  if (frames.some(frame => frame.status === "processed")) return false;
+  return frames.every(frame => frame.status === "failed" && frame.error === "nilError");
+}
+
+function frameSetFingerprint(targetedPath: string, frames: TargetedFrame[]): string {
   const root = path.dirname(targetedPath);
-  const rows = (targeted.frames ?? []).map((frame) => {
+  const rows = frames.map((frame) => {
     if (!frame.id || !frame.frame) throw new Error("HOST_OCR_TARGETED_FRAME_INVALID");
     const candidate = path.resolve(root, frame.frame);
     const relative = path.relative(root, candidate);
@@ -115,13 +137,20 @@ export async function recoverHostOcr(options: {
   if (!fs.existsSync(targetedPath)) return { attempted: false, recoveredText: false, reason: "targeted_manifest_missing", receipt: null };
   const targeted = readJson(targetedPath) as TargetedArtifact | null;
   if (!targeted) return { attempted: false, recoveredText: false, reason: "targeted_manifest_invalid", receipt: null };
+  const ocrInputPath = path.join(options.outputDir, "ocr-input-manifest.json");
+  const dedicated = fs.existsSync(ocrInputPath) ? readVerifiedOcrInputManifest(options.outputDir) : null;
   const beforeValue = fs.existsSync(ocrPath) ? readJson(ocrPath) : null;
-  if (!shouldRetryHostOcr(protocol, targeted, beforeValue)) {
+  const requestedFrames = dedicated?.manifest.frames ?? expectedFrames(protocol, targeted);
+  if (!(dedicated ? shouldRetryDedicatedOcr(dedicated.manifest, beforeValue)
+    : shouldRetryHostOcr(protocol, targeted, beforeValue))) {
     return { attempted: false, recoveredText: false, reason: "ocr_not_host_retryable", receipt: null };
   }
 
-  const manifestSha256 = digest(fs.readFileSync(targetedPath));
-  const frameSetSha256 = frameSetFingerprint(targetedPath, targeted);
+  const rerunManifest = dedicated?.path ?? targetedPath;
+  const manifestSha256 = digest(fs.readFileSync(rerunManifest));
+  const frameSetSha256 = dedicated
+    ? digest(JSON.stringify(dedicated.manifest.frames.map(frame => ({ id: frame.id, frame: frame.frame, sha256: frame.sha256 }))))
+    : frameSetFingerprint(targetedPath, requestedFrames);
   const attemptKey = digest(`${manifestSha256}:${frameSetSha256}`);
   const prior = readJson(receiptPath) as HostOcrRecoveryReceipt | null;
   if (prior?.schemaVersion === "video-ocr-host-recovery@1" && prior.attemptKey === attemptKey) {
@@ -141,9 +170,10 @@ export async function recoverHostOcr(options: {
   let error: string | null = null;
   try {
     await (options.executeFile ?? runFile)(process.execPath, [path.join(options.skillDir, "scripts/run-ocr.mjs"),
-      "--manifest", targetedPath, "--out", attemptOutput], { cwd: options.outputDir, timeout: 10 * 60_000 });
+      "--manifest", rerunManifest, "--out", attemptOutput], { cwd: options.outputDir, timeout: 10 * 60_000 });
     afterValue = readJson(attemptOutput);
     if (!afterValue) throw new Error("HOST_OCR_OUTPUT_INVALID");
+    if (dedicated) assertCompleteOcrResult(afterValue, dedicated.manifest);
   } catch (caught) {
     error = caught instanceof Error ? caught.message : String(caught);
   }
@@ -151,7 +181,7 @@ export async function recoverHostOcr(options: {
   const afterSummary = summary(afterValue);
   const beforeLines = lineKeys(beforeValue);
   const hasNewLine = [...lineKeys(afterValue)].some((line) => !beforeLines.has(line));
-  const recoveredText = error === null && coversTargetedFrames(afterValue, targeted)
+  const recoveredText = error === null && (dedicated || coversTargetedFrames(afterValue, requestedFrames))
     && hasNewLine;
   if (recoveredText) {
     fs.renameSync(attemptOutput, ocrPath);
@@ -171,7 +201,8 @@ export async function recoverHostOcr(options: {
 }
 
 export function immutableOcrRecoveryFingerprints(outputDir: string): Record<string, string> {
-  const roots = ["post-source-input.json", "media-preparation.json", "evidence", "capture-protocol.json", "targeted-evidence"];
+  const roots = ["post-source-input.json", "media-preparation.json", "evidence", "capture-protocol.json",
+    "ocr-input-manifest.json", "targeted-evidence"];
   const result: Record<string, string> = {};
   const visit = (relative: string): void => {
     const full = path.join(outputDir, relative);
