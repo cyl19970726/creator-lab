@@ -9,16 +9,16 @@ export function authoredSections(value:unknown,pointer='',title='正文'):AssetR
  return Object.entries(value).flatMap(([key,item])=>authoredSections(item,`${pointer}/${key.replace(/~/g,'~0').replace(/\//g,'~1')}`,labels[key]??(Array.isArray(value)?`${title} ${Number(key)+1}`:key)));
 }
 export const lapianReader:AssetReader=asset=>{
- const payload=record(asset.payload), report=record(payload.report);
+ const payload=record(asset.payload), report=record(payload.report??payload), reportPrefix=payload.report!==undefined?'/report':'';
  const lenses=record(report.builderLenses);
- const sections:AssetReading['sections']=[{title:'来源与状态',text:String(payload.description??'导入的历史证据；不表示新执行、质量通过或采用。'),pointer:'/description'}];
+ const sections:AssetReading['sections']=[{title:'来源与状态',text:String(payload.description??(asset.source?.kind==='external-artifact'?'本Space发起的领域执行产物；质量与采用另行判断。':'导入的历史证据；不表示新执行、质量通过或采用。')),...(payload.description!==undefined?{pointer:'/description'}:{})}];
  if(Object.keys(lenses).length)for(const key of ['contentRestoration','directingLogic','visualEditing','finalSummary']){
-  if(lenses[key]!==undefined)sections.push(...authoredSections(lenses[key],`/report/builderLenses/${key}`,labels[key]));
+  if(lenses[key]!==undefined)sections.push(...authoredSections(lenses[key],`${reportPrefix}/builderLenses/${key}`,labels[key]));
  }
- else sections.push(...authoredSections(payload.content??payload.nativePayload??payload,'/content','内容'));
- if(asset.source?.kind==='historical-artifact')sections.push({title:'专业原片与证据阅读',text:`[打开准确原生报告与原帧](http://127.0.0.1:5177/workflow-runs/${asset.source.runId}#artifact-${asset.source.artifactId})`});
+ else sections.push(...authoredSections(payload.content??payload.nativePayload??payload,payload.content!==undefined?'/content':payload.nativePayload!==undefined?'/nativePayload':'','内容'));
+ if(asset.source?.kind==='historical-artifact'||asset.source?.kind==='external-artifact')sections.push({title:'专业原片与证据阅读',text:`[打开准确原生报告与原帧](http://127.0.0.1:5177/workflow-runs/${asset.source.runId}#artifact-${asset.source.artifactId})`});
  if(payload.native)sections.push(...authoredSections(payload.native,'/native','准确身份'));
  if(payload.readerHref)sections.push({title:'专业阅读入口',text:`[打开原片、原帧与字幕对照](${String(payload.readerHref)})`,pointer:'/readerHref'});
  return {title:String(payload.title??'拉片证据'),sections};
 };
-export const lapianReaders={'analysis.lapian':lapianReader};
+export const lapianReaders={'analysis.lapian':lapianReader,'analysis/historical-evidence@1':lapianReader};

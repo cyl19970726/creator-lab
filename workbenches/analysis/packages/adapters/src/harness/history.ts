@@ -13,7 +13,7 @@ const object=(v:unknown):Record<string,unknown>=>v&&typeof v==='object'&&!Array.
 const sha=(v:Buffer|string)=>createHash('sha256').update(v).digest('hex');
 const nodeId=(s:StepRecord)=>`step-${s.id}`;
 /** Reconstruct only saved execution facts. A current file is usable only if its bytes match the saved hash. */
-async function historicalVersion(store:PostgresWorkflowRunStore,run:RunRecord):Promise<WorkflowVersionDraft>{
+export async function observedAnalysisVersion(store:PostgresWorkflowRunStore,run:RunRecord,origin:'history'|'external'='history'):Promise<WorkflowVersionDraft>{
  const steps=await store.listSteps(run.id),events=await store.listEvents(run.id);
  const methods=events.filter(e=>e.type==='responses.method').map(e=>object(e.data));
  const definitions:Record<string,WorkflowNodeDefinition>={};
@@ -29,8 +29,14 @@ async function historicalVersion(store:PostgresWorkflowRunStore,run:RunRecord):P
    ...(instructions?{instructions}:{}),...(method?{model:String(method.model),tools:Array.isArray(method.toolNames)?method.toolNames as string[]:[],configuration:{reasoningEffort:method.reasoningEffort,promptSha256:method.promptSha256,methodRevision:method.methodRevision}}:{}),
    executor:{family:step.kind==='agent'?'agent-sdk':'program'}};
  }
- const id=`lapian-history-${run.id}`;
- return {id,revision:run.workflowRevision,changeReason:'历史运行观察投影；不是原始设计史，也不是当前新执行方法',config:{historical:true,sourceRunId:run.id,methodEvents:methods},
+ if(origin==='external'){
+  const id=`lapian-observed-${run.id}`;
+  const role=run.workflowId.split('.').at(-1)??run.workflowId;
+  const saved=Object.values(definitions).find(d=>d.instructions)??Object.values(definitions)[0];
+  return {id,revision:run.workflowRevision,changeReason:'本次领域执行的实际观察；不是独立设计方法，也不是历史导入',config:{observedNativeRun:true,historical:false,methodKind:'auxiliary',sourceRunId:run.id,methodEvents:methods},entrypoints:{post:{workflowId:run.workflowId,codeRevision:run.workflowRevision,storageContract:{workflowVersion:id,nodes:{observed:{actorKinds:['program'],inputs:{},outputs:{},actions:[]}},stateRules:[]},nodeDefinitions:{'native-execution':{...saved,purpose:`${run.workflowId}@${run.workflowRevision} 实际领域执行；已保存方法快照与原生步骤分别读取。`,executor:{family:'program',adapter:`analysis-native-${role}`}}},process:{revision:'native-observation-1',nodes:[{id:'native-execution',kind:'group'}],edges:[],results:[]}}}};
+ }
+ const id=`lapian-${origin==='history'?'history':'observed'}-${run.id}`;
+ return {id,revision:run.workflowRevision,changeReason:'历史运行观察投影；不是原始设计史，也不是当前新执行方法',config:{historical:origin==='history',methodKind:origin==='history'?'historical-observation':'auxiliary',sourceRunId:run.id,methodEvents:methods},
   entrypoints:{post:{workflowId:run.workflowId,codeRevision:run.workflowRevision,storageContract:{workflowVersion:id,nodes:{history:{actorKinds:['program'],inputs:{},outputs:{},actions:[]}},stateRules:[]},nodeDefinitions:definitions,
    process:{revision:'observed-history-1',nodes:steps.map(s=>({id:nodeId(s),kind:s.kind==='agent'?'agent' as const:'program' as const})),edges:[],results:[]}}}};
 }
@@ -60,7 +66,7 @@ export async function importLapianHistory(options:{service:WorkflowSpaceService;
  const source=await service.importAsset(spaceId,{schema,payload:{title:options.title,description:options.description,rootRunId,sourceWorkspaceId,runIds:runs.map(r=>r.id)},description:'明确来源的历史案例索引',idempotencyKey:`history-index:${rootRunId}`});
  const manifest=await service.freezeInputs(spaceId,caseId,{historicalSource:source.id});
  const bindings=[];
- for(const run of runs){let existing;try{existing=await service.readRun(spaceId,run.id);}catch(error){if(!String(error).includes('not found'))throw error;}if(existing){bindings.push({runId:run.id,workflowVersionId:existing.workflowVersionId,entrypoint:existing.entrypoint,inputManifestId:existing.inputManifestId,effectiveConfig:existing.effectiveConfig});continue;}const draft=await historicalVersion(store,run);await service.publishWorkflow(spaceId,draft);await service.bindPresentation(spaceId,{workflowVersionId:draft.id,entrypoint:'post',presentationId:'lapian-history',revision:'1'});bindings.push({runId:run.id,workflowVersionId:draft.id,entrypoint:'post',inputManifestId:manifest.id,effectiveConfig:{historical:true,originalWorkflowId:run.workflowId}});}
+ for(const run of runs){let existing;try{existing=await service.readRun(spaceId,run.id);}catch(error){if(!String(error).includes('not found'))throw error;}if(existing){bindings.push({runId:run.id,workflowVersionId:existing.workflowVersionId,entrypoint:existing.entrypoint,inputManifestId:existing.inputManifestId,effectiveConfig:existing.effectiveConfig});continue;}const draft=await observedAnalysisVersion(store,run);await service.publishWorkflow(spaceId,draft);await service.bindPresentation(spaceId,{workflowVersionId:draft.id,entrypoint:'post',presentationId:'lapian-history',revision:'1'});bindings.push({runId:run.id,workflowVersionId:draft.id,entrypoint:'post',inputManifestId:manifest.id,effectiveConfig:{historical:true,originalWorkflowId:run.workflowId}});}
  await service.importHistoricalRuns(spaceId,{sourceWorkspaceId,runs:bindings});
  const assets=[];
  for(const run of runs)for(const artifact of await store.listArtifacts(run.id)){

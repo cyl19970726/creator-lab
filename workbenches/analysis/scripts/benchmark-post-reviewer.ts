@@ -16,6 +16,7 @@ import { ResponsesResearchRunner } from "../packages/adapters/src/workflow/respo
 import { assertPinnedResearchInput, methodSnapshot, registerResearchInput, skillPackageSnapshot, type PinnedResearchInput } from "../packages/adapters/src/workflow/research-inputs.js";
 import { artifactPath } from "../packages/adapters/src/core/artifacts.js";
 import { runArtifactDir, runtimeDir } from "../packages/adapters/src/core/config.js";
+import { awaitHarnessRunBinding } from "../packages/adapters/src/harness/execution.js";
 import type { ResearchReviewReceipt } from "../packages/research/src/workflows/simple-review-contract.js";
 
 type Options = {
@@ -385,6 +386,16 @@ export async function runBenchmark(options: Options): Promise<Record<string, unk
     const postId = source.postExternalId;
     const creatorRunId = source.creatorRunId;
     const reviewer = createReviewerSuite(options.repairOnFindings);
+    let harnessRootInput: { candidate: ArtifactRef; evidence: ArtifactRef } | undefined;
+    const createRun = store.createRun.bind(store);
+    store.createRun = async (record) => {
+      const run = await createRun(record);
+      if (!record.parentRunId && record.workflowId === reviewer.suite.review.id) {
+        if (!harnessRootInput) throw new Error("Reviewer root input was not prepared");
+        await awaitHarnessRunBinding(run.id, run.workflowId, harnessRootInput);
+      }
+      return run;
+    };
     if (reviewer.promptSha256 !== benchmarkFrozen.methods.find((method) => method.path === "prompts/responses-reviewer-v1.md")?.sha256) {
       throw new Error("Current reviewer prompt hash is missing from the pinned method snapshot");
     }
@@ -402,6 +413,9 @@ export async function runBenchmark(options: Options): Promise<Record<string, unk
       candidateArtifact: { id: candidate.ref.id, revision: candidate.ref.revision, sha256: candidate.ref.sha256,
         reportSha256: candidate.payload.reportSha256, reportArtifactRef: candidate.payload.reportArtifactRef,
         evidenceArtifactId: candidate.payload.evidence.id },
+      sourceWorkspaceId: workspaceId,
+      frozenInputSha256: digest(JSON.stringify(benchmarkFrozen)),
+      methodSnapshotSha256: digest(JSON.stringify({ methods: benchmarkFrozen.methods, skillPackages: benchmarkFrozen.skillPackages })),
       currentMethodSnapshotEntries: benchmarkFrozen.methods.length,
       currentPromptSha256: reviewer.promptSha256,
       reasoningEffort: reviewer.reasoningEffort,
@@ -435,8 +449,10 @@ export async function runBenchmark(options: Options): Promise<Record<string, unk
       const reviewAttemptId = randomUUID();
       let run: Awaited<ReturnType<typeof runWorkflow>>;
       try {
+        const reviewInput = { candidate: selected.ref, evidence: selected.payload.evidence };
+        harnessRootInput = reviewInput;
         run = await runWorkflow({ workflow: reviewer.suite.review,
-          input: { candidate: selected.ref, evidence: selected.payload.evidence }, store, agentRunner: responses,
+          input: reviewInput, store, agentRunner: responses,
           metadata: { creatorRunId, postId, benchmarkCase: label, benchmarkAttemptId: reviewAttemptId,
             sourceCandidateArtifactId: candidate.ref.id, candidateArtifactId: selected.ref.id, registered: false } });
       } catch (error) {

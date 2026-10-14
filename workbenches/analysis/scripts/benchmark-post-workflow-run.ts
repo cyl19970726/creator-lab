@@ -19,6 +19,7 @@ import { assertPinnedResearchInput, methodSnapshot, pinResearchInput, registerRe
 import { ResponsesResearchRunner } from "../packages/adapters/src/workflow/responses-research-runner.js";
 import { artifactPath } from "../packages/adapters/src/core/artifacts.js";
 import { projectRoot, runtimeDir } from "../packages/adapters/src/core/config.js";
+import { awaitHarnessRunBinding } from "../packages/adapters/src/harness/execution.js";
 
 type Options = { sourceWorkflowRunId: string; candidateArtifactId?: string; caseLabel: string; dryRun: boolean; outputPath?: string };
 type CandidatePayload = { kind: "post"; evidence: ArtifactRef; outcome: unknown; reportArtifactRef: string;
@@ -261,6 +262,9 @@ export async function runFullPostBenchmark(options: Options): Promise<Record<str
       sourceWorkflowRunId: options.sourceWorkflowRunId,
       sourceCandidateArtifact: { id: historical.ref.id, revision: historical.ref.revision, sha256: historical.ref.sha256,
         reportArtifactRef: historical.payload.reportArtifactRef, reportSha256: historical.payload.reportSha256 },
+      sourceWorkspaceId: process.env.SELF_MEDIA_WORKSPACE_ID ?? "creator-lab-analysis",
+      frozenInputSha256: digest(JSON.stringify(pinned)),
+      methodSnapshotSha256: digest(JSON.stringify({ methods: pinned.methods, skillPackages: pinned.skillPackages })),
       postId: source.postExternalId, creatorRunId: source.creatorRunId, candidateMode: source.candidateMode,
       evaluationMode: source.evaluationMode, frozenEvidenceFiles: pinned.files.length,
       methodSnapshotEntries: pinned.methods.length, skillPackages: workflow.skillPackages,
@@ -283,6 +287,14 @@ export async function runFullPostBenchmark(options: Options): Promise<Record<str
     const runner = new ResponsesResearchRunner(store, artifacts);
     const input: PostWorkflowInput = { creatorRunId: source.creatorRunId, postExternalId: source.postExternalId,
       evidenceKind: "video", candidateMode: "rebuild", evaluationMode: "fresh", evidence };
+    const createRun = store.createRun.bind(store);
+    store.createRun = async (record) => {
+      const run = await createRun(record);
+      if (!record.parentRunId && record.workflowId === workflow.suite.analyze.id) {
+        await awaitHarnessRunBinding(run.id, run.workflowId, input);
+      }
+      return run;
+    };
     let result;
     try {
       result = await runWorkflow({ workflow: workflow.suite.analyze, input, store, agentRunner: runner,
