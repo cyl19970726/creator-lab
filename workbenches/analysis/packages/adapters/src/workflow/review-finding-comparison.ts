@@ -76,7 +76,7 @@ export function createReviewFindingComparisonTool(report: unknown, tools: Respon
   const inspectTool = toolset.find(tool => tool.name === "inspect_image")!;
   return {
     name: "compare_review_finding",
-    description: "Reopen the exact candidate field and each cited frozen reference for one complete finding. Returns exact JSON pointer values and actual ordered image pixels. It does not judge truth, edit the finding, or change artifacts.",
+    description: "Reopen the exact candidate field and each cited frozen reference for one complete finding. The first successful call for an exact finding returns pointer values and ordered image pixels; an identical repeat revalidates sources and reuses the earlier pixel delivery. It does not judge truth, edit the finding, or change artifacts. After reviewing the first result, submit the unchanged finding without calling again.",
     parameters: { type: "object", additionalProperties: false, required: ["finding"], properties: {
       finding: { type: "object", additionalProperties: false, required: ["id", "location", "issue", "evidenceRefs", "suggestedChange", "priority", "kind"],
         properties: { id: { type: "string", minLength: 1 }, location: { type: "string", minLength: 1 },
@@ -87,6 +87,8 @@ export function createReviewFindingComparisonTool(report: unknown, tools: Respon
     execute: async (args, signal) => {
       try {
         const finding = simpleReviewFindingSchema.parse((args as { finding?: unknown })?.finding);
+        const findingHash = reviewFindingHash(finding);
+        const comparisonPreviouslyPrepared = checkedFindingHashes.has(findingHash);
         const candidatePointer = resolvePointer(report, finding.location);
         if (!candidatePointer.exists) throw new Error(`RESPONSES_REVIEW_COMPARISON_CANDIDATE_POINTER_INVALID: ${finding.location}`);
         assertFieldIsSpecific(candidatePointer.value, `candidate ${finding.location}`);
@@ -134,11 +136,14 @@ export function createReviewFindingComparisonTool(report: unknown, tools: Respon
           references.push({ ref: baseRef, readStatus: "fully_read_text; contents omitted" });
         }
 
-        const findingHash = reviewFindingHash(finding);
-        const value = { semanticVerdict: "not_evaluated", findingHash,
+        const value = { semanticVerdict: "not_evaluated", findingHash, comparisonPreviouslyPrepared,
           candidate: { location: finding.location, value: toJsonValue(candidatePointer.value) }, references, referencedValues,
-          imageIndexToRef: imageEntries.map(({ ref }, index) => ({ index, ref })) };
-        if (!imageEntries.length) {
+          imageIndexToRef: imageEntries.map(({ ref }, index) => ({ index, ref })),
+          imagesPreviouslyDelivered: comparisonPreviouslyPrepared && imageEntries.length > 0,
+          nextAction: comparisonPreviouslyPrepared
+            ? "Frozen sources were revalidated. Reuse the pixels delivered for this exact finding in the earlier comparison; this receipt does not make a semantic judgment. Submit the unchanged finding only if supported by your own review."
+            : "Review these exact fields and pixels, then submit the unchanged finding directly if supported. Any change to a finding field requires a new comparison." };
+        if (!imageEntries.length || comparisonPreviouslyPrepared) {
           checkedFindingHashes.add(findingHash);
           return value;
         }

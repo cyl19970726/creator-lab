@@ -38,13 +38,15 @@ it("reads scoped execution records, opaque changes, and one stage without listin
 });
 
 it("keeps host verified context while accepting changed shared facts", () => {
-  const previous = { schemaVersion: 1, rootRunId: "root", selectedRunId: "child", subject: { creatorRunId: "owner", postId: "post" }, title: "Research", cursor: "first", runs: [{ id: "root" }], stages: [{ id: "keep" }, { id: "remove" }], calls: [], artifacts: [], relations: [{ kind: "selected" }], progress: { registered: 2, completed: 0, closed: false }, diagnostics: [] } as unknown as WorkflowReading;
-  const next = mergeWorkflowReading(previous, { resetRequired: false, cursor: "second", removed: { runs: [], stages: ["remove"], calls: [], artifacts: [] }, changed: {
-    ...previous, cursor: "second", selectedRunId: undefined, runs: [], stages: [{ id: "new" }], calls: [], artifacts: [], relations: []
+  const previous = { schemaVersion: 1, rootRunId: "root", selectedRunId: "child", subject: { creatorRunId: "owner", postId: "post" }, title: "Research", cursor: "first", runs: [{ id: "root" }], stages: [{ id: "keep" }, { id: "remove" }], calls: [], stepMetrics: [{ stepRunId: "old", usage: null }, { stepRunId: "keep", usage: null }], artifacts: [], relations: [{ kind: "selected" }], progress: { registered: 2, completed: 0, closed: false }, diagnostics: [] } as unknown as WorkflowReading;
+  const next = mergeWorkflowReading(previous, { resetRequired: false, cursor: "second", removed: { runs: [], stages: ["remove"], calls: [], stepMetrics: ["old"], artifacts: [] }, changed: {
+    ...previous, cursor: "second", selectedRunId: undefined, runs: [], stages: [{ id: "new" }], calls: [], stepMetrics: [{ stepRunId: "keep", usage: { inputTokens: 2 } }, { stepRunId: "new", usage: null }], artifacts: [], relations: []
   } as unknown as WorkflowReading });
   expect(next).toMatchObject({ cursor: "second", selectedRunId: "child", subject: { creatorRunId: "owner", postId: "post" }, title: "Research" });
   expect(next.runs.map((run) => run.id)).toEqual(["root"]);
   expect(next.stages.map((stage) => stage.id)).toEqual(["keep", "new"]);
+  expect(next.stepMetrics.map((metric) => metric.stepRunId)).toEqual(["keep", "new"]);
+  expect(next.stepMetrics[0]?.usage).toEqual({ inputTokens: 2 });
   expect(next.relations).toEqual([]);
 });
 

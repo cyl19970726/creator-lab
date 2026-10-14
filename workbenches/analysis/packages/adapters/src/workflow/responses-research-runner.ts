@@ -19,7 +19,7 @@ import { projectRoot, runArtifactDir } from "../core/config.js";
 import { runFile } from "../core/process.js";
 import { prepareBuilderInputs } from "../platform/video/video-reconstruction-media-preparer.js";
 import { assertCompleteOcrResult, preflightOcrInputUnion, writeOcrInputManifest } from "../platform/video/video-ocr-input-manifest.js";
-import { contentBlockTemporalDiagnostics, contentBlockVisualDiagnostics, validateBuilderIntegrity } from "../platform/video/video-builder-integrity.js";
+import { contentBlockTemporalDiagnostics, contentBlockVisualDiagnostics, contentRestorationCoverageDiagnostics, validateBuilderIntegrity } from "../platform/video/video-builder-integrity.js";
 import { depthPackagingSourceDiagnostics } from "../platform/video/video-depth-integrity.js";
 import { assertFinalSummaryPerformance } from "../platform/video/video-final-summary.js";
 import { assembleHostOwnedReconstruction, frozenReconstructionTranscriptFromEvidencePack } from "../platform/video/video-reconstruction-host-assembler.js";
@@ -35,8 +35,7 @@ import { boundArtifact, ResponsesEvidenceTools } from "./responses-tools.js";
 import { bindCreatorEvidenceViews, creatorEvidenceReadiness } from "./creator-evidence.js";
 import { createReviewFindingComparisonTool, reviewFindingHash } from "./review-finding-comparison.js";
 import { BuilderLensDrafts, builderLensDraftToolParameters, builderLensIndexSchema, builderLensSchema, builderLensSlots, type BuilderLensSlot } from "./builder-lens-drafts.js";
-import { createEvidenceWindowTool, indexedEvidenceFrames } from "./evidence-window.js";
-
+import { createEvidenceWindowTool, indexedEvidenceFrames, probeTimelineFrames } from "./evidence-window.js";
 type Store = RunStore & ArtifactPayloadReader;
 type CandidatePayload = { kind: "post" | "creator"; evidence: ArtifactRef; report: unknown;
   reportArtifactRef: string; reportSha256: string; relativeRoot: string; outcome: unknown; revisionResponse?: unknown;
@@ -161,9 +160,11 @@ export class ResponsesResearchRunner implements AgentRunner {
     await request.emit("responses.method", { role, methodRevision: request.definition.revision,
       promptPath: promptFile, promptSha256: shaText(method),
       effectiveInstructionsSha256: shaText(instructions), toolNames: toolSet.map(tool => tool.name),
-      frozenEvidenceRefs: tools.list(), model: request.definition.model, reasoningEffort: request.definition.reasoningEffort });
+      frozenEvidenceRefs: tools.list(), model: request.definition.model, reasoningEffort: request.definition.reasoningEffort,
+      ...(role === "post-builder" ? { requestTimeoutMs: 5 * 60_000 } : {}) });
     const runnerOptions: SiwcRunnerOptions = { auth: this.options.auth ?? new SiwcAuth(),
       tools: () => toolSet, timeoutMs: this.options.timeoutMs?.[role] ?? defaultTimeout[role],
+      ...(role === "post-builder" ? { requestTimeoutMs: 5 * 60_000 } : {}),
       maxTurns: 100, maxToolCalls: 100, enforceJsonObject: true,
       validateOutput: validate,
       ...(finishOnPassingDraftTools?.length ? { finishOnPassingDraftTools } : {}),
@@ -517,12 +518,19 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
           return receipt;
         } catch (error) { return patchErrorResult(error); }
       } };
+    const timelineFrames = probeTimelineFrames(indexedEvidenceFrames(
+      JSON.parse(fs.readFileSync(path.join(directory, "evidence/evidence-pack.json"), "utf8")), null));
+    const phase1ImageRefs = [...new Set([
+      ...["opening-contact", "post-cover", ...tools.list().filter(ref => /^editing-cuts-\d+$/u.test(ref))]
+        .filter(ref => tools.list().includes(ref)),
+      ...timelineFrames.map(frame => frame.ref),
+    ])];
     const phase1Readiness = () => {
       const required = ["post-source-input", "media-preparation", "evidence-pack"];
       const missingText = required.filter(ref => !tools.fullyRead(ref)).map(ref => ({ ref, ...tools.readProgress(ref) }));
       const missingImages: string[] = [];
-      for (const ref of ["opening-contact", "post-cover", ...tools.list().filter(value => /^editing-cuts-\d+$/u.test(value))]) {
-        if (tools.list().includes(ref) && !tools.inspectedImages.has(ref)) missingImages.push(`inspect_image ${ref}`);
+      for (const ref of phase1ImageRefs) {
+        if (!tools.inspectedImages.has(ref)) missingImages.push(`inspect_image ${ref}`);
       }
       if (!tools.inspectedImages.size) missingImages.push("inspect_image at least one bound image");
       return { ready: missingText.length === 0 && missingImages.length === 0, missingText, missingImages };
@@ -542,15 +550,17 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
       parameters: { type: "object", additionalProperties: false, properties: {} },
       execute: async () => {
         assertPinnedResearchInput(pinned);
-        const imageRefs = ["opening-contact", "post-cover", ...tools.list().filter(ref => /^editing-cuts-\d+$/u.test(ref))]
-          .filter(ref => tools.list().includes(ref));
-        const result = tools.readBundle(["post-source-input", "media-preparation", "evidence-pack"], imageRefs);
-        if ("error" in result) return result;
-        return { ...result, value: { ...(result.value as Record<string, unknown>), readiness: phase1Readiness() } };
+        const result = tools.readBundle(["post-source-input", "media-preparation", "evidence-pack"], phase1ImageRefs);
+        if ("error" in result) return { ...result, readiness: phase1Readiness() };
+        return { ...result, value: { ...(result.value as Record<string, unknown>), readiness: phase1Readiness(),
+          timelineSamples: timelineFrames.map(frame => ({ imageIndex: phase1ImageRefs.indexOf(frame.ref), ...frame })),
+          coverageScope: "sampled_original_pixels_across_full_indexed_timeline",
+          semanticCoverage: "not_evaluated",
+          limitation: "These are samples, not continuous video. A detected shot interval may contain multiple actions. Inspect local original frames before extending a state across an interval; do not claim an uninspected frame or alternative was checked." } };
       } };
     let acceptedProbe: ValidatedDraftRef | undefined;
     const first = await this.model(request, repair ? "post-repair" : "post-builder", tools,
-      `PHASE 1/2: Call read_builder_context with {} once to receive complete compact phase-one JSON/text and overview pixels, including editing-cut contact pages when present. Inspect additional individual source frames when needed. Its readiness reports remaining requirements; use read_evidence/inspect_image for any overflow or missing refs. Derive capture actions from the actual probe, targeting unresolved questions only. captureProtocol.schemaVersion must be "capture-protocol-2.0" and captureProtocol.probe must be exactly "probe.json" (a file reference, not a sweep ID). Call validate_probe_protocol with your complete draft. For small errors use revise_validated_draft with its draftId and sha256; ${repair ? "replace existing fields only" : "replace existing fields, or add a missing property under an existing object (never into an array)"}. After a passing receipt, return only {"acceptedDraft":{"draftId":"...","sha256":"..."}}; the host resolves and rechecks the exact draft without asking you to output it again. Returning complete {"probe":...,"captureProtocol":...} remains valid. Do not supply targetedEvidence or reconstruction yet. Post: ${source.postExternalId}. ${repair ? `Revise this candidate ${prior?.reportArtifactRef} using review ${JSON.stringify(review ?? input.findings)}.` : ""}\nCanonical probe schema:\n${schema("probe.schema.json")}\nCanonical captureProtocol schema:\n${schema("capture-protocol.schema.json")}`,
+      `PHASE 1/2: Call read_builder_context with {} once to receive complete compact phase-one JSON/text and overview pixels, including editing-cut contact pages and timestamped original DENSE samples across the full indexed timeline. Look for state/action changes inside detected shot intervals; a shot label is not proof of an unchanged action. Describe only visible sampled states, never extend the opening state through an uninspected middle or claim an uninspected alternative was checked. Resolve conflicts between the cut overview and timeline samples with original frames. Inspect additional individual source frames when needed. Its readiness reports remaining requirements; use read_evidence/inspect_image for any overflow or missing refs. Derive capture actions from the actual probe, targeting unresolved questions only. captureProtocol.schemaVersion must be "capture-protocol-2.0" and captureProtocol.probe must be exactly "probe.json" (a file reference, not a sweep ID). Call validate_probe_protocol with your complete draft. For small errors use revise_validated_draft with its draftId and sha256; ${repair ? "replace existing fields only" : "replace existing fields, or add a missing property under an existing object (never into an array)"}. After a passing receipt, return only {"acceptedDraft":{"draftId":"...","sha256":"..."}}; the host resolves and rechecks the exact draft without asking you to output it again. Returning complete {"probe":...,"captureProtocol":...} remains valid. Do not supply targetedEvidence or reconstruction yet. Post: ${source.postExternalId}. ${repair ? `Revise this candidate ${prior?.reportArtifactRef} using review ${JSON.stringify(review ?? input.findings)}.` : ""}\nCanonical probe schema:\n${schema("probe.schema.json")}\nCanonical captureProtocol schema:\n${schema("capture-protocol.schema.json")}`,
       async value => {
         ensure(value && typeof value === "object", "RESPONSES_POST_PROBE_INVALID");
         assertPhase1Ready();
@@ -645,8 +655,7 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
           "targeted-evidence", ...(needsOcr ? ["ocr-evidence"] : []),
           ...(repair ? [prior!.reportArtifactRef, "repair-review"] : [])];
         const imageRefs = ["opening-contact", "post-cover", "targeted-contact",
-          ...tools.list().filter(ref => /^editing-cuts-\d+$/u.test(ref))]
-          .filter(ref => tools.list().includes(ref));
+          ...tools.list().filter(ref => /^editing-cuts-\d+$/u.test(ref))].filter(ref => tools.list().includes(ref));
         const result = tools.readBundle(refs, imageRefs);
         const response = phase2BuilderContextResponse(result, path.join(schemasDir, "reconstruction.schema.json"), readiness());
         if ("kind" in response && response.kind === "siwc_visual_tool_result") {
@@ -675,10 +684,11 @@ ${candidateContracts.map(file => `${file}:\n${fs.readFileSync(path.join(projectR
           facts: { title: string | null; coverHref: string | null }; cover?: unknown }
         : null;
       const localErrors = slot === "contentRestoration"
-        ? [...contentBlockVisualDiagnostics(value), ...contentBlockTemporalDiagnostics(value, frameTimes, frameIndex.duration)]
+        ? [...contentBlockVisualDiagnostics(value), ...contentBlockTemporalDiagnostics(value, frameTimes, frameIndex.duration),
+          ...contentRestorationCoverageDiagnostics(value, frameIndex.duration)]
         : slot === "visualEditing"
           ? openingFrameDiagnostics({ builderLenses: { visualEditing: value } }, directory)
-          : depthPackagingSourceDiagnostics(value, postSource);
+          : depthPackagingSourceDiagnostics(value, postSource, undefined, frameTimes);
       const allErrors = [...errors.map(error => `SCHEMA ${error.path} ${error.message}`), ...localErrors];
       return { pass: allErrors.length === 0, errors: allErrors };
     });

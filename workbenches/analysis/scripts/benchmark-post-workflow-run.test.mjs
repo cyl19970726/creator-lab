@@ -3,7 +3,8 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { classifyOutcome, collectWorkflowRunTree, parseWorkflowArgs, prepareFullWorkflowInput } from "./benchmark-post-workflow-run.ts";
+import { classifyOutcome, collectWorkflowRunTree, parseWorkflowArgs, prepareFullWorkflowInput,
+  createBenchmarkAgents } from "./benchmark-post-workflow-run.ts";
 
 describe("full post workflow benchmark arguments", () => {
   it("requires a historical run and accepts an explicit candidate, case and output", () => {
@@ -22,6 +23,17 @@ describe("full post workflow benchmark arguments", () => {
       .toThrow("short safe label");
     expect(() => parseWorkflowArgs(["--source-workflow-run-id", "a", "--surprise", "b"]))
       .toThrow("Unknown option");
+    expect(() => parseWorkflowArgs(["--source-workflow-run-id", "a", "--lens-mode", "parallel"]))
+      .toThrow("Unknown option");
+    expect(() => parseWorkflowArgs(["--source-workflow-run-id", "a", "--evidence-mode", "decisions"]))
+      .toThrow("Unknown option");
+  });
+
+  it("pins the single Builder v4.14 prompt", () => {
+    const benchmark = createBenchmarkAgents();
+    expect(benchmark.promptHashes).toContainEqual({ path: "prompts/responses-post-builder-v1.md",
+      sha256: "fa2b5c53436d008d5dbcd07c1884dbe9364b0009059a9c43b5fd6078fd04ba5d" });
+    expect(benchmark.agents.postBuilder.config).not.toHaveProperty("builderOptimization");
   });
 });
 
@@ -102,8 +114,8 @@ describe("full post workflow trace accounting", () => {
   it("counts request and method events across the root and every child workflow exactly once", async () => {
     const runs = new Map([
       ["root", { id: "root", workflowId: "post.analyze" }],
-      ["build", { id: "build", workflowId: "post.build" }],
-      ["review", { id: "review", workflowId: "post.review" }],
+      ["build", { id: "build", workflowId: "post.build", parentRunId: "root" }],
+      ["review", { id: "review", workflowId: "post.review", parentRunId: "root" }],
     ]);
     const children = new Map([["root", ["build", "review"]], ["build", []], ["review", []]]);
     const events = new Map([
@@ -118,6 +130,7 @@ describe("full post workflow trace accounting", () => {
     };
     await expect(collectWorkflowRunTree(store, "root")).resolves.toMatchObject({
       requestCount: 4, methodEventCount: 2,
+      childRunIds: { root: ["build", "review"] },
       runs: [{ id: "root" }, { id: "build" }, { id: "review" }],
     });
   });

@@ -3,6 +3,15 @@ import type { ResponsesEvidenceTools } from "./responses-tools.js";
 
 export type IndexedEvidenceFrame = { ref: string; timeSeconds: number };
 
+/** Bounded original-pixel overview spanning the full indexed timeline, not only detected cuts. */
+export function probeTimelineFrames(frames: readonly IndexedEvidenceFrame[], maximum = 16): IndexedEvidenceFrame[] {
+  if (!Number.isSafeInteger(maximum) || maximum < 2 || maximum > 24) throw new Error("RESPONSES_PROBE_TIMELINE_LIMIT_INVALID");
+  const dense = frames.filter(frame => /^DENSE-\d+$/u.test(frame.ref))
+    .sort((a, b) => a.timeSeconds - b.timeSeconds || a.ref.localeCompare(b.ref));
+  if (dense.length <= maximum) return dense;
+  return Array.from({ length: maximum }, (_, index) => dense[Math.round(index * (dense.length - 1) / (maximum - 1))]!);
+}
+
 /** Use frozen source and target indexes together; TARGET sampling may miss a short caption. */
 export function indexedEvidenceFrames(pack: unknown, targeted: unknown): IndexedEvidenceFrame[] {
   const source = pack as { frameIndex?: Array<{ id?: unknown; time?: unknown }> } | null;

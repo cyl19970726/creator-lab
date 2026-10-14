@@ -20,7 +20,8 @@ import { ResponsesResearchRunner } from "../packages/adapters/src/workflow/respo
 import { artifactPath } from "../packages/adapters/src/core/artifacts.js";
 import { projectRoot, runtimeDir } from "../packages/adapters/src/core/config.js";
 
-type Options = { sourceWorkflowRunId: string; candidateArtifactId?: string; caseLabel: string; dryRun: boolean; outputPath?: string };
+type Options = { sourceWorkflowRunId: string; candidateArtifactId?: string; caseLabel: string; dryRun: boolean;
+  outputPath?: string };
 type CandidatePayload = { kind: "post"; evidence: ArtifactRef; outcome: unknown; reportArtifactRef: string;
   reportSha256: string; relativeRoot: string };
 type CandidateSource = { ref: ArtifactRef; payload: CandidatePayload; frozen: PinnedResearchInput };
@@ -124,7 +125,7 @@ export function prepareFullWorkflowInput(frozen: PinnedResearchInput): PinnedRes
   return { ...pinned, methods: methodSnapshot("post"), skillPackages: [skillPackageSnapshot("post")] };
 }
 
-function makeAgents() {
+export function createBenchmarkAgents() {
   const methods = methodSnapshot("post");
   const skillPackages = [skillPackageSnapshot("post")];
   const revision = digest(JSON.stringify({ methods, skillPackages }));
@@ -187,7 +188,8 @@ export function classifyOutcome(outputValue: unknown): { workflowOutcome: string
 }
 
 export async function collectWorkflowRunTree(store: PostgresWorkflowRunStore, rootRunId: string) {
-  const runs: Array<{ id: string; workflowId: string; events: Array<{ type: string }> }> = [];
+  const runs: Array<{ id: string; workflowId: string; events: Array<{ type: string; data?: unknown }> }> = [];
+  const childRunIds: Record<string, string[]> = {};
   const visited = new Set<string>();
   const visit = async (runId: string): Promise<void> => {
     if (visited.has(runId)) return;
@@ -196,12 +198,17 @@ export async function collectWorkflowRunTree(store: PostgresWorkflowRunStore, ro
     if (!run) return;
     const events = await store.listEvents(run.id);
     runs.push({ id: run.id, workflowId: run.workflowId, events });
-    for (const child of await store.listRuns({ parentRunId: run.id })) await visit(child.id);
+    const children = await store.listRuns({ parentRunId: run.id });
+    childRunIds[run.id] = children.map((child) => child.id);
+    for (const child of children) await visit(child.id);
   };
   await visit(rootRunId);
   const allEvents = runs.flatMap((run) => run.events);
   return { runs, requestCount: allEvents.filter((event) => event.type === "siwc.request").length,
-    methodEventCount: allEvents.filter((event) => event.type === "responses.method").length };
+    responsesRequestCount: allEvents.filter((event) => event.type === "siwc.request").length,
+    methodEventCount: allEvents.filter((event) => event.type === "responses.method").length,
+    responsesMethodEventCount: allEvents.filter((event) => event.type === "responses.method").length,
+    runIds: runs.map((run) => run.id), childRunIds };
 }
 
 async function collectCandidateArtifacts(store: PostgresWorkflowRunStore, rootRunId: string) {
@@ -223,7 +230,9 @@ async function collectCandidateArtifacts(store: PostgresWorkflowRunStore, rootRu
       }
     }
   }
-  return { candidates, reviews, requestCount: trace.requestCount, methodEventCount: trace.methodEventCount };
+  return { candidates, reviews, requestCount: trace.requestCount, methodEventCount: trace.methodEventCount,
+    responsesRequestCount: trace.responsesRequestCount, responsesMethodEventCount: trace.responsesMethodEventCount,
+    runIds: trace.runIds, childRunIds: trace.childRunIds };
 }
 
 function writeSummary(file: string, value: unknown, replace = false): void {
@@ -252,7 +261,7 @@ export async function runFullPostBenchmark(options: Options): Promise<Record<str
     assertPinnedResearchInput(pinned);
     const source = pinned.source as PostWorkflowStartInput;
     if (!fs.existsSync(artifactPath(source.sourceMediaArtifactRef))) throw new Error("Frozen source media is not present in the local cache");
-    const workflow = makeAgents();
+    const workflow = createBenchmarkAgents();
     const outputPath = options.outputPath ?? path.join(runtimeDir(), "benchmarks", "post-full-workflow",
       `${new Date().toISOString().replace(/[:.]/gu, "-")}-${safeSegment(options.caseLabel)}-${randomUUID()}.json`);
     const prepared = {
@@ -292,13 +301,17 @@ export async function runFullPostBenchmark(options: Options): Promise<Record<str
     } catch (error) {
       const runs = await store.listRuns({ metadata: { benchmarkAttemptId } });
       const failed = runs.at(-1);
-      const trace = failed ? await collectWorkflowRunTree(store, failed.id) : { requestCount: 0, methodEventCount: 0 };
+      const trace = failed ? await collectWorkflowRunTree(store, failed.id) : { requestCount: 0, methodEventCount: 0,
+        responsesRequestCount: 0, responsesMethodEventCount: 0,
+        runIds: [], childRunIds: {} };
       const steps = failed ? await store.listSteps(failed.id) : [];
       const activeStep = [...steps].reverse().find((step) => ["failed", "running", "needs_review", "blocked"].includes(step.state));
       writeSummary(outputPath, { ...prepared, mode: "full-post-analyze", status: "failed", completion: "runner-threw",
         workflowRunId: failed?.id ?? null, runState: failed?.state ?? null, stage: activeStep?.key ?? null,
         error: redactError(error), durationMs: Date.now() - startedAt,
         requestCount: trace.requestCount, methodEventCount: trace.methodEventCount,
+        responsesRequestCount: trace.responsesRequestCount, responsesMethodEventCount: trace.responsesMethodEventCount,
+        runIds: trace.runIds, childRunIds: trace.childRunIds,
         candidateArtifact: null, candidateReportRef: null, candidateReportSha256: null, qualityAccepted: false,
         summaryPath: outputPath }, true);
       throw error;
@@ -315,6 +328,9 @@ export async function runFullPostBenchmark(options: Options): Promise<Record<str
       workflowRunId: result.run.id, runState: result.run.state, ...disposition,
       durationMs: Date.now() - startedAt, requestCount: persisted.requestCount,
       methodEventCount: persisted.methodEventCount,
+      responsesRequestCount: persisted.responsesRequestCount,
+      responsesMethodEventCount: persisted.responsesMethodEventCount,
+      runIds: persisted.runIds, childRunIds: persisted.childRunIds,
       candidateArtifact: candidate ? { id: candidate.id, revision: candidate.revision, sha256: candidate.sha256 } : null,
       candidateReportRef: candidatePayload?.reportArtifactRef ?? null, candidateReportSha256: candidatePayload?.reportSha256 ?? null,
       evaluationArtifact: evaluation ? { id: evaluation.id, revision: evaluation.revision, sha256: evaluation.sha256 } : null,
@@ -328,7 +344,7 @@ export async function runFullPostBenchmark(options: Options): Promise<Record<str
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (argv.includes("--help") || argv.includes("-h")) {
-    process.stdout.write("Usage: tsx scripts/benchmark-post-workflow-run.ts --source-workflow-run-id ID [--candidate-artifact-id ID] [--case LABEL] [--output PATH] [--dry-run]\\n");
+    process.stdout.write("Usage: tsx scripts/benchmark-post-workflow-run.ts --source-workflow-run-id ID [--candidate-artifact-id ID] [--case LABEL] [--output PATH] [--dry-run]\n");
     return;
   }
   const options = parseWorkflowArgs(argv);

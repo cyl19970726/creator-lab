@@ -17,6 +17,7 @@ export function mergeWorkflowReading(previous: WorkflowReading, delta: Extract<W
     runs: merge(previous.runs, delta.changed.runs, delta.removed.runs, (run) => run.id),
     stages: merge(previous.stages, delta.changed.stages, delta.removed.stages, (stage) => stage.id),
     calls: merge(previous.calls, delta.changed.calls, delta.removed.calls, (call) => call.id),
+    stepMetrics: merge(previous.stepMetrics, delta.changed.stepMetrics, delta.removed.stepMetrics, (metric) => metric.stepRunId),
     artifacts: merge(previous.artifacts, delta.changed.artifacts, delta.removed.artifacts, (asset) => asset.identity.id),
     selectedRunId: previous.selectedRunId, subject: previous.subject, title: previous.title,
     creatorPostGroups: delta.creatorPostGroups ?? previous.creatorPostGroups,
